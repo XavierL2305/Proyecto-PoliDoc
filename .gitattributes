@@ -1,0 +1,13 @@
+# Normaliza fines de línea: LF en el repo, nativo al hacer checkout
+* text=auto
+
+# Binarios explícitos (no tocar fines de línea)
+*.sqlite3 binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
