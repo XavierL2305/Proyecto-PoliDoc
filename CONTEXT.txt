@@ -432,6 +432,21 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
           commands, que puentean el form). GOTCHA: el Admin usa ModelForm por
           defecto, sin el clean_ del form → por eso el saneado vive en save().
 
+     10.7 GOTCHAS DE ROBUSTEZ (Fase 5):
+        - Nombres de campo parecidos: SolicitudAccesoDocumento usa `solicitante`;
+          SolicitudDescarga usa `solicitado_por`. Un signal de acceso ISO usaba
+          `instance.solicitado_por` (inexistente) → AttributeError silenciado por
+          el except broad, y el log NUNCA se escribía. Ojo al mezclar ambos modelos.
+        - Aritmética de meses: usar SIEMPRE el helper modelos._sumar_meses(fecha,
+          meses) (ajusta fin de mes y bisiestos). NO reescribir a mano el cálculo
+          de fecha_destruccion/retencion — había dos copias frágiles duplicadas
+          (tasks.verificar_vencimientos y models._activar_documento), ya unificadas.
+        - Endpoints de aprobación/rechazo (creación y planilla, API y web) y
+          enviar_planilla son @transaction.atomic: multi-escrituras consistentes.
+        - polidoc/mongo.py eliminado (código muerto); el acceso a Mongo es SIEMPRE
+          vía auditoria.services.get_mongo_client(). python-magic fuera de
+          requirements (el validador de subidas es Python puro).
+
 11. ESTRUCTURA DE SUB-ÁREAS
 -------------------------------------------------------------------
   - Cada sub-área reporta al Jefe del departamento padre.
