@@ -402,6 +402,36 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
         - Filename: SGC-RPT-AUD-<YYYYMMDD>.pdf
         - El botón "Exportar PDF" en la vista de auditoría reenvía los filtros activos
 
+     10.6 HARDENING DE SUBIDAS Y XSS (Fase 4):
+        - Validador de subidas (apps/documentos/validators.py, Python puro —
+          libmagic NO está instalado en la imagen): magic bytes + extensión +
+          tamaño. Whitelist {.pdf,.doc,.docx,.xls,.xlsx,.vsdx}; familias:
+          PDF=%PDF-, OLE2 (.doc/.xls)=\xd0\xcf\x11\xe0..., ZIP (.docx/.xlsx/
+          .vsdx)=PK\x03\x04. Límite DOCUMENTOS_MAX_UPLOAD_MB (default 10 MB),
+          evaluado sobre value.size antes de leer (solo se leen 16 bytes de
+          cabecera). Adjunto a los 6 FileField de subida de usuario
+          (Documento.archivo, VersionDocumento.archivo, PlanillaCambios.
+          archivo_adjunto/archivo_propuesto, Formato.plantilla_xlsx,
+          SolicitudCambio.archivo_adjunto). NO en campos generados (archivo_pdf,
+          archivo_propuesto_pdf, plantilla_pdf). Migración 0034.
+        - Cabecera X-Content-Type-Options: nosniff en descargar_archivo y
+          ver_archivo.
+        - XSS front-end: helper global window.escapeHtml/escapeAttrJs en
+          polidoc/static/js/xss.js (cargado al inicio de base_app.html, antes de
+          los scripts inline). Sinks innerHTML con dato de usuario escapados en
+          documentos.js, formulario.html, formulario_planilla.html y
+          distribuir_documento.html.
+        - Sanitizador HTML de lista blanca (apps/documentos/sanitizers.py,
+          sanitizar_html): conserva formato legítimo (h1-6,p,ul/ol/li,strong,em,
+          a/table/...), elimina script/style/iframe/object/embed/link/meta con su
+          contenido, descarta atributos on* y href con esquema no seguro
+          (javascript:/data:/vbscript://host); target=_blank añade rel=noopener.
+          Se aplica a Formato.instructivo_html (renderizado con |safe en
+          formato_preview.html) en DOS capas: FormatoForm.clean_instructivo_html
+          Y Formato.save() (esta última cubre el Django Admin y los management
+          commands, que puentean el form). GOTCHA: el Admin usa ModelForm por
+          defecto, sin el clean_ del form → por eso el saneado vive en save().
+
 11. ESTRUCTURA DE SUB-ÁREAS
 -------------------------------------------------------------------
   - Cada sub-área reporta al Jefe del departamento padre.
