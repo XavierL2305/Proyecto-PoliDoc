@@ -153,7 +153,7 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
   5.2 DESCARGA DIRECTA (Formularios Públicos):
       - Documentos con es_publico=True se descargan directamente (sin aprobación)
       - Se registra log de auditoría en MongoDB (registrar_descarga)
-      - Trazabilidad completa: IP, usuario, fecha/hora, hash SHA-256
+      - Trazabilidad completa: IP, usuario, fecha/hora, integridad HMAC-SHA256
       - Botón "Descargar" en el catálogo
 
   5.3 SOLICITUD DE DESCARGA (Formularios No Públicos):
@@ -372,7 +372,7 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
        - Formularios públicos: descarga directa + log de auditoría (sin aprobación)
        - Documentos no públicos del depto: solicitud + aprobación del jefe
        - Documentos de otros deptos: solo visualización (solicitar acceso)
-       - Toda descarga queda registrada en MongoDB con hash SHA-256
+       - Toda descarga queda registrada en MongoDB con integridad HMAC-SHA256
 
       10.4 NOTIFICACIONES (Botón Campana):
         - Solicitud de descarga recibida
@@ -485,7 +485,7 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
   13.3 ISO 27001 - SEGURIDAD DE LA INFORMACIÓN:
        - Control de acceso (roles y permisos)
        - Auditoría inmutable (logs en MongoDB)
-       - Integridad verificable (hash SHA-256 en cada registro)
+       - Integridad verificable (HMAC-SHA256 + cadena prev_hash en cada registro)
        - Trazabilidad completa (correlation_id para agrupar acciones)
        - No repudio (registros con hash y timestamp)
        - Retención automática (TTL en MongoDB)
@@ -655,7 +655,7 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
        Crear (borrador) → En Revisión → Activo → Vencimiento →
        Obsoleto → Retención → Destrucción
 
-       Cada transición queda registrada en MongoDB con hash SHA-256.
+       Cada transición queda registrada en MongoDB con integridad HMAC-SHA256.
 
   16.2 CAMPOS RELACIONADOS (Migración 0007):
        - fecha_vencimiento: Fecha límite de vigencia del documento (nullable)
@@ -1035,6 +1035,19 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
                            exportar_xlsx/pdf, detalle_formato_dinamico
         api.py             endpoints JSON: aprobar/actualizar/eliminar documentos,
                            aprobar/rechazar planillas, solicitudes pendientes
+        permissions.py     puede_ver/editar/descargar/inhabilitar/transferir,
+                           documentos_usuario, obtener_documento (control de acceso)
+        signals.py         post_save → logs ISO en Mongo (asignación, solicitud de
+                           acceso, planilla). GOTCHA: SolicitudAccesoDocumento usa
+                           `solicitante`; SolicitudDescarga usa `solicitado_por`.
+        tasks.py           Celery: verificar_vencimientos, generar_resumen_ia,
+                           convertir_a_pdf_sync (LibreOffice)
+        ai.py              integración Gemini (resúmenes IA): límite diario,
+                           reintentos, registrar_uso atómico (F), _mensaje_error genérico
+        validators.py      validar_archivo_documento: magic bytes + extensión + tamaño
+                           (Python puro; libmagic NO instalado). Ver §10.6.
+        sanitizers.py      sanitizar_html: lista blanca para instructivo_html (|safe).
+                           Se aplica en FormatoForm.clean Y Formato.save(). Ver §10.6.
         services/exportacion.py  exportar_xlsx() y exportar_pdf() con patching XML
         templatetags/formato_extras.py  get_item, to_json, opt_valor, opt_etiqueta,
                                         opt_cell, opt_shape (filtros del motor)
@@ -1044,7 +1057,7 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
         tests.py / tests_endpoints.py  incluyen: SignalReasignacionPendientesTest
                            (8 tests), BandejaDepartamentoTest (3 tests),
                            EnviarDocumentoTest (6 tests).
-        migrations/        0001–0018; última aplicada: 0018 (rol_aprobador, es_final)
+        migrations/        0001–0034; última: 0034 (validadores de subida en FileField)
         management/commands/  poblar_departamentos, poblar_tipos_documento,
                               poblar_formato_sgc_for_005, poblar_periodos,
                               seed_usuarios_iniciales
@@ -1053,9 +1066,13 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
                            coordinador/trabajador), Notificacion, HistorialAcciones
         views.py           login, logout, gestionar_usuarios
     - apps/auditoria/
-        services.py        cliente Mongo con fail-safe
-    - polidoc/settings.py  DEBUG, DB, APPROVAL_THRESHOLD (eliminado),
-                           SIMPLE_JWT, CORS
+        services.py        cliente Mongo (get_mongo_client, fail-safe) + integridad
+                           ISO: registrar_log_iso/descarga/consulta, HMAC-SHA256,
+                           cadena prev_hash, verificar_integridad_log/cadena. Ver §10.1.
+        middleware.py      resolver_ip_cliente (X-Forwarded-For con proxies de confianza)
+    - polidoc/settings.py  DEBUG, DB, SIMPLE_JWT, CORS, y (Fase 3-5) AUDIT_HMAC_KEY,
+                           AUDIT_TRUSTED_PROXIES, AUDIT_FAIL_CLOSED, DOCUMENTOS_MAX_UPLOAD_MB
+    - polidoc/mail_backends.py  SmtpWithConsoleFallback (caída SMTP→consola, logueada)
     - CONTEXT.txt         este archivo (fuente de verdad funcional)
 
   23.3 MÓDULOS IMPLEMENTADOS
