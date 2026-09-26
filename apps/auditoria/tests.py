@@ -1,4 +1,4 @@
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.contrib.auth.models import User
 from unittest.mock import patch, MagicMock
 from datetime import datetime, timedelta
@@ -198,7 +198,7 @@ class RegistrarLogIsoTest(BaseDocumentosTest):
         self.assertEqual(call_args['contexto']['ip_address'], '192.168.1.1')
         self.assertEqual(call_args['contexto']['sistema'], 'POLIDOC')
         self.assertIn('sha256:', call_args['integridad']['hash'])
-        self.assertEqual(call_args['integridad']['version_registro'], '1.0')
+        self.assertEqual(call_args['integridad']['version_registro'], '1.1')
         self.assertEqual(call_args['metadata']['retencion_anos'], 10)
 
     @patch('auditoria.services.get_mongo_client', side_effect=Exception('MongoDB no disponible'))
@@ -606,7 +606,7 @@ class AuditIPMiddlewareTest(TestCase):
         self.assertEqual(_thread_locals.ip_address, '192.168.1.100')
 
     def test_middleware_x_forwarded_for(self):
-        """IP desde X-Forwarded-For (primera)."""
+        """X-Forwarded-For SOLO se honra si REMOTE_ADDR es proxy de confianza."""
         from auditoria.middleware import AuditIPMiddleware, _thread_locals
         request = MagicMock()
         request.META = {
@@ -614,11 +614,32 @@ class AuditIPMiddlewareTest(TestCase):
             'REMOTE_ADDR': '192.168.1.100',
         }
         middleware = AuditIPMiddleware(lambda r: MagicMock())
+
+        # Sin proxy de confianza: se ignora XFF (podría estar falseado) y se
+        # usa REMOTE_ADDR.
         middleware(request)
+        self.assertEqual(_thread_locals.ip_address, '192.168.1.100')
+
+        # Con el proxy marcado como de confianza: sí se toma el cliente de XFF.
+        with override_settings(AUDIT_TRUSTED_PROXIES=['192.168.1.100']):
+            middleware(request)
         self.assertEqual(_thread_locals.ip_address, '10.0.0.1')
 
+    def test_middleware_x_forwarded_for_invalido(self):
+        """Un XFF con valor no-IP se descarta incluso con proxy de confianza."""
+        from auditoria.middleware import AuditIPMiddleware, _thread_locals
+        request = MagicMock()
+        request.META = {
+            'HTTP_X_FORWARDED_FOR': 'no-es-una-ip',
+            'REMOTE_ADDR': '192.168.1.100',
+        }
+        middleware = AuditIPMiddleware(lambda r: MagicMock())
+        with override_settings(AUDIT_TRUSTED_PROXIES=['192.168.1.100']):
+            middleware(request)
+        self.assertEqual(_thread_locals.ip_address, '192.168.1.100')
+
     def test_middleware_x_real_ip(self):
-        """IP desde X-Real-IP."""
+        """X-Real-IP SOLO se honra si REMOTE_ADDR es proxy de confianza."""
         from auditoria.middleware import AuditIPMiddleware, _thread_locals
         request = MagicMock()
         request.META = {
@@ -626,7 +647,12 @@ class AuditIPMiddlewareTest(TestCase):
             'REMOTE_ADDR': '192.168.1.100',
         }
         middleware = AuditIPMiddleware(lambda r: MagicMock())
+
         middleware(request)
+        self.assertEqual(_thread_locals.ip_address, '192.168.1.100')
+
+        with override_settings(AUDIT_TRUSTED_PROXIES=['192.168.1.100']):
+            middleware(request)
         self.assertEqual(_thread_locals.ip_address, '172.16.0.1')
 
     def test_get_client_ip_after_middleware(self):
@@ -712,7 +738,7 @@ class EstructuraISOCompletaTest(BaseDocumentosTest):
 
         # Integridad
         self.assertTrue(log['integridad']['hash'].startswith('sha256:'))
-        self.assertEqual(log['integridad']['version_registro'], '1.0')
+        self.assertEqual(log['integridad']['version_registro'], '1.1')
 
         # Metadata retención
         self.assertIn('fecha_creacion', log['metadata'])

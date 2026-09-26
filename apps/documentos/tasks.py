@@ -202,34 +202,23 @@ def verificar_vencimientos(self):
             )
         # Auditoría
         try:
-            from auditoria.services import get_mongo_client, generar_log_id, generar_correlation_id
-            db = get_mongo_client()
-            db.audit_logs.insert_one({
-                'log_id': generar_log_id(),
-                'correlation_id': generar_correlation_id(),
-                'timestamp': hoy,
-                'usuario': {
-                    'username': 'sistema',
-                    'nombre_completo': 'Sistema POLIDOC',
-                    'rol': 'automatizado',
-                },
-                'accion': {
-                    'tipo': 'vencimiento',
-                    'categoria': 'automatizacion',
-                    'descripcion': f'Documento vencido automáticamente: {doc.codigo}',
-                },
-                'recurso': {
-                    'tipo': doc.tipo_id or '',
-                    'id': str(doc.uuid),
-                    'nombre': doc.nombre,
-                    'codigo': doc.codigo,
-                    'estado_anterior': 'activo',
-                    'estado_posterior': 'obsoleto',
-                },
-                'resultado': {'exitoso': True},
-                'contexto': {'ip_address': '127.0.0.1', 'user_agent': 'Celery Beat'},
-                'integridad': {'hash': ''},
-            })
+            from auditoria.services import registrar_log_iso
+            registrar_log_iso(
+                usuario=None,
+                accion_tipo='vencimiento',
+                accion_categoria='automatizacion',
+                recurso_tipo=doc.tipo_id or '',
+                recurso_id=str(doc.uuid),
+                recurso_codigo=doc.codigo,
+                recurso_nombre=doc.nombre,
+                estado_anterior='activo',
+                estado_posterior='obsoleto',
+                detalles={'origen': 'Celery Beat', 'actor': 'sistema'},
+                resultado_exitoso=True,
+                resultado_mensaje=f'Documento vencido automáticamente: {doc.codigo}',
+                ip_address='127.0.0.1',
+                user_agent='Celery Beat',
+            )
         except Exception as e:
             logger.error(f"Auditoría vencimiento: {e}")
 

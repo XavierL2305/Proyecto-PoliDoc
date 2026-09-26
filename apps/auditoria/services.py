@@ -1,10 +1,11 @@
 import logging
 import hashlib
+import hmac
 import json
 import os
 from datetime import datetime, timedelta
 from uuid import uuid4
-from pymongo import MongoClient, ASCENDING, DESCENDING
+from pymongo import MongoClient, ASCENDING, DESCENDING, ReturnDocument
 from django.conf import settings
 from .middleware import get_client_ip
 
@@ -13,9 +14,18 @@ logger = logging.getLogger(__name__)
 _client = None
 _db = None
 
-# Contador para log_ids únicos (resetea diariamente)
+# Contador local de respaldo para log_ids (solo se usa si el contador atómico
+# de MongoDB no está disponible, p.ej. en tests con Mongo mockeado).
 _log_counter = {}
 _counter_date = None
+
+
+def _obtener_clave_hmac():
+    """Clave para el HMAC de integridad. Vive en el entorno de la app, NUNCA en
+    MongoDB: así quien solo comprometa el almacén de auditoría no puede forjar
+    hashes válidos. ISO 27001 A.12.4 (protección de registros)."""
+    clave = getattr(settings, 'AUDIT_HMAC_KEY', '') or getattr(settings, 'SECRET_KEY', '')
+    return (clave or 'polidoc-sin-clave').encode('utf-8')
 
 
 def get_mongo_client():
@@ -55,27 +65,53 @@ def get_mongo_client():
 # FUNCIONES UTILITARIAS ISO
 # =============================================================================
 
-def generar_log_id():
+def generar_log_id(db=None):
     """
     Genera un ID único legible para el registro de auditoría.
     Formato: LOG-YYYY-MM-DD-XXX
-    ISO 15489: Identificación única del registro
+    ISO 15489: Identificación única del registro.
+
+    Si se pasa ``db`` (cliente Mongo) usa un contador ATÓMICO ($inc) compartido
+    entre procesos y reinicios, evitando colisiones que harían fallar el índice
+    único idx_log_id (y perder el registro). Sin ``db`` (o si el contador falla)
+    recurre a un contador local en memoria, suficiente para tests.
     """
+    today = datetime.utcnow().date()
+    date_str = today.strftime('%Y-%m-%d')
+
+    counter = None
+    if db is not None:
+        try:
+            doc = db.counters.find_one_and_update(
+                {'_id': f'audit_log_{date_str}'},
+                {'$inc': {'seq': 1}},
+                upsert=True,
+                return_document=ReturnDocument.AFTER,
+            )
+            seq = doc.get('seq') if isinstance(doc, dict) else None
+            if isinstance(seq, int):
+                counter = seq
+        except Exception as e:
+            logger.warning(f"Contador atómico de log_id no disponible, uso local: {e}")
+            counter = None
+
+    if counter is None:
+        counter = _next_local_counter(date_str)
+
+    return f"LOG-{date_str}-{counter:04d}"
+
+
+def _next_local_counter(date_str):
+    """Contador local en memoria (respaldo / tests). No es seguro entre procesos."""
     global _log_counter, _counter_date
     today = datetime.utcnow().date()
-
     if _counter_date != today:
         _log_counter = {}
         _counter_date = today
-
-    date_str = today.strftime('%Y-%m-%d')
     if date_str not in _log_counter:
         _log_counter[date_str] = 0
-
     _log_counter[date_str] += 1
-    counter = _log_counter[date_str]
-
-    return f"LOG-{date_str}-{counter:04d}"
+    return _log_counter[date_str]
 
 
 def generar_correlation_id():
@@ -97,11 +133,46 @@ def calcular_hash(datos):
 
 def calcular_hash_registro(log_entry):
     """
-    Calcula el hash de un registro completo de auditoría.
+    Calcula el HMAC-SHA256 de un registro completo de auditoría.
     Excluye el campo 'integridad' para evitar recursión.
+
+    Se usa HMAC (no SHA-256 plano) con una clave que vive en el entorno de la
+    app: quien pueda escribir en MongoDB pero no conozca la clave NO puede
+    recalcular un hash válido tras alterar el registro → la manipulación se
+    detecta. ISO 27001 A.12.4.2. El encadenado ``prev_hash`` (incluido en el
+    registro y por tanto cubierto por el HMAC) añade evidencia de cadena.
     """
     datos_para_hash = {k: v for k, v in log_entry.items() if k != 'integridad'}
-    return calcular_hash(datos_para_hash)
+    datos_str = json.dumps(datos_para_hash, sort_keys=True, default=str)
+    return hmac.new(_obtener_clave_hmac(), datos_str.encode(), hashlib.sha256).hexdigest()
+
+
+def _obtener_prev_hash(db):
+    """Devuelve el hash de integridad del último registro insertado (cadena).
+
+    Retorna '' si no hay registros previos, si ``db`` es un mock (tests) o si la
+    consulta falla. Nota: en escrituras simultáneas dos registros podrían leer
+    el mismo prev_hash (bifurcación de cadena); el volumen de una clínica es
+    bajo y se prioriza no bloquear la escritura. ISO 27001 A.12.4.
+    """
+    try:
+        ultimo = db.audit_logs.find_one(sort=[('timestamp', DESCENDING)])
+    except Exception:
+        return ''
+    if not isinstance(ultimo, dict):
+        return ''
+    integridad = ultimo.get('integridad')
+    if isinstance(integridad, dict):
+        h = integridad.get('hash', '')
+        return h if isinstance(h, str) else ''
+    return ''
+
+
+def _extraer_hash(integridad_hash):
+    """Separa el prefijo de algoritmo del valor: 'sha256:abc' -> 'abc'."""
+    if not isinstance(integridad_hash, str):
+        return ''
+    return integridad_hash.split(':', 1)[1] if ':' in integridad_hash else integridad_hash
 
 
 # =============================================================================
@@ -115,7 +186,7 @@ def registrar_log_iso(usuario, accion_tipo, accion_categoria,
                       estado_posterior=None, detalles=None,
                       resultado_exitoso=True, resultado_mensaje='',
                       correlation_id=None, ip_address=None,
-                      user_agent=None, sesion_id=None):
+                      user_agent=None, sesion_id=None, fail_closed=False):
     """
     Registra un log de auditoría con estructura completa ISO 15489/27001.
 
@@ -160,8 +231,8 @@ def registrar_log_iso(usuario, accion_tipo, accion_categoria,
         db = get_mongo_client()
         now = datetime.utcnow()
 
-        # Generar IDs únicos
-        log_id = generar_log_id()
+        # Generar IDs únicos (contador atómico si hay Mongo real)
+        log_id = generar_log_id(db)
         if correlation_id is None:
             correlation_id = generar_correlation_id()
 
@@ -210,11 +281,18 @@ def registrar_log_iso(usuario, accion_tipo, accion_categoria,
             }
         }
 
-        # Calcular hash de integridad
+        # Encadenado: hash del registro inmediatamente anterior. Va a nivel
+        # superior (no dentro de 'integridad') para quedar cubierto por el HMAC
+        # y enlazar criptográficamente la cadena. Si no se puede obtener (p.ej.
+        # primer registro, Mongo mockeado o fallo), se deja vacío.
+        log_entry['prev_hash'] = _obtener_prev_hash(db)
+
+        # Calcular hash de integridad (HMAC-SHA256 con clave del entorno)
         hash_registro = calcular_hash_registro(log_entry)
         log_entry['integridad'] = {
             'hash': f"sha256:{hash_registro}",
-            'version_registro': '1.0'
+            'algoritmo': 'hmac-sha256',
+            'version_registro': '1.1'
         }
 
         # Metadata de retención
@@ -230,7 +308,15 @@ def registrar_log_iso(usuario, accion_tipo, accion_categoria,
         return log_id
 
     except Exception as e:
-        logger.error(f"Error al registrar audit log ISO en MongoDB: {e}")
+        # Un fallo de auditoría es siempre un incidente: se alarma a CRITICAL.
+        logger.critical(
+            f"FALLO AUDITORÍA ISO action={accion_tipo}/{accion_categoria} "
+            f"usuario={getattr(usuario, 'username', usuario)} fail_closed={fail_closed}: {e}",
+            exc_info=True,
+        )
+        if fail_closed:
+            # Acción sensible (descarga/visor): NO continuar sin trazabilidad.
+            raise
         return None
 
 
@@ -414,7 +500,7 @@ def registrar_aprobacion_descarga(usuario, recurso_tipo, recurso_id,
 
 def registrar_descarga(usuario, recurso_tipo, recurso_id,
                        version=None, codigo=None,
-                       ip_address=None, correlation_id=None):
+                       ip_address=None, correlation_id=None, fail_closed=False):
     """Registra descarga efectiva de un documento"""
     return registrar_log_iso(
         usuario=usuario,
@@ -428,7 +514,33 @@ def registrar_descarga(usuario, recurso_tipo, recurso_id,
         resultado_exitoso=True,
         resultado_mensaje='Documento descargado correctamente',
         correlation_id=correlation_id,
-        ip_address=ip_address
+        ip_address=ip_address,
+        fail_closed=fail_closed,
+    )
+
+
+def registrar_consulta(usuario, recurso_tipo, recurso_id,
+                       version=None, codigo=None,
+                       ip_address=None, correlation_id=None, fail_closed=False):
+    """Registra la visualización del CONTENIDO de un documento en el visor.
+
+    ISO 27001 A.12.4: el acceso de lectura a documentos controlados debe quedar
+    trazado, igual que la descarga.
+    """
+    return registrar_log_iso(
+        usuario=usuario,
+        accion_tipo='consulta',
+        accion_categoria='documento',
+        recurso_tipo=recurso_tipo,
+        recurso_id=recurso_id,
+        recurso_codigo=codigo,
+        recurso_version=version,
+        detalles={'version_consultada': version, 'medio': 'visor'},
+        resultado_exitoso=True,
+        resultado_mensaje='Documento visualizado en el visor',
+        correlation_id=correlation_id,
+        ip_address=ip_address,
+        fail_closed=fail_closed,
     )
 
 
@@ -548,10 +660,10 @@ def verificar_integridad_log(log_id):
         if 'integridad' not in log_entry:
             return {'valido': False, 'mensaje': 'Registro sin hash de integridad'}
 
-        hash_almacenado = log_entry['integridad']['hash'].replace('sha256:', '')
+        hash_almacenado = _extraer_hash(log_entry['integridad'].get('hash'))
         hash_calculado = calcular_hash_registro(log_entry)
 
-        if hash_almacenado == hash_calculado:
+        if hmac.compare_digest(hash_almacenado, hash_calculado):
             return {'valido': True, 'mensaje': 'Integridad verificada correctamente'}
         else:
             return {'valido': False, 'mensaje': '¡ADVERTENCIA! Hash no coincide - posible alteración'}
@@ -559,6 +671,44 @@ def verificar_integridad_log(log_id):
     except Exception as e:
         logger.error(f"Error al verificar integridad: {e}")
         return {'valido': False, 'mensaje': f'Error al verificar: {str(e)}'}
+
+
+def verificar_cadena_auditoria(limite=1000):
+    """Verifica el encadenado prev_hash de los últimos registros.
+
+    Recorre los registros en orden cronológico y comprueba que el ``prev_hash``
+    de cada uno coincida con el hash de integridad del anterior. Detecta
+    alteraciones, eliminaciones o reordenamientos en la cadena de auditoría.
+
+    Retorna: dict {'valido': bool, 'revisados': int, 'primera_rotura': str|None}
+    """
+    try:
+        db = get_mongo_client()
+        logs = list(db.audit_logs.find().sort('timestamp', ASCENDING).limit(limite))
+    except Exception as e:
+        logger.error(f"Error al verificar cadena de auditoría: {e}")
+        return {'valido': False, 'revisados': 0, 'primera_rotura': None,
+                'mensaje': f'Error al consultar: {str(e)}'}
+
+    hash_anterior = ''
+    for log in logs:
+        if not isinstance(log, dict):
+            continue
+        prev = log.get('prev_hash', '')
+        # El primer registro de la ventana puede apuntar a uno fuera de rango;
+        # solo se valida el enlace cuando prev no está vacío.
+        if prev and hash_anterior and prev != hash_anterior:
+            return {
+                'valido': False,
+                'revisados': len(logs),
+                'primera_rotura': log.get('log_id'),
+                'mensaje': f"Cadena rota en {log.get('log_id')}",
+            }
+        integridad = log.get('integridad', {})
+        hash_anterior = integridad.get('hash', '') if isinstance(integridad, dict) else ''
+
+    return {'valido': True, 'revisados': len(logs), 'primera_rotura': None,
+            'mensaje': 'Cadena de auditoría íntegra'}
 
 
 # =============================================================================

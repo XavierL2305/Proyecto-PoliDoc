@@ -1306,9 +1306,21 @@ def descargar_archivo(request, tipo, documento_id):
             version=documento.version_actual,
             codigo=documento.codigo,
             ip_address=get_client_ip(),
+            fail_closed=settings.AUDIT_FAIL_CLOSED,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        # Fail-closed: sin trazabilidad de la descarga no se entrega el archivo
+        # (decisión ISO acordada). El fallo ya se alarmó a CRITICAL en services.
+        logger.critical(
+            f"Descarga BLOQUEADA por fallo de auditoría: doc={documento.codigo} "
+            f"usuario={request.user.username}: {exc}"
+        )
+        messages.error(
+            request,
+            'No se pudo registrar la auditoría de la descarga. '
+            'Por seguridad, la descarga queda bloqueada; contacte al administrador.'
+        )
+        return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
     extension = os.path.splitext(documento.archivo.name)[1]
     nombre_archivo = f"{documento.codigo}_v{documento.version_actual}{extension}"
     return FileResponse(documento.archivo.open('rb'), as_attachment=True, filename=nombre_archivo)
@@ -1329,6 +1341,31 @@ def ver_archivo(request, tipo, documento_id):
     archivo = documento.archivo_pdf or documento.archivo
     if not archivo:
         messages.error(request, 'Este documento no tiene archivo adjunto.')
+        return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
+    from auditoria.services import registrar_consulta
+    from auditoria.middleware import get_client_ip
+    try:
+        registrar_consulta(
+            usuario=request.user,
+            recurso_tipo=documento.tipo_id or '',
+            recurso_id=str(documento.uuid),
+            version=documento.version_actual,
+            codigo=documento.codigo,
+            ip_address=get_client_ip(),
+            fail_closed=settings.AUDIT_FAIL_CLOSED,
+        )
+    except Exception as exc:
+        # Fail-closed: sin trazabilidad de la consulta no se sirve el contenido
+        # (decisión ISO acordada). El fallo ya se alarmó a CRITICAL en services.
+        logger.critical(
+            f"Consulta BLOQUEADA por fallo de auditoría: doc={documento.codigo} "
+            f"usuario={request.user.username}: {exc}"
+        )
+        messages.error(
+            request,
+            'No se pudo registrar la auditoría de la consulta. '
+            'Por seguridad, la visualización queda bloqueada; contacte al administrador.'
+        )
         return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
     return FileResponse(
         archivo.open('rb'), as_attachment=False, filename=os.path.basename(archivo.name)
@@ -1356,32 +1393,20 @@ def _estado_resumen_ia(documento, usuario=None):
 
 def _auditar_resumen_ia(usuario, documento):
     try:
-        from auditoria.services import get_mongo_client, generar_log_id, generar_correlation_id
-        db = get_mongo_client()
-        db.audit_logs.insert_one({
-            'log_id': generar_log_id(),
-            'correlation_id': generar_correlation_id(),
-            'timestamp': timezone.now(),
-            'usuario': {
-                'username': usuario.username,
-                'nombre_completo': usuario.get_full_name(),
-                'rol': usuario.perfil.rol,
-            },
-            'accion': {
-                'tipo': 'resumen_ia',
-                'categoria': 'inteligencia_artificial',
-                'descripcion': f'Resumen IA solicitado para {documento.codigo}',
-            },
-            'recurso': {
-                'tipo': documento.tipo_id or '',
-                'id': str(documento.uuid),
-                'nombre': documento.nombre,
-                'codigo': documento.codigo,
-            },
-            'resultado': {'exitoso': True},
-            'contexto': {'ip_address': '', 'user_agent': ''},
-            'integridad': {'hash': ''},
-        })
+        from auditoria.services import registrar_log_iso
+        from auditoria.middleware import get_client_ip
+        registrar_log_iso(
+            usuario=usuario,
+            accion_tipo='resumen_ia',
+            accion_categoria='inteligencia_artificial',
+            recurso_tipo=documento.tipo_id or '',
+            recurso_id=str(documento.uuid),
+            recurso_codigo=documento.codigo,
+            recurso_nombre=documento.nombre,
+            resultado_exitoso=True,
+            resultado_mensaje=f'Resumen IA solicitado para {documento.codigo}',
+            ip_address=get_client_ip(),
+        )
     except Exception as exc:
         logger.error("Auditoría resumen IA: %s", exc)
 

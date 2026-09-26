@@ -254,9 +254,17 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
 -------------------------------------------------------------------
   10.1 LOGS EN MONGODB (ESTRUCTURA ISO 15489/27001):
        - Cada acción genera un log inmutable con integridad verificable
-       - ID único: LOG-YYYY-MM-DD-XXX
+       - ID único: LOG-YYYY-MM-DD-XXXX (contador ATÓMICO en Mongo
+         db.counters; si no hay Mongo, fallback a contador local en memoria)
        - Correlation ID para trazabilidad de acciones relacionadas
-       - Hash SHA-256 de integridad en cada registro
+       - Integridad: HMAC-SHA256 (clave AUDIT_HMAC_KEY del entorno, o
+         SECRET_KEY si está vacía) sobre el registro SIN el bloque 'integridad'.
+         El hash almacenado conserva el prefijo 'sha256:' por compatibilidad.
+       - Encadenado anti-manipulación: cada registro incluye 'prev_hash'
+         (a nivel superior, cubierto por el HMAC) = hash de integridad del
+         registro inmediatamente anterior por timestamp. verificar_cadena_auditoria()
+         recorre la cadena y detecta la primera rotura.
+       - version_registro actual: '1.1' (algoritmo 'hmac-sha256')
 
        Estructura del documento de auditoría:
        {
@@ -299,9 +307,11 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
            "exitoso": true,
            "mensaje": "Documento creado correctamente"
          },
+         "prev_hash": "sha256:<hash del registro anterior>",  // cadena anti-manipulación
          "integridad": {
-           "hash": "sha256:abc123...",
-           "version_registro": "1.0"
+           "hash": "sha256:<HMAC-SHA256 del registro>",
+           "algoritmo": "hmac-sha256",
+           "version_registro": "1.1"
          },
          "metadata": {
            "fecha_creacion": ISODate("2026-08-26T13:00:00Z"),
@@ -318,14 +328,25 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
        - registrar_eliminacion_documento(): Eliminación/cambio a obsoleto
        - registrar_solicitud_descarga(): Solicitudes de descarga
        - registrar_aprobacion_descarga(): Aprobación/rechazo
-       - registrar_descarga(): Descarga efectiva
+       - registrar_descarga(): Descarga efectiva (acepta fail_closed)
+       - registrar_consulta(): Visualización de contenido en el visor (acepta fail_closed)
        - registrar_asignacion_documento(): Asignación a coordinador
        - registrar_transferencia_propiedad(): Transferencia
        - registrar_cambio_version(): Control de versiones
-       - verificar_integridad_log(): Verificación de hash
+       - verificar_integridad_log(): Verificación de hash (HMAC, compare_digest)
+       - verificar_cadena_auditoria(): Valida el encadenado prev_hash de la cadena
        - obtener_logs(): Consulta con filtros
        - obtener_logs_por_correlation_id(): Trazabilidad
        - crear_indices_mongo(): Configurar índices
+
+       POLÍTICA FAIL-CLOSED (descarga/visor de documentos controlados):
+       - registrar_log_iso/registrar_descarga/registrar_consulta aceptan
+         fail_closed. Si falla el registro en Mongo y fail_closed=True, se lanza
+         excepción (el llamante BLOQUEA la entrega) y se alarma a CRITICAL.
+       - views.descargar_archivo y views.ver_archivo usan
+         settings.AUDIT_FAIL_CLOSED (default True). Válvula de emergencia por ops.
+       - El resto de acciones (creación/edición/señales/resumen IA/vencimiento)
+         sigue fail-open: loguean el error pero NO bloquean la operación.
 
        Índices MongoDB:
        - log_id (único)
@@ -1147,8 +1168,14 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
       `estado='pendiente'` del Q y dejar que `filtro_estado` lo aplique después.
 
   23.6 GOTCHAS / BLOQUEADORES
-    - MongoDB caído: los signals de auditoría loguean error pero NO bloquean
-      guardados. No es crítico para desarrollo local.
+    - MongoDB caído: los signals/auditoría de creación, edición, resumen IA y
+      vencimiento son FAIL-OPEN (loguean error pero NO bloquean el guardado).
+      EXCEPCIÓN (Fase 3 seguridad): descarga (descargar_archivo) y visor
+      (ver_archivo) de documentos controlados son FAIL-CLOSED — si Mongo no
+      registra la acción, se BLOQUEA la entrega del archivo y se alarma a
+      CRITICAL (ISO 9001 §7.5 / 27001 A.12.4). Controlado por
+      settings.AUDIT_FAIL_CLOSED (default True); ops puede ponerla en False
+      como válvula de emergencia si Mongo se cae en producción.
     - Celery worker debe reiniciarse tras cambios de modelo (error de columna
       antigua en consola).
     - LibreOffice no está instalado fuera de Docker; las conversiones a PDF

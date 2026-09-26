@@ -208,6 +208,26 @@ MONGO_SETTINGS = {
     'PASSWORD': os.getenv('MONGO_PASSWORD', ''),
 }
 
+# Clave HMAC para firmar los registros de auditoría ISO. Debe vivir SOLO en el
+# entorno de la app (nunca en MongoDB). Si se deja vacía, se usa SECRET_KEY.
+# Cambiarla invalida la verificación de registros firmados con la clave previa.
+AUDIT_HMAC_KEY = os.getenv('AUDIT_HMAC_KEY', '')
+
+# IP de proxy inverso de confianza. Solo si REMOTE_ADDR es una de estas se
+# acepta X-Forwarded-For/X-Real-IP para resolver la IP real del cliente; si no,
+# se usa REMOTE_ADDR (evita suplantación de IP en los logs de auditoría).
+# On-prem sin proxy: dejar vacío. Con nginx: poner su IP (ej. '127.0.0.1').
+AUDIT_TRUSTED_PROXIES = [
+    p.strip() for p in os.getenv('AUDIT_TRUSTED_PROXIES', '').split(',') if p.strip()
+]
+
+# Política de auditoría para descarga/visualización de documentos controlados.
+# True (default, seguro): si MongoDB no puede registrar la acción, se BLOQUEA la
+# entrega del archivo (fail-closed, exigencia ISO 9001 §7.5 / 27001 A.12.4).
+# Solo cambiable a False como válvula de emergencia por ops si Mongo se cae en
+# producción; hacerlo debilita la garantía de trazabilidad.
+AUDIT_FAIL_CLOSED = os.getenv('AUDIT_FAIL_CLOSED', 'True').lower() in ('true', '1', 't')
+
 # RESUMEN CON IA (Google AI Studio / Gemini)
 IA_RESUMEN_HABILITADO = os.getenv('IA_RESUMEN_HABILITADO', 'False').lower() in ('true', '1', 't')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
