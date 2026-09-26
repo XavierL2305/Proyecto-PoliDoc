@@ -114,6 +114,11 @@ def puede_ver_documento(usuario, documento, requerir_aprobada=False):
         SolicitudDescarga, AprobacionDescarga,
         SolicitudAccesoDocumento,
     )
+    # Intencionadamente SIN filtro de estado: los participantes del flujo de
+    # aprobación (aprobador/solicitante de la creación, y el jefe que aprueba una
+    # descarga) necesitan ver el contenido ANTES de resolver, incluso con
+    # requerir_aprobada=True. Solo a los SOLICITANTES ajenos al flujo se les exige
+    # una solicitud aprobada (filtros de estado más abajo).
     if SolicitudAprobacionDocumento.objects.filter(
         documento=documento
     ).filter(
