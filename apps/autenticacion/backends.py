@@ -1,5 +1,6 @@
 import logging
 import ldap
+from ldap.filter import escape_filter_chars
 import unicodedata
 from django.contrib.auth.models import User
 from django.conf import settings
@@ -55,6 +56,9 @@ class LDAPBackend:
             conn = ldap.initialize(settings.AUTH_LDAP_SERVER_URI)
             conn.protocol_version = ldap.VERSION3
             conn.set_option(ldap.OPT_REFERRALS, 0)
+            # Timeouts: evita que un AD caído o lento deje hilos colgados.
+            conn.set_option(ldap.OPT_NETWORK_TIMEOUT, 10)
+            conn.set_option(ldap.OPT_TIMEOUT, 10)
 
             # 2. Bind con las credenciales del usuario (formato PTH\usuario)
             user_dn = f"PTH\\{username}"
@@ -63,7 +67,7 @@ class LDAPBackend:
 
             # 3. Buscar datos del usuario en el LDAP
             base_dn = settings.AUTH_LDAP_USER_DN
-            user_filter = f'(&(sAMAccountName={username}))'
+            user_filter = f'(&(sAMAccountName={escape_filter_chars(username)}))'
             user_results = conn.search_s(
                 base_dn,
                 ldap.SCOPE_SUBTREE,
@@ -94,7 +98,7 @@ class LDAPBackend:
             employee_id = self._extract_attr(user_attrs, 'employeeID')
 
             # 4. Detectar grupo del usuario
-            grupo = self._detect_grupo(conn, base_dn, username, user_attrs)
+            grupo = self._detect_grupo(conn, base_dn, username, user_attrs, user_dn_full)
             conn.unbind_s()
 
             # 5. Mapear grupo AD a rol Django
@@ -157,7 +161,7 @@ class LDAPBackend:
         except User.DoesNotExist:
             return None
 
-    def _detect_grupo(self, conn, base_dn, username, user_attrs):
+    def _detect_grupo(self, conn, base_dn, username, user_attrs, user_dn_full=None):
         """
         Detecta el grupo AD del usuario usando dos estrategias:
         1. Buscar en el atributo memberOf del usuario (más rápido)
@@ -177,13 +181,10 @@ class LDAPBackend:
                 if nombre:
                     todos_los_grupos.append(nombre)
 
-            # Mostrar TODOS los grupos del usuario para depuración
+            # Los grupos completos del usuario son información sensible: se
+            # registran solo en DEBUG, nunca en INFO.
             if todos_los_grupos:
-                logger.info(f"=== GRUPOS DE {username} ===")
-                for g in todos_los_grupos:
-                    marker = " << VALIDO" if g in self.GRUPOS_VALIDOS else ""
-                    logger.info(f"  - {g}{marker}")
-                logger.info(f"=== FIN GRUPOS ===")
+                logger.debug(f"Grupos de {username}: {todos_los_grupos}")
             else:
                 logger.warning(f"Usuario {username} no tiene atributo memberOf o esta vacio")
 
@@ -194,8 +195,9 @@ class LDAPBackend:
                     return grupo_nombre
 
             # Estrategia 2: Buscar solo en los grupos validos (fallback)
+            user_dn_norm = (user_dn_full or '').strip().lower()
             for grupo_nombre in self.GRUPOS_VALIDOS:
-                filter_str = f'(&(objectClass=group)(cn={grupo_nombre}))'
+                filter_str = f'(&(objectClass=group)(cn={escape_filter_chars(grupo_nombre)}))'
                 results = conn.search_s(
                     base_dn,
                     ldap.SCOPE_SUBTREE,
@@ -217,7 +219,10 @@ class LDAPBackend:
                     for member_dn in members:
                         if isinstance(member_dn, bytes):
                             member_dn = member_dn.decode('utf-8')
-                        if username.lower() in member_dn.lower():
+                        # Comparación EXACTA del DN: un `in` por substring hacía
+                        # que "an" coincidiera con "CN=Ana,...". Solo se acepta
+                        # si el DN del miembro es idéntico al DN del usuario.
+                        if user_dn_norm and member_dn.strip().lower() == user_dn_norm:
                             logger.info(f"Usuario {username} encontrado en grupo: {grupo_nombre}")
                             return grupo_nombre
 

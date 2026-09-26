@@ -90,7 +90,12 @@
             <a href="{% url 'autenticacion:perfil' %}" class="navbar-dropdown-item"><i class="fa-solid fa-user"></i> Mi Perfil</a>
             <a href="{% url 'documentos:mis_documentos' %}" class="navbar-dropdown-item"><i class="fa-solid fa-file-lines"></i> Mis Documentos</a>
             <div class="navbar-dropdown-divider"></div>
-            <a href="{% url 'autenticacion:logout' %}" class="navbar-dropdown-item navbar-dropdown-item--danger"><i class="fa-solid fa-right-from-bracket"></i> Cerrar Sesión</a>
+            <form method="post" action="{% url 'autenticacion:logout' %}" style="display:inline;margin:0;">
+              {% csrf_token %}
+              <button type="submit" class="navbar-dropdown-item navbar-dropdown-item--danger" style="width:100%;text-align:left;background:none;border:none;cursor:pointer;font:inherit;">
+                <i class="fa-solid fa-right-from-bracket"></i> Cerrar Sesión
+              </button>
+            </form>
           </div>
         </div>
       </div>

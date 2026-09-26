@@ -706,3 +706,100 @@ class LDAPBackendEmailTest(BaseDocumentosTest):
         user = self._authenticate('trab01', self._attrs(mail=b'nuevo@pth.local'))
         self.assertIsNotNone(user)
         self.assertEqual(user.email, 'nuevo@pth.local')
+
+
+from django.core.cache import cache  # noqa: E402
+
+
+class LDAPBackendSeguridadTest(TestCase):
+    """Fase 2: escaping de filtros LDAP y coincidencia exacta de DN."""
+
+    def test_filter_escapa_caracteres_especiales(self):
+        backend = LDAPBackend()
+        conn = MagicMock()
+        conn.search_s.return_value = []  # usuario no encontrado → retorna None
+        with patch('autenticacion.backends.ldap.initialize', return_value=conn):
+            result = backend.authenticate(None, username='ad*min', password='x')
+        self.assertIsNone(result)
+        filtro = conn.search_s.call_args[0][2]
+        # El '*' del username debe ir escapado, nunca en crudo (LDAP injection).
+        self.assertNotIn('ad*min', filtro)
+        self.assertIn('\\2a', filtro)
+
+    def test_detect_grupo_coincidencia_exacta_dn(self):
+        backend = LDAPBackend()
+        conn = MagicMock()
+        member_dn = b'CN=Juan Perez,OU=Users,DC=pth,DC=local'
+        conn.search_s.return_value = [
+            ('CN=doc_administrador,OU=Grupos,DC=pth,DC=local', {'member': [member_dn]})
+        ]
+        grupo = backend._detect_grupo(
+            conn, 'dc=pth,dc=local', 'jperez', {},
+            'CN=Juan Perez,OU=Users,DC=pth,DC=local',
+        )
+        self.assertEqual(grupo, 'doc_administrador')
+
+    def test_detect_grupo_rechaza_substring(self):
+        backend = LDAPBackend()
+        conn = MagicMock()
+        member_dn = b'CN=Juan Perez,OU=Users,DC=pth,DC=local'
+        conn.search_s.return_value = [
+            ('CN=doc_administrador,OU=Grupos,DC=pth,DC=local', {'member': [member_dn]})
+        ]
+        # Un DN distinto (a no ser substring del miembro) NO debe coincidir.
+        grupo = backend._detect_grupo(
+            conn, 'dc=pth,dc=local', 'Juan', {},
+            'CN=Juan,OU=Users,DC=pth,DC=local',
+        )
+        self.assertEqual(grupo, 'sin_grupo')
+
+
+class LoginViewSeguridadTest(BaseDocumentosTest):
+    """Fase 2: rate-limiting de login y logout solo por POST."""
+
+    def setUp(self):
+        super().setUp()
+        self.client = Client()
+        cache.clear()
+
+    def tearDown(self):
+        cache.clear()
+        super().tearDown()
+
+    def test_login_bloquea_tras_multiples_fallos(self):
+        from autenticacion import views as auth_views
+        with patch('autenticacion.views.authenticate', return_value=None) as mock_auth:
+            for _ in range(auth_views.LOGIN_MAX_INTENTOS):
+                resp = self.client.post(
+                    '/login/', {'usuario': 'trab01', 'password': 'mala'})
+                self.assertEqual(resp.status_code, 200)
+            self.assertEqual(mock_auth.call_count, auth_views.LOGIN_MAX_INTENTOS)
+            # Intento adicional: bloqueado SIN volver a llamar a authenticate.
+            resp = self.client.post(
+                '/login/', {'usuario': 'trab01', 'password': 'mala'})
+            self.assertContains(resp, 'Demasiados intentos')
+            self.assertEqual(mock_auth.call_count, auth_views.LOGIN_MAX_INTENTOS)
+
+    def test_login_exitoso_limpia_contador(self):
+        with patch('autenticacion.views.authenticate', return_value=None):
+            self.client.post('/login/', {'usuario': 'trab01', 'password': 'mala'})
+            self.client.post('/login/', {'usuario': 'trab01', 'password': 'mala'})
+        self.assertGreater(cache.get('login_fail::127.0.0.1::trab01', 0), 0)
+        resp = self.client.post(
+            '/login/',
+            {'usuario': 'trab01', 'password': 'testpass123', 'terms': 'on'},
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(cache.get('login_fail::127.0.0.1::trab01', 0), 0)
+
+    def test_logout_rechaza_get(self):
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get('/logout/')
+        self.assertEqual(resp.status_code, 405)
+        self.assertIn('_auth_user_id', self.client.session)
+
+    def test_logout_acepta_post(self):
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.post('/logout/')
+        self.assertEqual(resp.status_code, 302)
+        self.assertNotIn('_auth_user_id', self.client.session)

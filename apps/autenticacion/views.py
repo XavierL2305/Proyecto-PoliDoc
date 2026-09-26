@@ -3,7 +3,9 @@ import json
 from django.shortcuts import render, redirect
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
+from django.views.decorators.http import require_POST
 from django.contrib.auth.models import User
+from django.core.cache import cache
 from django.http import JsonResponse
 from django.utils import timezone
 from django.core.paginator import Paginator
@@ -16,6 +18,16 @@ from documentos.models import (
 from auditoria.services import obtener_logs
 
 logger = logging.getLogger('django_auth_ldap')
+
+# Rate-limiting de intentos de login fallidos (mitiga fuerza bruta).
+LOGIN_MAX_INTENTOS = 5
+LOGIN_BLOQUEO_SEGUNDOS = 300
+MENSAJE_CREDENCIALES = 'Usuario o contraseña incorrectos.'
+
+
+def _login_throttle_key(request, username):
+    ip = request.META.get('REMOTE_ADDR', 'sin-ip')
+    return f'login_fail::{ip}::{(username or "").lower()}'
 
 
 def login_view(request):
@@ -42,9 +54,31 @@ def login_view(request):
         if not username or not password:
             error = 'Debes ingresar usuario y contraseña.'
         else:
+            throttle_key = _login_throttle_key(request, username)
+            intentos = cache.get(throttle_key, 0)
+            if intentos >= LOGIN_MAX_INTENTOS:
+                logger.warning(
+                    f"Login bloqueado por exceso de intentos: {username} "
+                    f"desde {request.META.get('REMOTE_ADDR')}"
+                )
+                error = (
+                    'Demasiados intentos fallidos. '
+                    'Espera unos minutos antes de volver a intentar.'
+                )
+                return render(request, 'registration/login.html', {'error': error})
+
             user = authenticate(request, username=username, password=password)
 
             if user is not None:
+                cache.delete(throttle_key)
+                backend = getattr(user, 'backend', '')
+                if backend.endswith('ModelBackend'):
+                    # Autenticación local SIN LDAP: cuenta "break-glass".
+                    # Se registra con prominencia para auditoría.
+                    logger.warning(
+                        f"LOGIN BREAK-GLASS vía ModelBackend (sin LDAP): "
+                        f"{username} desde {request.META.get('REMOTE_ADDR')}"
+                    )
                 # Verificar perfil
                 try:
                     perfil = user.perfil
@@ -86,15 +120,20 @@ def login_view(request):
                 logger.info(f"Login exitoso: {username}")
                 return redirect('autenticacion:dashboard')
             else:
-                error = 'Usuario o contraseña incorrectos.'
-                logger.debug(f"Login fallido: {username}")
+                error = MENSAJE_CREDENCIALES
+                cache.set(throttle_key, intentos + 1, LOGIN_BLOQUEO_SEGUNDOS)
+                logger.warning(f"Login fallido: {username} (intento {intentos + 1})")
 
     return render(request, 'registration/login.html', {'error': error})
 
 
+@require_POST
 def logout_view(request):
     """
     Cierra la sesión del usuario y redirige al login.
+
+    Solo acepta POST: un logout por GET permitiría logout-CSRF (cerrar la
+    sesión de un usuario con solo cargar una imagen/enlace).
     """
     username = request.user.username if request.user.is_authenticated else 'desconocido'
     logout(request)
