@@ -2166,6 +2166,8 @@ def aprobar_planilla(request, planilla_uuid):
             if hermano:
                 hermano.estado = 'cancelada'
                 hermano.save(update_fields=['estado'])
+            planilla.estado = 'rechazado'
+            planilla.save(update_fields=['estado'])
             if planilla.solicitud_cambio:
                 planilla.solicitud_cambio.estado = 'rechazado'
                 planilla.solicitud_cambio.save(update_fields=['estado'])

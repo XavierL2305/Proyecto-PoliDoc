@@ -3316,3 +3316,45 @@ class RobustezFase5Test(TestCase):
 
         msg = _mensaje_error(Transitorio('saturado'))
         self.assertIn('saturado', msg.lower())
+
+
+class AprobarPlanillaWebTest(BaseDocumentosTest):
+    """Flujo web de aprobación/rechazo de planillas (views.aprobar_planilla)."""
+
+    def setUp(self):
+        super().setUp()
+        self.planilla = PlanillaCambios.objects.create(
+            codigo='PC-TI-WEB-1',
+            documento=self.doc_activo,
+            tipo_cambio='modificacion',
+            justificacion='Cambio de prueba',
+            responsable=self.user_jefe_ti,
+            version_destino='2.0',
+            estado='en_revision',
+        )
+        self.aprobacion = AprobacionPlanilla.objects.create(
+            planilla=self.planilla,
+            aprobador=self.user_jefe_gg,
+            estado='pendiente',
+        )
+
+    def test_rechazo_fija_planilla_rechazada(self):
+        """Regresión: el rechazo web dejaba la planilla en 'en_revision'."""
+        from django.urls import reverse
+        self.client.login(username='jefe_gg', password='testpass123')
+        url = reverse('documentos:aprobar_planilla', args=[self.planilla.uuid])
+        resp = self.client.post(url, {'accion': 'rechazar', 'observaciones': 'No procede'})
+        self.assertEqual(resp.status_code, 302)
+        self.planilla.refresh_from_db()
+        self.aprobacion.refresh_from_db()
+        self.assertEqual(self.planilla.estado, 'rechazado')
+        self.assertEqual(self.aprobacion.estado, 'rechazada')
+
+    def test_sin_aprobacion_pendiente_no_da_500(self):
+        """Regresión: .get() sin guarda devolvía 500 si el usuario no tiene paso pendiente."""
+        from django.urls import reverse
+        # jefe_ti es jefe pero no tiene AprobacionPlanilla pendiente para esta planilla.
+        self.client.login(username='jefe_ti', password='testpass123')
+        url = reverse('documentos:aprobar_planilla', args=[self.planilla.uuid])
+        resp = self.client.post(url, {'accion': 'aprobar', 'observaciones': ''})
+        self.assertEqual(resp.status_code, 302)  # redirige con mensaje, no 500
