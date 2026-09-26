@@ -3139,3 +3139,134 @@ class ControlAccesoDepartamentoTest(BaseDocumentosTest):
         self.assertEqual(resp.status_code, 400)
         self.doc_activo.refresh_from_db()
         self.assertEqual(self.doc_activo.propietario, self.user_jefe_ti)
+
+
+class ValidadorArchivosTest(TestCase):
+    """Tests del validador de subidas (extensión + magic bytes + tamaño)."""
+
+    PDF = b'%PDF-1.4\n1 0 obj\n<<>>\nendobj\n'
+    OLE2 = b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1' + b'\x00' * 32
+    ZIP = b'PK\x03\x04' + b'\x00' * 32
+
+    def _validar(self, nombre, contenido):
+        from documentos.validators import validar_archivo_documento
+        return validar_archivo_documento(SimpleUploadedFile(nombre, contenido))
+
+    def test_pdf_valido(self):
+        self.assertIsNone(self._validar('doc.pdf', self.PDF))
+
+    def test_docx_valido(self):
+        self.assertIsNone(self._validar('doc.docx', self.ZIP))
+
+    def test_xlsx_valido(self):
+        self.assertIsNone(self._validar('hoja.xlsx', self.ZIP))
+
+    def test_doc_legacy_valido(self):
+        self.assertIsNone(self._validar('old.doc', self.OLE2))
+
+    def test_vsdx_valido(self):
+        self.assertIsNone(self._validar('mapa.vsdx', self.ZIP))
+
+    def test_extension_no_permitida(self):
+        from django.core.exceptions import ValidationError
+        with self.assertRaises(ValidationError) as ctx:
+            self._validar('malicioso.html', b'<script>alert(1)</script>')
+        self.assertEqual(ctx.exception.code, 'extension_no_permitida')
+
+    def test_extension_svg_no_permitida(self):
+        from django.core.exceptions import ValidationError
+        with self.assertRaises(ValidationError) as ctx:
+            self._validar('imagen.svg', b'<svg/>')
+        self.assertEqual(ctx.exception.code, 'extension_no_permitida')
+
+    def test_html_disfrazado_de_pdf(self):
+        """Contenido HTML renombrado a .pdf se rechaza por magic bytes."""
+        from django.core.exceptions import ValidationError
+        with self.assertRaises(ValidationError) as ctx:
+            self._validar('inocente.pdf', b'<html><script>alert(1)</script></html>')
+        self.assertEqual(ctx.exception.code, 'contenido_invalido')
+
+    def test_exe_disfrazado_de_docx(self):
+        """Un MZ (ejecutable) renombrado a .docx se rechaza."""
+        from django.core.exceptions import ValidationError
+        with self.assertRaises(ValidationError) as ctx:
+            self._validar('doc.docx', b'MZ\x90\x00' + b'\x00' * 32)
+        self.assertEqual(ctx.exception.code, 'contenido_invalido')
+
+    def test_pdf_disfrazado_de_docx(self):
+        """PDF real con extensión .docx: familia incompatible → rechazo."""
+        from django.core.exceptions import ValidationError
+        with self.assertRaises(ValidationError) as ctx:
+            self._validar('doc.docx', self.PDF)
+        self.assertEqual(ctx.exception.code, 'contenido_invalido')
+
+    def test_archivo_vacio(self):
+        from django.core.exceptions import ValidationError
+        with self.assertRaises(ValidationError) as ctx:
+            self._validar('vacio.pdf', b'')
+        self.assertEqual(ctx.exception.code, 'archivo_ilegible')
+
+    @override_settings(DOCUMENTOS_MAX_UPLOAD_MB=0)
+    def test_archivo_demasiado_grande(self):
+        from django.core.exceptions import ValidationError
+        with self.assertRaises(ValidationError) as ctx:
+            self._validar('grande.pdf', self.PDF)
+        self.assertEqual(ctx.exception.code, 'archivo_demasiado_grande')
+
+
+class SanitizadorHtmlTest(TestCase):
+    def setUp(self):
+        from documentos.sanitizers import sanitizar_html
+        self.sanitizar = sanitizar_html
+
+    def test_conserva_formato_legitimo(self):
+        html = '<h4>Título</h4><p>Texto <strong>fuerte</strong> y <em>cursiva</em></p>'
+        self.assertEqual(self.sanitizar(html), html)
+
+    def test_conserva_listas_y_tablas(self):
+        html = '<ul><li>a</li><li>b</li></ul><table><tr><td colspan="2">c</td></tr></table>'
+        self.assertEqual(self.sanitizar(html), html)
+
+    def test_elimina_script_y_su_contenido(self):
+        self.assertEqual(self.sanitizar('<script>alert(1)</script><p>ok</p>'), '<p>ok</p>')
+
+    def test_elimina_style_iframe_object(self):
+        resultado = self.sanitizar('<style>x</style><iframe src="e"></iframe><object></object><p>fin</p>')
+        self.assertEqual(resultado, '<p>fin</p>')
+
+    def test_bloquea_href_javascript(self):
+        resultado = self.sanitizar('<a href="javascript:alert(1)">x</a>')
+        self.assertNotIn('javascript', resultado)
+
+    def test_permite_href_seguro(self):
+        resultado = self.sanitizar('<a href="https://ejemplo.com">y</a>')
+        self.assertIn('href="https://ejemplo.com"', resultado)
+
+    def test_elimina_manejadores_on(self):
+        self.assertEqual(self.sanitizar('<p onclick="evil()">hi</p>'), '<p>hi</p>')
+
+    def test_elimina_img_con_onerror(self):
+        resultado = self.sanitizar('<img src="x" onerror="alert(1)"><p>ok</p>')
+        self.assertNotIn('onerror', resultado)
+        self.assertNotIn('<img', resultado)
+
+    def test_target_blank_anade_rel_noopener(self):
+        resultado = self.sanitizar('<a href="https://a.com" target="_blank">z</a>')
+        self.assertIn('rel="noopener noreferrer"', resultado)
+
+    def test_cadena_vacia(self):
+        self.assertEqual(self.sanitizar(''), '')
+        self.assertEqual(self.sanitizar(None), '')
+
+    def test_escape_de_texto(self):
+        resultado = self.sanitizar('<p>5 &lt; 10 &amp; 3 &gt; 1</p>')
+        self.assertNotIn('&amp;amp;', resultado)
+        self.assertIn('&lt;', resultado)
+
+    def test_form_formato_sanitiza_instructivo(self):
+        from documentos.forms import FormatoForm
+        form = FormatoForm()
+        form.cleaned_data = {'instructivo_html': '<p>hola</p><script>alert(1)</script>'}
+        limpio = form.clean_instructivo_html()
+        self.assertNotIn('<script', limpio)
+        self.assertIn('<p>hola</p>', limpio)

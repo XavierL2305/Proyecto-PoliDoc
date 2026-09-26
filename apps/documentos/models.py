@@ -6,6 +6,8 @@ from django.db.models import Max
 from django.contrib.auth.models import User
 from django.utils import timezone
 
+from .validators import validar_archivo_documento
+
 
 def generar_ruta_archivo(instance, filename):
     """Genera ruta ISO: documentos/{depto}/V-{cedula}/{codigo}_v{ver}_{fecha}.{ext}"""
@@ -250,7 +252,8 @@ class Documento(models.Model):
     # Archivos
     archivo = models.FileField(
         upload_to=generar_ruta_archivo, blank=True, null=True,
-        verbose_name='Archivo del Documento'
+        verbose_name='Archivo del Documento',
+        validators=[validar_archivo_documento],
     )
     archivo_pdf = models.FileField(
         upload_to=generar_ruta_archivo, blank=True, null=True,
@@ -460,7 +463,7 @@ class VersionDocumento(models.Model):
         null=True, blank=True
     )
     numero_version = models.CharField(max_length=20)
-    archivo = models.FileField(upload_to=generar_ruta_version, blank=True, null=True)
+    archivo = models.FileField(upload_to=generar_ruta_version, blank=True, null=True, validators=[validar_archivo_documento])
     cambios = models.TextField(blank=True, default='', verbose_name='Descripción de cambios')
     creado_por = models.ForeignKey(
         User, on_delete=models.PROTECT, related_name='versiones_creadas'
@@ -630,7 +633,7 @@ class PlanillaCambios(models.Model):
     )
     version_destino = models.CharField(max_length=20)
     estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='borrador')
-    archivo_adjunto = models.FileField(upload_to='planillas_cambios/%Y/%m/', blank=True, null=True)
+    archivo_adjunto = models.FileField(upload_to='planillas_cambios/%Y/%m/', blank=True, null=True, validators=[validar_archivo_documento])
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_aprobacion = models.DateTimeField(null=True, blank=True)
 
@@ -650,7 +653,8 @@ class PlanillaCambios(models.Model):
     )
     archivo_propuesto = models.FileField(
         upload_to='planillas_cambios/archivos/%Y/%m/', blank=True, null=True,
-        verbose_name='Archivo Propuesto'
+        verbose_name='Archivo Propuesto',
+        validators=[validar_archivo_documento],
     )
     archivo_propuesto_pdf = models.FileField(
         upload_to='planillas_cambios/pdf/%Y/%m/', blank=True, null=True,
@@ -1225,7 +1229,8 @@ class Formato(models.Model):
     instructivo_html = models.TextField(blank=True, default='', verbose_name='Instructivo (HTML)')
     plantilla_xlsx = models.FileField(
         upload_to='formatos/plantillas/%Y/', blank=True, null=True,
-        verbose_name='Plantilla Excel'
+        verbose_name='Plantilla Excel',
+        validators=[validar_archivo_documento],
     )
     plantilla_pdf = models.FileField(
         upload_to='formatos/pdf/', blank=True, null=True,
@@ -1434,7 +1439,8 @@ class SolicitudCambio(models.Model):
     estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='borrador')
     archivo_adjunto = models.FileField(
         upload_to='solicitudes_cambio/adjuntos/%Y/%m/', blank=True, null=True,
-        verbose_name='Archivo adjunto'
+        verbose_name='Archivo adjunto',
+        validators=[validar_archivo_documento],
     )
     observaciones = models.TextField(blank=True, default='', verbose_name='Observaciones')
     fecha_creacion = models.DateTimeField(auto_now_add=True)

@@ -55,11 +55,11 @@ function renderTabla(documentos) {
     tbody.innerHTML = documentos.map(doc => `
         <tr>
             <td><input type="checkbox" class="table-checkbox" value="${doc.id}"></td>
-            <td class="table-cell--bold">${doc.nombre}</td>
+            <td class="table-cell--bold">${escapeHtml(doc.nombre)}</td>
             <td><span class="badge badge--${doc.tipo}">${capitalize(doc.tipo)}</span></td>
-            <td><span class="badge badge--primary">${doc.tipo_archivo}</span></td>
+            <td><span class="badge badge--primary">${escapeHtml(doc.tipo_archivo)}</span></td>
             <td><span class="badge badge--${getEstadoBadge(doc.estado)}">${capitalize(doc.estado)}</span></td>
-            <td>${doc.propietario}</td>
+            <td>${escapeHtml(doc.propietario)}</td>
             <td class="table-cell--muted">${doc.fecha_modificacion}</td>
             <td class="table-actions-cell">
                 <button class="action-btn action-btn--icon" data-tooltip="Ver" onclick="verDocumento('${doc.tipo}', '${doc.id}')"><i class="fa-solid fa-eye"></i></button>
@@ -291,7 +291,7 @@ async function abrirModalTransferir(tipo, docId) {
         const select = document.getElementById('modal-transferir-usuario');
         select.innerHTML = '<option value="">Seleccione un usuario</option>';
         data.usuarios.forEach(u => {
-            select.innerHTML += `<option value="${u.id}">${u.nombre}</option>`;
+            select.innerHTML += `<option value="${u.id}">${escapeHtml(u.nombre)}</option>`;
         });
     } catch (error) {
         console.error('Error cargando usuarios:', error);
@@ -353,7 +353,7 @@ function mostrarAlerta(tipo, mensaje) {
     alerta.className = `alert alert--${tipo}`;
     alerta.innerHTML = `
         <span class="alert-icon"><i class="${iconos[tipo]}"></i></span>
-        <div class="alert-content">${mensaje}</div>
+        <div class="alert-content">${escapeHtml(mensaje)}</div>
         <button class="alert-close" onclick="this.parentElement.remove()">&times;</button>
     `;
 
@@ -368,6 +368,18 @@ function mostrarAlerta(tipo, mensaje) {
 }
 
 // Utilidades
+function escapeHtml(value) {
+    // Escapa datos de usuario/ servidor antes de interpolarlos en innerHTML,
+    // previniendo XSS almacenado (p.ej. un nombre de documento malicioso).
+    if (value === null || value === undefined) return '';
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 function capitalize(str) {
     return str.charAt(0).toUpperCase() + str.slice(1);
 }

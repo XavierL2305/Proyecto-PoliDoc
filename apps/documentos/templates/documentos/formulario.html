@@ -430,7 +430,7 @@
           tags.innerHTML = '';
           hidden.innerHTML = '';
           for (const [id, nombre] of Object.entries(selectedProcs)) {
-            tags.innerHTML += '<span class="depto-tag">' + nombre + '<button type="button" class="depto-tag-remove" onclick="removeProc(\'' + id + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
+            tags.innerHTML += '<span class="depto-tag">' + escapeHtml(nombre) + '<button type="button" class="depto-tag-remove" onclick="removeProc(\'' + id + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
             hidden.innerHTML += '<input type="hidden" name="procedimientos" value="' + id + '">';
           }
         }
@@ -459,7 +459,7 @@
           tags.innerHTML = '';
           hidden.innerHTML = '';
           for (const [id, nombre] of Object.entries(selectedForms)) {
-            tags.innerHTML += '<span class="depto-tag">' + nombre + '<button type="button" class="depto-tag-remove" onclick="removeFormulario(\'' + id + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
+            tags.innerHTML += '<span class="depto-tag">' + escapeHtml(nombre) + '<button type="button" class="depto-tag-remove" onclick="removeFormulario(\'' + id + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
             hidden.innerHTML += '<input type="hidden" name="formularios" value="' + id + '">';
           }
         }
@@ -488,7 +488,7 @@
           tags.innerHTML = '';
           hidden.innerHTML = '';
           for (const [id, nombre] of Object.entries(selectedDeptos)) {
-            tags.innerHTML += '<span class="depto-tag">' + nombre + '<button type="button" class="depto-tag-remove" onclick="removeDepto(\'' + id + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
+            tags.innerHTML += '<span class="depto-tag">' + escapeHtml(nombre) + '<button type="button" class="depto-tag-remove" onclick="removeDepto(\'' + id + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
             hidden.innerHTML += '<input type="hidden" name="departamentos_afectados" value="' + id + '">';
           }
         }
@@ -539,11 +539,11 @@
           tags.innerHTML = '';
           hidden.innerHTML = '';
           for (const [id, nombre] of Object.entries(selectedDocsRel)) {
-            tags.innerHTML += '<span class="depto-tag">' + nombre + '<button type="button" class="depto-tag-remove" onclick="removeDocRel(\'' + id + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
+            tags.innerHTML += '<span class="depto-tag">' + escapeHtml(nombre) + '<button type="button" class="depto-tag-remove" onclick="removeDocRel(\'' + id + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
             hidden.innerHTML += '<input type="hidden" name="documentos_relacionados" value="' + id + '">';
           }
           for (const codigo of pendingRefs) {
-            tags.innerHTML += '<span class="depto-tag depto-tag--pendiente" title="Documento aún no creado. Se enlazará automáticamente cuando sea aprobado.">' + codigo + ' <span class="badge badge--warning" style="font-size: 0.65rem; margin-left: 0.25rem;">Pendiente</span><button type="button" class="depto-tag-remove" onclick="removePendingRef(\'' + codigo + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
+            tags.innerHTML += '<span class="depto-tag depto-tag--pendiente" title="Documento aún no creado. Se enlazará automáticamente cuando sea aprobado.">' + escapeHtml(codigo) + ' <span class="badge badge--warning" style="font-size: 0.65rem; margin-left: 0.25rem;">Pendiente</span><button type="button" class="depto-tag-remove" onclick="removePendingRef(\'' + escapeAttrJs(codigo) + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
           }
           if (jsonInput) jsonInput.value = JSON.stringify(pendingRefs);
         }
@@ -689,7 +689,7 @@
           tags.innerHTML = '';
           hidden.innerHTML = '';
           for (const [id, nombre] of Object.entries(selectedResp)) {
-            tags.innerHTML += '<span class="depto-tag">' + nombre + '<button type="button" class="depto-tag-remove" onclick="removeResponsable(\'' + id + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
+            tags.innerHTML += '<span class="depto-tag">' + escapeHtml(nombre) + '<button type="button" class="depto-tag-remove" onclick="removeResponsable(\'' + id + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
             hidden.innerHTML += '<input type="hidden" name="responsables" value="' + id + '">';
           }
         }
@@ -720,7 +720,7 @@
           tags.innerHTML = '';
           const lista = Object.keys(selectedPart);
           for (const nombre of lista) {
-            tags.innerHTML += '<span class="depto-tag">' + nombre + '<button type="button" class="depto-tag-remove" onclick="removeParticipante(\'' + nombre.replace(/'/g, "\\'") + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
+            tags.innerHTML += '<span class="depto-tag">' + escapeHtml(nombre) + '<button type="button" class="depto-tag-remove" onclick="removeParticipante(\'' + escapeAttrJs(nombre) + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
           }
           hidden.value = JSON.stringify(lista);
         }

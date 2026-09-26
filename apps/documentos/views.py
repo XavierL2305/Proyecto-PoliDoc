@@ -1323,7 +1323,9 @@ def descargar_archivo(request, tipo, documento_id):
         return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
     extension = os.path.splitext(documento.archivo.name)[1]
     nombre_archivo = f"{documento.codigo}_v{documento.version_actual}{extension}"
-    return FileResponse(documento.archivo.open('rb'), as_attachment=True, filename=nombre_archivo)
+    response = FileResponse(documento.archivo.open('rb'), as_attachment=True, filename=nombre_archivo)
+    response['X-Content-Type-Options'] = 'nosniff'
+    return response
 
 
 @login_required(login_url='/login/')
@@ -1367,9 +1369,13 @@ def ver_archivo(request, tipo, documento_id):
             'Por seguridad, la visualización queda bloqueada; contacte al administrador.'
         )
         return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
-    return FileResponse(
+    response = FileResponse(
         archivo.open('rb'), as_attachment=False, filename=os.path.basename(archivo.name)
     )
+    # Defensa en profundidad: el navegador no debe "olfatear" un MIME distinto
+    # del declarado (evita que un archivo disfrazado se ejecute como HTML/JS).
+    response['X-Content-Type-Options'] = 'nosniff'
+    return response
 
 
 def _estado_resumen_ia(documento, usuario=None):

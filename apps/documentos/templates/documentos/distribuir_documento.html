@@ -330,7 +330,7 @@
     selectedUsers.forEach((name, id) => {
       tagsContainer.innerHTML += `
         <span class="user-tag">
-          ${name}
+          ${escapeHtml(name)}
           <button type="button" class="user-tag-remove" onclick="removeUser(${id})" title="Quitar">×</button>
         </span>`;
     });

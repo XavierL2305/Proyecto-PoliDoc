@@ -2,6 +2,7 @@
 {% load static %}
 
 {% block content %}
+<script src="{% static 'js/xss.js' %}"></script>
 <style>
   .app-layout { display: flex; height: 100vh; overflow: hidden; }
   .app-content { flex: 1; min-width: 0; display: flex; flex-direction: column; }

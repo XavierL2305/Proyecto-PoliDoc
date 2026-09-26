@@ -408,6 +408,10 @@ class FormatoForm(forms.ModelForm):
             'plantilla_xlsx': forms.FileInput(attrs={'class': 'form-input'}),
         }
 
+    def clean_instructivo_html(self):
+        from .sanitizers import sanitizar_html
+        return sanitizar_html(self.cleaned_data.get('instructivo_html', ''))
+
 
 class SeccionFormatoForm(forms.ModelForm):
     class Meta:

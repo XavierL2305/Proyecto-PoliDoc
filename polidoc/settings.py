@@ -228,6 +228,10 @@ AUDIT_TRUSTED_PROXIES = [
 # producción; hacerlo debilita la garantía de trazabilidad.
 AUDIT_FAIL_CLOSED = os.getenv('AUDIT_FAIL_CLOSED', 'True').lower() in ('true', '1', 't')
 
+# Tamaño máximo (MB) para la subida de documentos. Lo aplica el validador
+# apps/documentos/validators.py sobre los FileField de subida de usuario.
+DOCUMENTOS_MAX_UPLOAD_MB = int(os.getenv('DOCUMENTOS_MAX_UPLOAD_MB', '10'))
+
 # RESUMEN CON IA (Google AI Studio / Gemini)
 IA_RESUMEN_HABILITADO = os.getenv('IA_RESUMEN_HABILITADO', 'False').lower() in ('true', '1', 't')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')

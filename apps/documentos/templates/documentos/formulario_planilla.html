@@ -333,7 +333,7 @@
           tags.innerHTML = '';
           hidden.innerHTML = '';
           for (const [id, nombre] of Object.entries(selectedDeptos)) {
-            tags.innerHTML += '<span class="depto-tag">' + nombre + '<button type="button" class="depto-tag-remove" onclick="removeDepto(\'' + id + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
+            tags.innerHTML += '<span class="depto-tag">' + escapeHtml(nombre) + '<button type="button" class="depto-tag-remove" onclick="removeDepto(\'' + id + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
             hidden.innerHTML += '<input type="hidden" name="departamentos_afectados" value="' + id + '">';
           }
         }
@@ -379,7 +379,7 @@
           const jsonArray = [];
           for (const [uuid, doc] of Object.entries(selectedAsociados)) {
             const estadoBadge = doc.estado === 'activo' ? 'Activo' : 'Borrador';
-            tags.innerHTML += '<span class="depto-tag">' + doc.codigo + ' - ' + doc.nombre + ' <small>(' + estadoBadge + ')</small><button type="button" class="depto-tag-remove" onclick="removeAsociado(\'' + uuid + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
+            tags.innerHTML += '<span class="depto-tag">' + escapeHtml(doc.codigo) + ' - ' + escapeHtml(doc.nombre) + ' <small>(' + estadoBadge + ')</small><button type="button" class="depto-tag-remove" onclick="removeAsociado(\'' + escapeAttrJs(uuid) + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
             jsonArray.push({ uuid, codigo: doc.codigo, nombre: doc.nombre, estado: doc.estado, tipo: doc.tipo });
           }
           if (jsonInput) {
@@ -471,7 +471,7 @@
           tags.innerHTML = '';
           hidden.innerHTML = '';
           for (const [id, nombre] of Object.entries(selectedResp)) {
-            tags.innerHTML += '<span class="depto-tag">' + nombre + '<button type="button" class="depto-tag-remove" onclick="removeResponsable(\'' + id + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
+            tags.innerHTML += '<span class="depto-tag">' + escapeHtml(nombre) + '<button type="button" class="depto-tag-remove" onclick="removeResponsable(\'' + id + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
             hidden.innerHTML += '<input type="hidden" name="responsables_propuestos" value="' + id + '">';
           }
         }
@@ -512,7 +512,7 @@
           tags.innerHTML = '';
           const lista = Object.keys(selectedPart);
           for (const nombre of lista) {
-            tags.innerHTML += '<span class="depto-tag">' + nombre + '<button type="button" class="depto-tag-remove" onclick="removeParticipante(\'' + nombre.replace(/'/g, "\\'") + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
+            tags.innerHTML += '<span class="depto-tag">' + escapeHtml(nombre) + '<button type="button" class="depto-tag-remove" onclick="removeParticipante(\'' + escapeAttrJs(nombre) + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
           }
           hidden.value = JSON.stringify(lista);
         }
