@@ -2934,3 +2934,150 @@ class LimiteResumenIATest(BaseDocumentosTest):
         resp = self.client.post(self._url())
         self.assertNotEqual(resp.status_code, 429)
         self.assertEqual(ai.consumo_hoy(self.user_admin), 1)
+
+
+# =============================================================================
+# CONTROL DE ACCESO POR DEPARTAMENTO (Fase 1 — hardening IDOR)
+# =============================================================================
+
+class ControlAccesoDepartamentoTest(BaseDocumentosTest):
+    """Verifica que el acceso a documentos, versiones y solicitudes esté acotado
+    al departamento del usuario. Regresión de los IDOR detectados en la auditoría.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.client = Client()
+
+    # --- puede_ver_documento -------------------------------------------------
+    def test_puede_ver_documento_mismo_depto(self):
+        from documentos.permissions import puede_ver_documento
+        self.assertTrue(puede_ver_documento(self.user_trabajador, self.doc_activo))
+
+    def test_puede_ver_documento_otro_depto_no_publico(self):
+        from documentos.permissions import puede_ver_documento
+        # trabajador de TH no ve un doc activo no público de TI
+        self.assertFalse(puede_ver_documento(self.user_trabajador_otro, self.doc_activo))
+
+    def test_solicitud_pendiente_da_detalle_pero_no_contenido(self):
+        from documentos.permissions import puede_ver_documento
+        SolicitudDescarga.objects.create(
+            documento=self.doc_activo, solicitado_por=self.user_trabajador_otro,
+            estado='pendiente', motivo='x',
+        )
+        # Pendiente: sí ve el detalle/estado (comportamiento previsto)...
+        self.assertTrue(puede_ver_documento(self.user_trabajador_otro, self.doc_activo))
+        # ...pero NO el contenido del archivo hasta que se apruebe.
+        self.assertFalse(puede_ver_documento(
+            self.user_trabajador_otro, self.doc_activo, requerir_aprobada=True))
+
+    def test_solicitud_descarga_aprobada_si_da_lectura(self):
+        from documentos.permissions import puede_ver_documento
+        SolicitudDescarga.objects.create(
+            documento=self.doc_activo, solicitado_por=self.user_trabajador_otro,
+            estado='aprobada', motivo='x',
+        )
+        self.assertTrue(puede_ver_documento(self.user_trabajador_otro, self.doc_activo))
+        self.assertTrue(puede_ver_documento(
+            self.user_trabajador_otro, self.doc_activo, requerir_aprobada=True))
+
+    # --- historial_versiones -------------------------------------------------
+    def test_historial_versiones_otro_depto_denegado(self):
+        self.client.login(username='trab02', password='testpass123')
+        url = f'/documentos/{self.doc_activo.tipo_id}/{self.doc_activo.uuid}/versiones/'
+        self.assertEqual(self.client.get(url).status_code, 302)
+
+    def test_historial_versiones_mismo_depto_permitido(self):
+        self.client.login(username='jefe_ti', password='testpass123')
+        url = f'/documentos/{self.doc_activo.tipo_id}/{self.doc_activo.uuid}/versiones/'
+        self.assertEqual(self.client.get(url).status_code, 200)
+
+    # --- ver_archivo ---------------------------------------------------------
+    def test_ver_archivo_otro_depto_denegado(self):
+        self.client.login(username='trab02', password='testpass123')
+        url = f'/documentos/{self.doc_activo.tipo_id}/{self.doc_activo.uuid}/ver-archivo/'
+        self.assertEqual(self.client.get(url).status_code, 302)
+
+    # --- ver_archivo: content gate (solicitud pendiente no sirve el archivo) --
+    def test_ver_archivo_solicitud_pendiente_denegado(self):
+        SolicitudDescarga.objects.create(
+            documento=self.doc_th, solicitado_por=self.user_trabajador,
+            estado='pendiente', motivo='x',
+        )
+        self.client.login(username='trab01', password='testpass123')  # TI
+        url = f'/documentos/{self.doc_th.tipo_id}/{self.doc_th.uuid}/ver-archivo/'
+        self.assertEqual(self.client.get(url).status_code, 302)
+
+    def test_ver_archivo_solicitud_aprobada_permitido(self):
+        SolicitudDescarga.objects.create(
+            documento=self.doc_th, solicitado_por=self.user_trabajador,
+            estado='aprobada', motivo='x',
+        )
+        self.client.login(username='trab01', password='testpass123')  # TI
+        url = f'/documentos/{self.doc_th.tipo_id}/{self.doc_th.uuid}/ver-archivo/'
+        self.assertEqual(self.client.get(url).status_code, 200)
+
+    # --- solicitar_descarga: las solicitudes entre departamentos SÍ se permiten
+    def test_solicitar_descarga_cross_dept_permitido(self):
+        self.client.login(username='trab01', password='testpass123')  # TI
+        url = (f'/documentos/{self.doc_th.tipo_id}/{self.doc_th.uuid}'
+               f'/solicitar-descarga/')
+        resp = self.client.post(url, data={'motivo': 'Necesito el archivo'})
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(SolicitudDescarga.objects.filter(
+            documento=self.doc_th, solicitado_por=self.user_trabajador
+        ).exists())
+
+    # --- eliminar_version: jefe de OTRO depto no puede -----------------------
+    def test_eliminar_version_jefe_otro_depto_denegado(self):
+        version = VersionDocumento.objects.create(
+            documento=self.doc_activo, numero_version='1.0',
+            archivo=SimpleUploadedFile('v.pdf', b'c'), creado_por=self.user_jefe_ti,
+        )
+        self.client.login(username='jefe_th', password='testpass123')
+        url = (f'/documentos/{self.doc_activo.tipo_id}/{self.doc_activo.uuid}'
+               f'/eliminar-version/{version.id}/')
+        self.assertEqual(self.client.post(url).status_code, 302)
+        self.assertTrue(VersionDocumento.objects.filter(id=version.id, activa=True).exists())
+
+    def test_eliminar_version_jefe_mismo_depto_permitido(self):
+        version = VersionDocumento.objects.create(
+            documento=self.doc_activo, numero_version='1.0',
+            archivo=SimpleUploadedFile('v.pdf', b'c'), creado_por=self.user_jefe_ti,
+        )
+        self.client.login(username='jefe_ti', password='testpass123')
+        url = (f'/documentos/{self.doc_activo.tipo_id}/{self.doc_activo.uuid}'
+               f'/eliminar-version/{version.id}/')
+        self.assertEqual(self.client.post(url).status_code, 302)
+        self.assertFalse(VersionDocumento.objects.filter(id=version.id, activa=True).exists())
+
+    # --- crear_planilla: sin permiso de edición no se puede ------------------
+    def test_crear_planilla_sin_permiso_edicion_denegado(self):
+        self.client.login(username='trab01', password='testpass123')  # TI, no propietario
+        url = ('/documentos/planilla-cambios/nueva/'
+               f'?tipo={self.doc_activo.tipo_id}&doc_uuid={self.doc_activo.uuid}')
+        antes = PlanillaCambios.objects.count()
+        self.assertEqual(self.client.get(url).status_code, 302)
+        self.assertEqual(PlanillaCambios.objects.count(), antes)
+
+    # --- api documentos_por_departamento: scope de visibilidad ---------------
+    def test_api_documentos_por_departamento_scope(self):
+        self.client.login(username='trab02', password='testpass123')  # TH
+        url = f'/documentos/api/procedimientos/?departamento={self.depto_ti.id}'
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 200)
+        uuids = {str(d['uuid']) for d in resp.json()['documentos']}
+        self.assertIn(str(self.doc_publico.uuid), uuids)     # público de TI: visible
+        self.assertNotIn(str(self.doc_activo.uuid), uuids)   # no público de TI: oculto
+
+    # --- _puede_ver_solicitud: jefe acotado a su depto -----------------------
+    def test_puede_ver_solicitud_jefe_otro_depto_denegado(self):
+        from documentos.views import _puede_ver_solicitud
+        solicitud = SimpleNamespace(
+            solicitante=self.user_trabajador,
+            documento=self.doc_activo,      # depto TI, jefe = jefe_ti
+            departamento=self.depto_ti,
+        )
+        self.assertTrue(_puede_ver_solicitud(self.user_jefe_ti, solicitud))
+        self.assertFalse(_puede_ver_solicitud(self.user_jefe_th, solicitud))
+        self.assertTrue(_puede_ver_solicitud(self.user_admin, solicitud))

@@ -1321,7 +1321,9 @@ def ver_archivo(request, tipo, documento_id):
     if not documento:
         raise Http404
     from .permissions import puede_ver_documento
-    if not puede_ver_documento(request.user, documento):
+    # El visor sirve el CONTENIDO del archivo: una solicitud de descarga/acceso
+    # pendiente o rechazada NO debe dar acceso al archivo (solo a su detalle).
+    if not puede_ver_documento(request.user, documento, requerir_aprobada=True):
         messages.error(request, 'No tienes permisos para ver este documento.')
         return redirect('documentos:mis_documentos')
     archivo = documento.archivo_pdf or documento.archivo
@@ -1502,6 +1504,12 @@ def aprobar_descarga(request, solicitud_id):
 @login_required(login_url='/login/')
 def historial_versiones(request, tipo, documento_id):
     documento = get_documento(tipo, documento_id)
+    if not documento:
+        raise Http404
+    from .permissions import puede_ver_documento
+    if not puede_ver_documento(request.user, documento):
+        messages.error(request, 'No tienes permisos para ver este documento.')
+        return redirect('documentos:mis_documentos')
     versiones = VersionDocumento.objects.filter(documento=documento, activa=True)
     solicitudes_pendientes = SolicitudAprobacionDocumento.objects.filter(
         documento=documento, accion_solicitud='eliminar_version', estado='pendiente'
@@ -1518,7 +1526,9 @@ def eliminar_version(request, tipo, documento_id, version_id):
     version = get_object_or_404(VersionDocumento, id=version_id, documento=documento, activa=True)
     user = request.user
     perfil = user.perfil
-    es_jefe_o_admin = perfil.es_administrador or perfil.es_jefe
+    from .permissions import es_jefe_de_departamento
+    # Un jefe solo actúa sobre documentos de SU departamento; admin sobre todos.
+    es_jefe_o_admin = perfil.es_administrador or es_jefe_de_departamento(user, documento)
     es_propietario = documento.propietario == user
     es_creador = version.creado_por == user
 
@@ -1869,8 +1879,10 @@ def crear_planilla(request):
         if documento.estado == 'en_revision':
             messages.error(request, 'El documento está en revisión. Espere a que se apruebe o rechace.')
             return redirect('documentos:detalle', tipo=tipo_doc, documento_id=documento.uuid)
-        if (documento.tipo_id and documento.tipo.key == 'descripcion_procesos'
-                and not puede_editar_documento(request.user, documento)):
+        # Exigir permiso de edición sobre el documento en TODOS los tipos, no solo
+        # en descripción de procesos. Evita que cualquier usuario someta una planilla
+        # sobre un documento ajeno y lo bloquee en estado 'en_revision'.
+        if not puede_editar_documento(request.user, documento):
             messages.error(request, 'No tienes permisos para editar este documento.')
             return redirect('documentos:detalle', tipo=tipo_doc, documento_id=documento.uuid)
 
@@ -2594,6 +2606,10 @@ def auditoria_reporte_pdf(request):
     filtro_categoria = request.GET.get('accion_categoria', '').strip()
     formato = request.GET.get('formato', 'letter')
     orientacion = request.GET.get('orientacion', 'landscape')
+
+    # Igual que auditoria_lista: un no-admin solo puede reportar sus propios logs.
+    if not request.user.perfil.es_administrador:
+        filtro_usuario = request.user.username
 
     if not fecha_inicio:
         fecha_inicio = (timezone.now() - timedelta(days=7)).strftime('%Y-%m-%d')
@@ -3602,13 +3618,17 @@ def campo_crear(request, formato_id, seccion_id):
 
 def _puede_ver_solicitud(user, solicitud):
     """Checks if the user can view/download a SolicitudCambio."""
-    if user.perfil.es_administrador or user.perfil.es_jefe:
+    if user.perfil.es_administrador:
         return True
     if solicitud.solicitante == user:
         return True
+    # Un jefe solo ve solicitudes de su propio departamento (no las ajenas).
     if solicitud.documento and solicitud.documento.departamento:
         if solicitud.documento.departamento.jefe == user:
             return True
+    depto_sol = getattr(solicitud, 'departamento', None)
+    if depto_sol and depto_sol.jefe == user:
+        return True
     return False
 
 

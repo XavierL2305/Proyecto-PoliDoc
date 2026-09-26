@@ -187,6 +187,14 @@ def transferir_propiedad(request, tipo, doc_id):
         nuevo_propietario = User.objects.get(id=nuevo_propietario_id)
     except User.DoesNotExist:
         return JsonResponse({'error': 'Usuario no encontrado'}, status=404)
+    # Igual que la vista web: el nuevo propietario debe ser del mismo departamento.
+    nuevo_perfil = getattr(nuevo_propietario, 'perfil', None)
+    depto_doc = getattr(doc, 'departamento', None)
+    if not nuevo_perfil or nuevo_perfil.departamento != depto_doc:
+        return JsonResponse(
+            {'error': 'El nuevo propietario debe pertenecer al mismo departamento del documento'},
+            status=400
+        )
     doc.propietario = nuevo_propietario
     doc.save(update_fields=['propietario'])
     from autenticacion.models import Notificacion
@@ -271,6 +279,13 @@ def documentos_por_departamento(request):
     if not depto_id:
         return JsonResponse({'documentos': [], 'total': 0})
     qs = Documento.objects.filter(departamento_id=depto_id, estado='activo')
+    # Limitar a lo visible para el usuario: su propio departamento o documentos públicos.
+    perfil = getattr(request.user, 'perfil', None)
+    mi_depto_id = perfil.departamento_id if perfil else None
+    visible = Q(es_publico=True)
+    if mi_depto_id:
+        visible |= Q(departamento_id=mi_depto_id)
+    qs = qs.filter(visible)
     if tipo:
         qs = qs.filter(tipo=tipo)
     if buscar:
@@ -287,6 +302,13 @@ def documentos_por_departamentos(request):
     if not depto_ids:
         return JsonResponse({'documentos': []})
     qs = Documento.objects.filter(departamento_id__in=depto_ids, estado__in=['borrador', 'activo'])
+    # Borradores solo del propio departamento; de otros departamentos solo públicos activos.
+    perfil = getattr(request.user, 'perfil', None)
+    mi_depto_id = perfil.departamento_id if perfil else None
+    visible = Q(es_publico=True, estado='activo')
+    if mi_depto_id:
+        visible |= Q(departamento_id=mi_depto_id)
+    qs = qs.filter(visible)
     if tipo:
         qs = qs.filter(tipo=tipo)
     docs = qs.values('id', 'uuid', 'nombre', 'codigo', 'estado', 'tipo')

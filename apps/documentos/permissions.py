@@ -50,7 +50,7 @@ def puede_transferir(usuario, documento):
     return False, "sin_permiso"
 
 
-def puede_ver_documento(usuario, documento):
+def puede_ver_documento(usuario, documento, requerir_aprobada=False):
     """Verifica si un usuario tiene permiso para ver un documento.
 
     Retorna True si ALGUNA de estas condiciones se cumple:
@@ -63,6 +63,11 @@ def puede_ver_documento(usuario, documento):
     - Tiene asignación activa con puede_leer
     - Tiene distribución activa (revocado=False)
     - Está involucrado en una solicitud del documento
+
+    Con ``requerir_aprobada=True`` las solicitudes de descarga/acceso solo
+    cuentan si están APROBADAS. Se usa para servir el CONTENIDO del archivo
+    (visor), de modo que una solicitud pendiente no filtre el documento antes
+    de su aprobación — aunque sí permita ver la página de detalle/estado.
     """
     if not hasattr(usuario, 'perfil'):
         return False
@@ -116,19 +121,18 @@ def puede_ver_documento(usuario, documento):
     ).exists():
         return True
 
-    if SolicitudDescarga.objects.filter(
-        documento=documento, solicitado_por=usuario
-    ).exists():
+    filtro_descarga = {'documento': documento, 'solicitado_por': usuario}
+    if requerir_aprobada:
+        filtro_descarga['estado'] = 'aprobada'
+    if SolicitudDescarga.objects.filter(**filtro_descarga).exists():
         return True
     if AprobacionDescarga.objects.filter(
         solicitud__documento=documento, aprobador=usuario
     ).exists():
         return True
-    if SolicitudAccesoDocumento.objects.filter(
-        documento=documento
-    ).filter(
-        Q(solicitante=usuario) | Q(jefe_destino=usuario)
-    ).exists():
+    q_acceso = Q(jefe_destino=usuario)
+    q_acceso |= Q(solicitante=usuario, estado='aprobada') if requerir_aprobada else Q(solicitante=usuario)
+    if SolicitudAccesoDocumento.objects.filter(documento=documento).filter(q_acceso).exists():
         return True
 
     return False
