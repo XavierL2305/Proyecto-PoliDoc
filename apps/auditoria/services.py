@@ -19,6 +19,12 @@ _db = None
 _log_counter = {}
 _counter_date = None
 
+# Campos que NO entran en el HMAC de integridad: 'integridad' (contiene el
+# propio hash), 'metadata' y '_id' (se añaden después de firmar). Excluirlos
+# permite que verificar_integridad_log() reproduzca el hash sobre el documento
+# tal como lo devuelve MongoDB.
+_CAMPOS_EXCLUIDOS_HASH = frozenset({'integridad', 'metadata', '_id'})
+
 
 def _obtener_clave_hmac():
     """Clave para el HMAC de integridad. Vive en el entorno de la app, NUNCA en
@@ -134,7 +140,12 @@ def calcular_hash(datos):
 def calcular_hash_registro(log_entry):
     """
     Calcula el HMAC-SHA256 de un registro completo de auditoría.
-    Excluye el campo 'integridad' para evitar recursión.
+
+    Excluye los campos que NO forman parte de la carga firmada canónica:
+    'integridad' (contiene el propio hash), 'metadata' y '_id' (ambos se
+    añaden DESPUÉS de calcular el hash: metadata en la inserción y _id lo
+    genera MongoDB). Excluirlos aquí hace que el hash recalculado al VERIFICAR
+    un registro leído de Mongo coincida con el firmado al insertarlo.
 
     Se usa HMAC (no SHA-256 plano) con una clave que vive en el entorno de la
     app: quien pueda escribir en MongoDB pero no conozca la clave NO puede
@@ -142,7 +153,10 @@ def calcular_hash_registro(log_entry):
     detecta. ISO 27001 A.12.4.2. El encadenado ``prev_hash`` (incluido en el
     registro y por tanto cubierto por el HMAC) añade evidencia de cadena.
     """
-    datos_para_hash = {k: v for k, v in log_entry.items() if k != 'integridad'}
+    datos_para_hash = {
+        k: v for k, v in log_entry.items()
+        if k not in _CAMPOS_EXCLUIDOS_HASH
+    }
     datos_str = json.dumps(datos_para_hash, sort_keys=True, default=str)
     return hmac.new(_obtener_clave_hmac(), datos_str.encode(), hashlib.sha256).hexdigest()
 
@@ -229,7 +243,11 @@ def registrar_log_iso(usuario, accion_tipo, accion_categoria,
     """
     try:
         db = get_mongo_client()
+        # BSON almacena datetime con precisión de MILISEGUNDOS. Truncamos 'now'
+        # para que el timestamp firmado al insertar sea idéntico al que se lee
+        # de Mongo al verificar; si no, el HMAC recalculado nunca coincidiría.
         now = datetime.utcnow()
+        now = now.replace(microsecond=(now.microsecond // 1000) * 1000)
 
         # Generar IDs únicos (contador atómico si hay Mongo real)
         log_id = generar_log_id(db)
@@ -642,6 +660,19 @@ def registrar_cambio_version(usuario, recurso_tipo, recurso_id,
 # FUNCIÓN DE VERIFICACIÓN DE INTEGRIDAD
 # =============================================================================
 
+def _es_registro_hmac(integridad):
+    """True si el registro se firmó con el esquema HMAC actual (>= 1.1).
+
+    Los registros anteriores a la Fase 3 se firmaron con SHA-256 plano y sin
+    prev_hash; no son reproducibles con el HMAC actual y deben tratarse como
+    "esquema antiguo" en vez de "alterados".
+    """
+    if not isinstance(integridad, dict):
+        return False
+    return (integridad.get('algoritmo') == 'hmac-sha256'
+            or integridad.get('version_registro') == '1.1')
+
+
 def verificar_integridad_log(log_id):
     """
     Verifica que el hash de un registro no haya sido alterado.
@@ -660,6 +691,14 @@ def verificar_integridad_log(log_id):
         if 'integridad' not in log_entry:
             return {'valido': False, 'mensaje': 'Registro sin hash de integridad'}
 
+        if not _es_registro_hmac(log_entry.get('integridad')):
+            return {
+                'valido': False,
+                'esquema_antiguo': True,
+                'mensaje': ('Registro firmado con esquema anterior a 1.1 '
+                            '(SHA-256 plano); no verificable con el HMAC actual'),
+            }
+
         hash_almacenado = _extraer_hash(log_entry['integridad'].get('hash'))
         hash_calculado = calcular_hash_registro(log_entry)
 
@@ -674,40 +713,59 @@ def verificar_integridad_log(log_id):
 
 
 def verificar_cadena_auditoria(limite=1000):
-    """Verifica el encadenado prev_hash de los últimos registros.
+    """Verifica integridad y encadenado prev_hash de los registros MÁS RECIENTES.
 
-    Recorre los registros en orden cronológico y comprueba que el ``prev_hash``
-    de cada uno coincida con el hash de integridad del anterior. Detecta
-    alteraciones, eliminaciones o reordenamientos en la cadena de auditoría.
+    Toma los últimos ``limite`` registros (orden descendente) y los recorre en
+    orden cronológico comprobando, para cada uno: (a) que su HMAC de integridad
+    sea válido (no fue alterado) y (b) que su ``prev_hash`` coincida con el hash
+    del registro anterior de la ventana. Detecta alteraciones, eliminaciones o
+    reordenamientos en la cadena de auditoría.
 
-    Retorna: dict {'valido': bool, 'revisados': int, 'primera_rotura': str|None}
+    Limitación conocida: los registros con ``prev_hash`` vacío (primeros de la
+    cadena o escritos con Mongo mockeado) no validan el enlace, y dos escrituras
+    simultáneas pueden bifurcar la cadena. Aceptable para el volumen de una
+    clínica; el HMAC sí garantiza que cada registro individual no fue alterado.
+
+    Retorna: dict {'valido', 'revisados', 'primera_rotura', 'mensaje'}
     """
     try:
         db = get_mongo_client()
-        logs = list(db.audit_logs.find().sort('timestamp', ASCENDING).limit(limite))
+        # DESC + limit toma los MÁS RECIENTES; se invierte para recorrerlos en
+        # orden cronológico y poder validar el enlace prev_hash → anterior.
+        logs = list(db.audit_logs.find().sort('timestamp', DESCENDING).limit(limite))
+        logs.reverse()
     except Exception as e:
         logger.error(f"Error al verificar cadena de auditoría: {e}")
         return {'valido': False, 'revisados': 0, 'primera_rotura': None,
                 'mensaje': f'Error al consultar: {str(e)}'}
 
     hash_anterior = ''
+    revisados = 0
     for log in logs:
         if not isinstance(log, dict):
             continue
-        prev = log.get('prev_hash', '')
-        # El primer registro de la ventana puede apuntar a uno fuera de rango;
-        # solo se valida el enlace cuando prev no está vacío.
-        if prev and hash_anterior and prev != hash_anterior:
-            return {
-                'valido': False,
-                'revisados': len(logs),
-                'primera_rotura': log.get('log_id'),
-                'mensaje': f"Cadena rota en {log.get('log_id')}",
-            }
+        revisados += 1
+        log_id = log.get('log_id')
+
+        # (a) Integridad individual: el HMAC almacenado debe reproducirse.
+        # Solo aplica a registros del esquema actual (>= 1.1); los anteriores a
+        # la Fase 3 se firmaron con SHA-256 plano y no son reproducibles aquí,
+        # por lo que se omiten (no se reportan como alterados).
         integridad = log.get('integridad', {})
+        if _es_registro_hmac(integridad):
+            hash_almacenado = _extraer_hash(integridad.get('hash'))
+            if hash_almacenado and not hmac.compare_digest(hash_almacenado, calcular_hash_registro(log)):
+                return {'valido': False, 'revisados': revisados, 'primera_rotura': log_id,
+                        'mensaje': f'Hash inválido (registro alterado) en {log_id}'}
+
+        # (b) Enlace con el anterior.
+        prev = log.get('prev_hash', '')
+        if prev and hash_anterior and prev != hash_anterior:
+            return {'valido': False, 'revisados': revisados, 'primera_rotura': log_id,
+                    'mensaje': f'Cadena rota en {log_id}'}
         hash_anterior = integridad.get('hash', '') if isinstance(integridad, dict) else ''
 
-    return {'valido': True, 'revisados': len(logs), 'primera_rotura': None,
+    return {'valido': True, 'revisados': revisados, 'primera_rotura': None,
             'mensaje': 'Cadena de auditoría íntegra'}
 
 

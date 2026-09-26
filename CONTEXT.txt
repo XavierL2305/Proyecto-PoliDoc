@@ -335,6 +335,8 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
        - registrar_cambio_version(): Control de versiones
        - verificar_integridad_log(): Verificación de hash (HMAC, compare_digest)
        - verificar_cadena_auditoria(): Valida el encadenado prev_hash de la cadena
+         (registros MÁS recientes; recalcula HMAC por registro). Los registros
+         pre-1.1 (SHA-256 plano) se marcan "esquema antiguo", no "alterados".
        - obtener_logs(): Consulta con filtros
        - obtener_logs_por_correlation_id(): Trazabilidad
        - crear_indices_mongo(): Configurar índices

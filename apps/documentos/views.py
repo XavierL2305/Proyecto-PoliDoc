@@ -1678,37 +1678,24 @@ def renovar_vencimiento(request, tipo, documento_id):
         )
     # Auditoría
     try:
-        from auditoria.services import get_mongo_client, generar_log_id, generar_correlation_id
-        db = get_mongo_client()
-        db.audit_logs.insert_one({
-            'log_id': generar_log_id(),
-            'correlation_id': generar_correlation_id(),
-            'timestamp': timezone.now(),
-            'usuario': {
-                'username': user.username,
-                'nombre_completo': user.get_full_name(),
-                'rol': perfil.rol,
-            },
-            'accion': {
-                'tipo': 'renovacion',
-                'categoria': 'vencimiento',
-                'descripcion': f'Vencimiento renovado: {fecha_anterior} → {fecha_nueva_dt}',
-            },
-            'recurso': {
-                'tipo': tipo,
-                'id': str(documento.uuid),
-                'nombre': documento.nombre,
-                'codigo': documento.codigo,
-            },
-            'resultado': {'exitoso': True},
-            'contexto': {
-                'ip_address': request.META.get('REMOTE_ADDR'),
-                'user_agent': request.META.get('HTTP_USER_AGENT'),
-            },
-            'integridad': {'hash': ''},
-        })
-    except Exception:
-        pass
+        from auditoria.services import registrar_log_iso
+        from auditoria.middleware import get_client_ip
+        registrar_log_iso(
+            usuario=user,
+            accion_tipo='renovacion',
+            accion_categoria='vencimiento',
+            recurso_tipo=tipo,
+            recurso_id=str(documento.uuid),
+            recurso_codigo=documento.codigo,
+            recurso_nombre=documento.nombre,
+            detalles={'fecha_anterior': str(fecha_anterior), 'fecha_nueva': str(fecha_nueva_dt)},
+            resultado_exitoso=True,
+            resultado_mensaje=f'Vencimiento renovado: {fecha_anterior} → {fecha_nueva_dt}',
+            ip_address=get_client_ip(),
+            user_agent=request.META.get('HTTP_USER_AGENT'),
+        )
+    except Exception as exc:
+        logger.error("Auditoría renovación vencimiento: %s", exc)
     msg = f'Vencimiento renovado hasta el {fecha_nueva_dt}.'
     if reactivado:
         msg += ' El documento fue reactivado.'
@@ -1768,37 +1755,24 @@ def establecer_vigencia(request, tipo, documento_id):
     messages.success(request, f'Período de vigencia establecido en {periodo.nombre}. Vencimiento: {documento.fecha_vencimiento}.')
     # Auditoría
     try:
-        from auditoria.services import get_mongo_client, generar_log_id, generar_correlation_id
-        db = get_mongo_client()
-        db.audit_logs.insert_one({
-            'log_id': generar_log_id(),
-            'correlation_id': generar_correlation_id(),
-            'timestamp': timezone.now(),
-            'usuario': {
-                'username': user.username,
-                'nombre_completo': user.get_full_name(),
-                'rol': perfil.rol,
-            },
-            'accion': {
-                'tipo': 'cambio_vigencia',
-                'categoria': 'vencimiento',
-                'descripcion': f'Vigencia establecida: {periodo.nombre} (vencimiento {documento.fecha_vencimiento})',
-            },
-            'recurso': {
-                'tipo': tipo,
-                'id': str(documento.uuid),
-                'nombre': documento.nombre,
-                'codigo': documento.codigo,
-            },
-            'resultado': {'exitoso': True},
-            'contexto': {
-                'ip_address': request.META.get('REMOTE_ADDR'),
-                'user_agent': request.META.get('HTTP_USER_AGENT'),
-            },
-            'integridad': {'hash': ''},
-        })
-    except Exception:
-        pass
+        from auditoria.services import registrar_log_iso
+        from auditoria.middleware import get_client_ip
+        registrar_log_iso(
+            usuario=user,
+            accion_tipo='cambio_vigencia',
+            accion_categoria='vencimiento',
+            recurso_tipo=tipo,
+            recurso_id=str(documento.uuid),
+            recurso_codigo=documento.codigo,
+            recurso_nombre=documento.nombre,
+            detalles={'periodo': periodo.nombre, 'fecha_vencimiento': str(documento.fecha_vencimiento)},
+            resultado_exitoso=True,
+            resultado_mensaje=f'Vigencia establecida: {periodo.nombre} (vencimiento {documento.fecha_vencimiento})',
+            ip_address=get_client_ip(),
+            user_agent=request.META.get('HTTP_USER_AGENT'),
+        )
+    except Exception as exc:
+        logger.error("Auditoría cambio de vigencia: %s", exc)
     return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
 
 
@@ -3299,37 +3273,28 @@ def revocar_distribucion(request, tipo, documento_id, dist_id):
         distribucion.error_revocacion = error
         distribucion.save(update_fields=['error_revocacion'])
     try:
-        from auditoria.services import get_mongo_client, generar_log_id, generar_correlation_id
-        db = get_mongo_client()
-        db.audit_logs.insert_one({
-            'log_id': generar_log_id(),
-            'correlation_id': generar_correlation_id(),
-            'timestamp': tz.now(),
-            'usuario': {
-                'username': user.username,
-                'nombre_completo': user.get_full_name(),
-                'rol': user.perfil.rol,
-            },
-            'accion': {
-                'tipo': 'revocacion_distribucion',
-                'categoria': 'distribucion',
-                'descripcion': f'Distribución #{distribucion.id} revocada: {distribucion.usuario.username} {motivo}',
-            },
-            'recurso': {
-                'tipo': tipo,
-                'id': str(documento.uuid),
-                'nombre': documento.nombre,
-                'codigo': documento.codigo,
-            },
-            'resultado': {'exitoso': True},
-            'contexto': {
+        from auditoria.services import registrar_log_iso
+        from auditoria.middleware import get_client_ip
+        registrar_log_iso(
+            usuario=user,
+            accion_tipo='revocacion_distribucion',
+            accion_categoria='distribucion',
+            recurso_tipo=tipo,
+            recurso_id=str(documento.uuid),
+            recurso_codigo=documento.codigo,
+            recurso_nombre=documento.nombre,
+            detalles={
                 'dist_id': distribucion.id,
                 'destinatario': distribucion.usuario.username,
                 'motivo': motivo,
             },
-        })
-    except Exception:
-        pass
+            resultado_exitoso=True,
+            resultado_mensaje=f'Distribución #{distribucion.id} revocada: {distribucion.usuario.username} {motivo}',
+            ip_address=get_client_ip(),
+            user_agent=request.META.get('HTTP_USER_AGENT'),
+        )
+    except Exception as exc:
+        logger.error("Auditoría revocación de distribución: %s", exc)
     messages.success(
         request,
         f'Distribución a {distribucion.usuario.get_full_name() or distribucion.usuario.username} revocada correctamente.',
@@ -3497,34 +3462,32 @@ def formato_publicar(request, formato_id):
     )
 
     try:
-        from auditoria.services import get_mongo_client, generar_log_id, generar_correlation_id
-        db = get_mongo_client()
-        db.audit_logs.insert_one({
-            'log_id': generar_log_id(),
-            'correlation_id': generar_correlation_id(),
-            'timestamp': timezone.now(),
-            'usuario': {
-                'username': request.user.username,
-                'nombre_completo': request.user.get_full_name(),
-                'rol': request.user.perfil.rol,
+        from auditoria.services import registrar_log_iso
+        from auditoria.middleware import get_client_ip
+        registrar_log_iso(
+            usuario=request.user,
+            accion_tipo='publicacion_formato',
+            accion_categoria='configuracion',
+            recurso_tipo='formato',
+            recurso_id=str(formato.id),
+            recurso_codigo=formato.codigo,
+            recurso_nombre=formato.nombre,
+            detalles={
+                'tipo': tipo,
+                'version_anterior': version_anterior,
+                'version_nueva': formato.version,
+                'edicion_anterior': edicion_anterior,
+                'edicion_nueva': formato.edicion,
             },
-            'accion': {
-                'tipo': 'publicacion_formato',
-                'categoria': 'configuracion',
-                'descripcion': (
-                    f'{formato.codigo} {tipo}: '
-                    f'v{version_anterior}E{edicion_anterior} → '
-                    f'v{formato.version}E{formato.edicion}'
-                ),
-            },
-            'recurso': {
-                'tipo': 'formato', 'id': str(formato.id),
-                'nombre': formato.nombre, 'codigo': formato.codigo,
-            },
-            'resultado': {'exitoso': True},
-            'contexto': {'ip_address': '', 'user_agent': ''},
-            'integridad': {'hash': ''},
-        })
+            resultado_exitoso=True,
+            resultado_mensaje=(
+                f'{formato.codigo} {tipo}: '
+                f'v{version_anterior}E{edicion_anterior} → '
+                f'v{formato.version}E{formato.edicion}'
+            ),
+            ip_address=get_client_ip(),
+            user_agent=request.META.get('HTTP_USER_AGENT'),
+        )
     except Exception as exc:
         logger.error("Auditoría publicación formato: %s", exc)
 

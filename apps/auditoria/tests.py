@@ -123,6 +123,21 @@ class CalcularHashRegistroTest(TestCase):
         h2 = calcular_hash_registro(registro)
         self.assertEqual(h1, h2)
 
+    def test_excluye_id_y_metadata(self):
+        """_id y metadata se añaden tras firmar: no deben alterar el hash.
+
+        Regresión del bug que hacía que verificar_integridad_log() fallara
+        siempre con registros reales leídos de MongoDB (que traen _id y
+        metadata, ausentes al calcular el hash en la inserción).
+        """
+        base = {'log_id': 'LOG-001', 'datos': 'test', 'prev_hash': ''}
+        hash_base = calcular_hash_registro(base)
+        desde_mongo = dict(base)
+        desde_mongo['_id'] = '507f1f77bcf86cd799439011'
+        desde_mongo['metadata'] = {'retencion_anos': 10}
+        desde_mongo['integridad'] = {'hash': 'sha256:cualquiera'}
+        self.assertEqual(calcular_hash_registro(desde_mongo), hash_base)
+
 
 class DescripcionAccionTest(TestCase):
     """Tests de _generar_descripcion_accion."""
@@ -509,7 +524,11 @@ class VerificarIntegridadLogTest(TestCase):
             'datos': 'test',
         }
         hash_val = calcular_hash_registro(registro)
-        registro['integridad'] = {'hash': f'sha256:{hash_val}'}
+        registro['integridad'] = {
+            'hash': f'sha256:{hash_val}',
+            'algoritmo': 'hmac-sha256',
+            'version_registro': '1.1',
+        }
         db = MagicMock()
         db.audit_logs.find_one.return_value = registro
         mock_mongo.return_value = db
@@ -521,7 +540,11 @@ class VerificarIntegridadLogTest(TestCase):
         registro = {
             'log_id': 'LOG-001',
             'datos': 'test',
-            'integridad': {'hash': 'sha256:hash_falso'}
+            'integridad': {
+                'hash': 'sha256:hash_falso',
+                'algoritmo': 'hmac-sha256',
+                'version_registro': '1.1',
+            },
         }
         db = MagicMock()
         db.audit_logs.find_one.return_value = registro
@@ -529,6 +552,23 @@ class VerificarIntegridadLogTest(TestCase):
         resultado = verificar_integridad_log('LOG-001')
         self.assertFalse(resultado['valido'])
         self.assertIn('alteración', resultado['mensaje'])
+
+    @patch('auditoria.services.get_mongo_client')
+    def test_registro_esquema_antiguo(self, mock_mongo):
+        """Un registro pre-1.1 (SHA-256 plano) no se verifica con el HMAC actual
+        y se marca como esquema antiguo, no como alterado."""
+        registro = {
+            'log_id': 'LOG-001',
+            'datos': 'test',
+            'integridad': {'hash': 'sha256:cualquiera', 'version_registro': '1.0'},
+        }
+        db = MagicMock()
+        db.audit_logs.find_one.return_value = registro
+        mock_mongo.return_value = db
+        resultado = verificar_integridad_log('LOG-001')
+        self.assertFalse(resultado['valido'])
+        self.assertTrue(resultado.get('esquema_antiguo'))
+        self.assertNotIn('alteración', resultado['mensaje'])
 
     @patch('auditoria.services.get_mongo_client', side_effect=Exception('MongoDB caído'))
     def test_fail_safe_mongo(self, mock_mongo):
@@ -606,7 +646,12 @@ class AuditIPMiddlewareTest(TestCase):
         self.assertEqual(_thread_locals.ip_address, '192.168.1.100')
 
     def test_middleware_x_forwarded_for(self):
-        """X-Forwarded-For SOLO se honra si REMOTE_ADDR es proxy de confianza."""
+        """X-Forwarded-For SOLO se honra si REMOTE_ADDR es proxy de confianza.
+
+        Con proxy de confianza se toma el primer IP NO confiado desde la derecha
+        (el que añadió el proxy), no el primero de la lista (que el cliente
+        puede falsear).
+        """
         from auditoria.middleware import AuditIPMiddleware, _thread_locals
         request = MagicMock()
         request.META = {
@@ -620,10 +665,46 @@ class AuditIPMiddlewareTest(TestCase):
         middleware(request)
         self.assertEqual(_thread_locals.ip_address, '192.168.1.100')
 
-        # Con el proxy marcado como de confianza: sí se toma el cliente de XFF.
+        # Con el proxy marcado como de confianza: se toma el cliente real, que
+        # es el IP no-confiado más a la derecha (10.0.0.2), no el primero.
         with override_settings(AUDIT_TRUSTED_PROXIES=['192.168.1.100']):
             middleware(request)
-        self.assertEqual(_thread_locals.ip_address, '10.0.0.1')
+        self.assertEqual(_thread_locals.ip_address, '10.0.0.2')
+
+    def test_middleware_xff_ignora_ip_anadida_por_cliente(self):
+        """Un cliente no puede colar una IP falsa pre-añadiéndola a XFF.
+
+        El proxy de confianza añade al final la IP del cliente que realmente
+        conectó; los valores a la izquierda (controlados por el cliente) se
+        descartan porque hay un IP no-confiado más a la derecha.
+        """
+        from auditoria.middleware import AuditIPMiddleware, _thread_locals
+        request = MagicMock()
+        request.META = {
+            # '1.2.3.4' es la IP falsa que el atacante pre-añade; '5.6.7.8' es
+            # la que el proxy vio conectar realmente.
+            'HTTP_X_FORWARDED_FOR': '1.2.3.4, 5.6.7.8',
+            'REMOTE_ADDR': '192.168.1.100',
+        }
+        middleware = AuditIPMiddleware(lambda r: MagicMock())
+        with override_settings(AUDIT_TRUSTED_PROXIES=['192.168.1.100']):
+            middleware(request)
+        self.assertEqual(_thread_locals.ip_address, '5.6.7.8')
+
+    def test_middleware_xff_salta_proxies_confianza(self):
+        """Con varios proxies de confianza, se recorre hasta el cliente real."""
+        from auditoria.middleware import AuditIPMiddleware, _thread_locals
+        request = MagicMock()
+        request.META = {
+            'HTTP_X_FORWARDED_FOR': '9.9.9.9, 10.0.0.9',
+            'REMOTE_ADDR': '192.168.1.100',
+        }
+        middleware = AuditIPMiddleware(lambda r: MagicMock())
+        # Ambos 192.168.1.100 y 10.0.0.9 son infraestructura de confianza;
+        # el cliente real es 9.9.9.9.
+        with override_settings(AUDIT_TRUSTED_PROXIES=['192.168.1.100', '10.0.0.9']):
+            middleware(request)
+        self.assertEqual(_thread_locals.ip_address, '9.9.9.9')
 
     def test_middleware_x_forwarded_for_invalido(self):
         """Un XFF con valor no-IP se descarta incluso con proxy de confianza."""
