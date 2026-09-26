@@ -446,6 +446,17 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
         - polidoc/mongo.py eliminado (código muerto); el acceso a Mongo es SIEMPRE
           vía auditoria.services.get_mongo_client(). python-magic fuera de
           requirements (el validador de subidas es Python puro).
+        - Rate-limit de login fail-open: el contador de intentos vive en la caché
+          (Redis). autenticacion/views.py envuelve cache.get/set/delete en los
+          helpers _cache_*_seguro, que ante una caída de Redis loguean un WARNING
+          y degradan (la lectura devuelve 0 → no bloquea) en vez de reventar el
+          login con un 500. Tradeoff deliberado: disponibilidad > throttle. OJO en
+          producción: si Redis se cae, el rate-limiting queda OFF en silencio —
+          monitorizar/alertar los warnings "Cache de throttle no disponible".
+          (Causa del 500 original: contenedor web creado ANTES de añadir
+          CACHE_REDIS_URL al compose → usaba el fallback redis://localhost:6379/1;
+          se arregla RECREANDO el contenedor con `docker compose up -d web`, no con
+          `restart`.)
 
 11. ESTRUCTURA DE SUB-ÁREAS
 -------------------------------------------------------------------

@@ -829,6 +829,32 @@ class LoginViewSeguridadTest(BaseDocumentosTest):
         self.assertEqual(resp.status_code, 302)
         self.assertTrue(any('BREAK-GLASS' in m for m in cm.output))
 
+    def test_login_fallido_no_da_500_si_cache_caida(self):
+        """Si Redis (la caché del throttle) no responde, un login fallido debe
+        degradar con gracia (200 + error de credenciales), nunca reventar con 500."""
+        boom = ConnectionError('Error 111 connecting to localhost:6379')
+        with patch('autenticacion.views.cache.get', side_effect=boom), \
+                patch('autenticacion.views.cache.set', side_effect=boom), \
+                patch('autenticacion.views.cache.delete', side_effect=boom):
+            with patch('autenticacion.views.authenticate', return_value=None):
+                resp = self.client.post(
+                    '/login/', {'usuario': 'trab01', 'password': 'mala'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'incorrectos')
+
+    def test_login_exitoso_funciona_si_cache_caida(self):
+        """Un login válido no puede quedar inaccesible por una caída de Redis:
+        el fallo al limpiar el contador se ignora y la sesión se crea igual."""
+        boom = ConnectionError('Error 111 connecting to localhost:6379')
+        with patch('autenticacion.views.cache.get', side_effect=boom), \
+                patch('autenticacion.views.cache.set', side_effect=boom), \
+                patch('autenticacion.views.cache.delete', side_effect=boom):
+            resp = self.client.post(
+                '/login/',
+                {'usuario': 'trab01', 'password': 'testpass123', 'terms': 'on'},
+            )
+        self.assertEqual(resp.status_code, 302)
+
     def test_login_ldap_no_avisa_break_glass(self):
         user = self.user_trabajador
         user.backend = 'autenticacion.backends.LDAPBackend'

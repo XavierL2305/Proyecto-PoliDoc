@@ -34,6 +34,42 @@ def _login_throttle_key(ip, username):
     return f'login_fail::{ip or "sin-ip"}::{(username or "").lower()}'
 
 
+# El throttle vive en la caché (Redis). Si Redis se cae o hay un pico de red,
+# estas operaciones lanzarían ConnectionError y romperían el login con un 500,
+# dejando la puerta de entrada inaccesible. Se degradan con gracia (fail-open):
+# se registra un warning y el rate-limiting se omite, pero NUNCA se tumba el
+# acceso. Perder el throttle en una caída puntual es un mal menor frente a
+# dejar fuera a todos los usuarios (escenario multi-local con hosting).
+def _cache_get_seguro(clave, por_defecto):
+    try:
+        return cache.get(clave, por_defecto)
+    except Exception as exc:
+        logger.warning(
+            "Cache de throttle no disponible al leer (%s); se omite el "
+            "rate-limiting de login (fail-open).", exc
+        )
+        return por_defecto
+
+
+def _cache_set_seguro(clave, valor, timeout):
+    try:
+        cache.set(clave, valor, timeout)
+    except Exception as exc:
+        logger.warning(
+            "Cache de throttle no disponible al escribir (%s); el intento "
+            "fallido no queda contabilizado.", exc
+        )
+
+
+def _cache_delete_seguro(clave):
+    try:
+        cache.delete(clave)
+    except Exception as exc:
+        logger.warning(
+            "Cache de throttle no disponible al limpiar (%s); se ignora.", exc
+        )
+
+
 def login_view(request):
     """
     Vista de login con autenticación LDAP.
@@ -60,7 +96,7 @@ def login_view(request):
         else:
             ip_cliente = resolver_ip_cliente(request) or 'sin-ip'
             throttle_key = _login_throttle_key(ip_cliente, username)
-            intentos = cache.get(throttle_key, 0)
+            intentos = _cache_get_seguro(throttle_key, 0)
             if intentos >= LOGIN_MAX_INTENTOS:
                 logger.warning(
                     f"Login bloqueado por exceso de intentos: {username} "
@@ -75,7 +111,7 @@ def login_view(request):
             user = authenticate(request, username=username, password=password)
 
             if user is not None:
-                cache.delete(throttle_key)
+                _cache_delete_seguro(throttle_key)
                 backend = getattr(user, 'backend', '')
                 if backend.endswith('ModelBackend'):
                     # Autenticación local SIN LDAP: cuenta "break-glass".
@@ -126,7 +162,7 @@ def login_view(request):
                 return redirect('autenticacion:dashboard')
             else:
                 error = MENSAJE_CREDENCIALES
-                cache.set(throttle_key, intentos + 1, LOGIN_BLOQUEO_SEGUNDOS)
+                _cache_set_seguro(throttle_key, intentos + 1, LOGIN_BLOQUEO_SEGUNDOS)
                 logger.warning(f"Login fallido: {username} (intento {intentos + 1})")
 
     return render(request, 'registration/login.html', {'error': error})
