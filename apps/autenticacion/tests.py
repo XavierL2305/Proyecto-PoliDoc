@@ -792,6 +792,30 @@ class LoginViewSeguridadTest(BaseDocumentosTest):
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(cache.get('login_fail::127.0.0.1::trab01', 0), 0)
 
+    def test_login_break_glass_modelbackend_avisa(self):
+        user = self.user_trabajador
+        user.backend = 'django.contrib.auth.backends.ModelBackend'
+        with patch('autenticacion.views.authenticate', return_value=user):
+            with self.assertLogs('django_auth_ldap', level='WARNING') as cm:
+                resp = self.client.post(
+                    '/login/',
+                    {'usuario': 'trab01', 'password': 'x', 'terms': 'on'},
+                )
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(any('BREAK-GLASS' in m for m in cm.output))
+
+    def test_login_ldap_no_avisa_break_glass(self):
+        user = self.user_trabajador
+        user.backend = 'autenticacion.backends.LDAPBackend'
+        with patch('autenticacion.views.authenticate', return_value=user):
+            with self.assertLogs('django_auth_ldap', level='INFO') as cm:
+                resp = self.client.post(
+                    '/login/',
+                    {'usuario': 'trab01', 'password': 'x', 'terms': 'on'},
+                )
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(any('BREAK-GLASS' in m for m in cm.output))
+
     def test_logout_rechaza_get(self):
         self.client.login(username='trab01', password='testpass123')
         resp = self.client.get('/logout/')

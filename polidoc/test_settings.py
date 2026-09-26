@@ -10,6 +10,14 @@ PASSWORD_HASHERS = [
     'django.contrib.auth.hashers.MD5PasswordHasher',
 ]
 
+# Caché local en memoria para tests (no depender de Redis).
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'polidoc-tests',
+    }
+}
+
 # Use in-memory logging
 LOGGING = {
     'version': 1,

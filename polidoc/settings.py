@@ -255,6 +255,18 @@ CELERY_BEAT_SCHEDULE = {
     },
 }
 
+# =============================================================================
+# CACHÉ (Redis compartido) — usada por el rate-limiting de login para que el
+# contador de intentos sea consistente entre varios workers/procesos.
+# En tests se sobreescribe a LocMemCache (ver polidoc/test_settings.py).
+# =============================================================================
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+        'LOCATION': os.getenv('CACHE_REDIS_URL', 'redis://localhost:6379/1'),
+    }
+}
+
 # Horas sin respuesta antes de escalar una aprobación a administración
 APROBACION_ESCALADO_HORAS = int(os.getenv('APROBACION_ESCALADO_HORAS', '48'))
 
