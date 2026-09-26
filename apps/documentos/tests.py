@@ -3270,3 +3270,15 @@ class SanitizadorHtmlTest(TestCase):
         limpio = form.clean_instructivo_html()
         self.assertNotIn('<script', limpio)
         self.assertIn('<p>hola</p>', limpio)
+
+    def test_modelo_formato_sanitiza_en_save(self):
+        """Cubre el bypass del Django Admin: el saneado vive en Formato.save()."""
+        from documentos.models import Formato
+        f = Formato.objects.create(
+            codigo='SGC-SAN-1', nombre='Sanitizar', version='1', edicion='1',
+            instructivo_html='<p>ok</p><script>alert(1)</script><img src=x onerror=evil()>',
+        )
+        f.refresh_from_db()
+        self.assertNotIn('<script', f.instructivo_html)
+        self.assertNotIn('onerror', f.instructivo_html)
+        self.assertIn('<p>ok</p>', f.instructivo_html)

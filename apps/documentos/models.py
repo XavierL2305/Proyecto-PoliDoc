@@ -1253,6 +1253,11 @@ class Formato(models.Model):
 
     def save(self, *args, **kwargs):
         from .tasks import convertir_a_pdf_sync
+        # Saneado defensivo en la capa de modelo: cubre TODAS las rutas de
+        # escritura (FormatoForm, Django Admin y management commands), de modo
+        # que nunca se persista HTML ejecutable que luego se renderiza con |safe.
+        from .sanitizers import sanitizar_html
+        self.instructivo_html = sanitizar_html(self.instructivo_html)
         super().save(*args, **kwargs)
         if self.plantilla_xlsx and not self.plantilla_pdf:
             try:
