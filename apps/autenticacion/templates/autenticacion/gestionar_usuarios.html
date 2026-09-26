@@ -1,0 +1,466 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Gestión de Usuarios - POLIDOC{% endblock %}
+
+{% block extra_css %}
+<style>
+  .page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 2rem;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+  .page-header h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--color-text);
+    margin: 0;
+  }
+  .page-stats {
+    display: flex;
+    gap: 1rem;
+  }
+  .page-stat {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.375rem 0.75rem;
+    border-radius: 50px;
+    font-size: 0.8125rem;
+    font-weight: 600;
+  }
+  .page-stat--info {
+    background: var(--color-info-light);
+    color: #1E40AF;
+  }
+  .page-stat--warning {
+    background: var(--color-warning-light);
+    color: #92400E;
+  }
+  [data-theme="dark"] .page-stat--info { background: #1E3A5F; color: #93C5FD; }
+  [data-theme="dark"] .page-stat--warning { background: #78350F; color: #FCD34D; }
+
+  .section-card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+  }
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .section-header h3 {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--color-text);
+    margin: 0;
+  }
+
+  .filter-bar {
+    display: flex;
+    gap: 0.75rem;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--color-border);
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .filter-bar input,
+  .filter-bar select {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    font-size: 0.875rem;
+    background: var(--color-bg);
+    color: var(--color-text);
+  }
+  .filter-bar input {
+    flex: 1;
+    min-width: 200px;
+  }
+
+  .user-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.875rem;
+    font-weight: 600;
+    flex-shrink: 0;
+  }
+
+  .table-wrapper { overflow-x: auto; }
+  .table { width: 100%; border-collapse: collapse; }
+  .table th,
+  .table td {
+    padding: 0.75rem 1rem;
+    text-align: left;
+    font-size: 0.875rem;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .table th {
+    font-weight: 600;
+    color: var(--color-muted);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .table td { color: var(--color-text); }
+  .table-cell--bold { font-weight: 600; }
+  .table-cell--muted { color: var(--color-muted); font-size: 0.8125rem; }
+  .table--hover tr:hover td { background: var(--color-bg); }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.25rem 0.625rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    border-radius: 50px;
+    white-space: nowrap;
+  }
+  .badge--success { background: var(--color-success-light); color: #065F46; }
+  .badge--warning { background: var(--color-warning-light); color: #92400E; }
+  .badge--info { background: var(--color-info-light); color: #1E40AF; }
+  [data-theme="dark"] .badge--success { background: #064E3B; color: #6EE7B7; }
+  [data-theme="dark"] .badge--warning { background: #78350F; color: #FCD34D; }
+  [data-theme="dark"] .badge--info { background: #1E3A5F; color: #93C5FD; }
+
+  .pagination {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 1rem;
+  }
+  .pagination a,
+  .pagination span {
+    padding: 0.375rem 0.75rem;
+    border-radius: var(--radius);
+    font-size: 0.875rem;
+    text-decoration: none;
+    color: var(--color-text);
+    border: 1px solid var(--color-border);
+  }
+  .pagination a:hover { background: var(--color-primary-light); color: var(--color-primary); }
+  .pagination .current { background: var(--color-primary); color: #fff; border-color: var(--color-primary); }
+  .pagination .disabled { opacity: 0.4; pointer-events: none; }
+
+  .empty-state {
+    text-align: center;
+    padding: 3rem;
+    color: var(--color-muted);
+  }
+  .empty-state i { font-size: 3rem; margin-bottom: 1rem; display: block; }
+
+  /* Modal */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-overlay.active { display: flex; }
+  .modal {
+    background: var(--color-surface);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    width: 90%;
+    max-width: 480px;
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1.25rem 1.5rem;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .modal-header h3 { font-size: 1rem; font-weight: 600; color: var(--color-text); margin: 0; }
+  .modal-close {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    color: var(--color-muted);
+    cursor: pointer;
+    line-height: 1;
+  }
+  .modal-close:hover { color: var(--color-text); }
+  .modal-body { padding: 1.5rem; }
+  .modal-footer {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: flex-end;
+    padding: 1rem 1.5rem;
+    border-top: 1px solid var(--color-border);
+  }
+
+  .form-group { margin-bottom: 1rem; }
+  .form-label { display: block; font-size: 0.875rem; font-weight: 500; color: var(--color-text); margin-bottom: 0.375rem; }
+  .form-input {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    font-size: 0.875rem;
+    background: var(--color-bg);
+    color: var(--color-text);
+  }
+  .form-select {
+    appearance: auto;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.5rem 1rem;
+    border-radius: var(--radius);
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid transparent;
+    text-decoration: none;
+    transition: all 0.15s;
+  }
+  .btn--primary { background: var(--color-primary); color: #fff; }
+  .btn--primary:hover { opacity: 0.9; }
+  .btn--ghost { background: transparent; color: var(--color-text); border-color: var(--color-border); }
+  .btn--ghost:hover { background: var(--color-bg); }
+  .btn--sm { padding: 0.375rem 0.75rem; font-size: 0.8125rem; }
+  .btn--full { width: 100%; justify-content: center; }
+
+  .alert {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    border-radius: var(--radius);
+    font-size: 0.875rem;
+    margin-bottom: 1rem;
+  }
+  .alert--success { background: var(--color-success-light); color: #065F46; }
+  .alert--error { background: var(--color-danger-light); color: #991B1B; }
+  [data-theme="dark"] .alert--success { background: #064E3B; color: #6EE7B7; }
+  [data-theme="dark"] .alert--error { background: #7F1D1D; color: #FCA5A5; }
+</style>
+{% endblock %}
+
+{% block app_content %}
+<div class="page-header">
+  <h1>Gestión de Usuarios</h1>
+  <div class="page-stats">
+    <span class="page-stat page-stat--info">
+      <i class="fa-solid fa-users"></i> {{ total_usuarios }} usuarios
+    </span>
+    {% if sin_departamento > 0 %}
+    <span class="page-stat page-stat--warning">
+      <i class="fa-solid fa-triangle-exclamation"></i> {{ sin_departamento }} sin departamento
+    </span>
+    {% endif %}
+  </div>
+</div>
+
+<div class="section-card">
+  <form method="get" class="filter-bar">
+    <input type="text" name="buscar" value="{{ buscar }}" placeholder="Buscar por nombre, usuario o email...">
+    <select name="estado" onchange="this.form.submit()">
+      <option value="">Todos</option>
+      <option value="sin_dept" {% if filtro_estado == 'sin_dept' %}selected{% endif %}>Sin departamento</option>
+      <option value="con_dept" {% if filtro_estado == 'con_dept' %}selected{% endif %}>Con departamento</option>
+    </select>
+    <select name="departamento" onchange="this.form.submit()">
+      <option value="">Todos los departamentos</option>
+      {% for dept in departamentos %}
+      <option value="{{ dept.id }}" {% if filtro_depto == dept.id|stringformat:"d" %}selected{% endif %}>{{ dept.nombre }}</option>
+      {% endfor %}
+    </select>
+  </form>
+
+  {% if usuarios %}
+  <div class="table-wrapper">
+    <table class="table table--hover">
+      <thead>
+        <tr>
+          <th>Usuario</th>
+          <th>Email</th>
+          <th>Departamento</th>
+          <th>Rol</th>
+          <th>Último acceso</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in usuarios %}
+        <tr>
+          <td>
+            <div style="display: flex; align-items: center; gap: 0.75rem;">
+              <div class="user-avatar">{{ u.first_name|first|default:u.username|first }}</div>
+              <div>
+                <div class="table-cell--bold">{{ u.get_full_name|default:u.username }}</div>
+                <div class="table-cell--muted">{{ u.username }}</div>
+              </div>
+            </div>
+          </td>
+          <td class="table-cell--muted">{{ u.email|default:"-" }}</td>
+          <td>
+            {% if u.perfil.departamento %}
+            <span class="badge badge--success">{{ u.perfil.departamento }}</span>
+            {% else %}
+            <span class="badge badge--warning">Sin asignar</span>
+            {% endif %}
+          </td>
+          <td><span class="badge badge--info">{{ u.perfil.get_rol_display }}</span></td>
+          <td class="table-cell--muted">{{ u.last_login|date:"d/m/Y H:i"|default:"Nunca" }}</td>
+          <td>
+            <div style="display: flex; gap: 0.5rem;">
+              <button class="btn btn--ghost btn--sm" onclick="abrirModalAsignar({{ u.id }}, '{{ u.get_full_name|default:u.username }}', '{{ u.username }}', {% if u.perfil.departamento %}{{ u.perfil.departamento.id }}{% else %}null{% endif %})">
+                <i class="fa-solid fa-building"></i> Asignar
+              </button>
+              <a href="{% url 'autenticacion:ver_usuario' u.id %}" class="btn btn--ghost btn--sm">
+                <i class="fa-solid fa-eye"></i> Ver
+              </a>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if usuarios.has_other_pages %}
+  <nav class="pagination">
+    {% if usuarios.has_previous %}
+    <a href="?page={{ usuarios.previous_page_number }}&buscar={{ buscar }}&estado={{ filtro_estado }}&departamento={{ filtro_depto }}">&laquo; Anterior</a>
+    {% else %}
+    <span class="disabled">&laquo; Anterior</span>
+    {% endif %}
+    {% for num in usuarios.paginator.page_range %}
+    {% if usuarios.number == num %}
+    <span class="current">{{ num }}</span>
+    {% elif num > usuarios.number|add:'-3' and num < usuarios.number|add:'3' %}
+    <a href="?page={{ num }}&buscar={{ buscar }}&estado={{ filtro_estado }}&departamento={{ filtro_depto }}">{{ num }}</a>
+    {% endif %}
+    {% endfor %}
+    {% if usuarios.has_next %}
+    <a href="?page={{ usuarios.next_page_number }}&buscar={{ buscar }}&estado={{ filtro_estado }}&departamento={{ filtro_depto }}">Siguiente &raquo;</a>
+    {% else %}
+    <span class="disabled">Siguiente &raquo;</span>
+    {% endif %}
+  </nav>
+  {% endif %}
+
+  {% else %}
+  <div class="empty-state">
+    <i class="fa-solid fa-users"></i>
+    <p>No se encontraron usuarios con los filtros seleccionados</p>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Modal Asignar Departamento -->
+<div class="modal-overlay" id="modal-asignar">
+  <div class="modal">
+    <div class="modal-header">
+      <h3><i class="fa-solid fa-building"></i> Asignar / Quitar Departamento</h3>
+      <button class="modal-close" onclick="cerrarModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size: 0.875rem; color: var(--color-muted); margin-bottom: 1rem;">
+        Asignar departamento a <strong id="modal-usuario-nombre"></strong>
+        <span style="font-size: 0.8125rem; color: var(--color-muted);">(<span id="modal-usuario-username"></span>)</span>
+      </p>
+      <div class="form-group">
+        <label class="form-label">Departamento</label>
+        <select id="modal-departamento" class="form-input form-select">
+          <option value="">-- Sin departamento --</option>
+          {% for dept in departamentos %}
+          <option value="{{ dept.id }}">{{ dept.nombre }} ({{ dept.codigo }})</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn--ghost" onclick="cerrarModal()">Cancelar</button>
+      <button class="btn btn--primary" onclick="asignarDepartamento()">
+        <i class="fa-solid fa-check"></i> Guardar
+      </button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var usuarioActualId = null;
+
+function abrirModalAsignar(usuarioId, nombre, username, deptoActualId) {
+  usuarioActualId = usuarioId;
+  document.getElementById('modal-usuario-nombre').textContent = nombre;
+  document.getElementById('modal-usuario-username').textContent = username;
+  if (deptoActualId) {
+    document.getElementById('modal-departamento').value = deptoActualId;
+  } else {
+    document.getElementById('modal-departamento').value = '';
+  }
+  document.getElementById('modal-asignar').classList.add('active');
+}
+
+function cerrarModal() {
+  document.getElementById('modal-asignar').classList.remove('active');
+  usuarioActualId = null;
+}
+
+document.getElementById('modal-asignar').addEventListener('click', function(e) {
+  if (e.target === this) cerrarModal();
+});
+
+function asignarDepartamento() {
+  var deptoId = document.getElementById('modal-departamento').value;
+  if (!usuarioActualId) return;
+
+  var esDesasignar = !deptoId;
+  if (esDesasignar) {
+    if (!confirm('¿Estás seguro de quitar el departamento a este usuario?\n\nNo podrá crear documentos hasta que se le asigne uno nuevo.')) {
+      return;
+    }
+  }
+
+  fetch("{% url 'autenticacion:asignar_departamento_usuario' %}", {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': '{{ csrf_token }}',
+    },
+    body: JSON.stringify({
+      usuario_id: usuarioActualId,
+      departamento_id: deptoId ? parseInt(deptoId) : null
+    })
+  })
+  .then(response => response.json())
+  .then(data => {
+    if (data.success) {
+      location.reload();
+    } else {
+      alert(data.error || 'Error al asignar departamento');
+    }
+  })
+  .catch(() => alert('Error de conexión'));
+}
+</script>
+{% endblock %}

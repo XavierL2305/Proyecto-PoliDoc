@@ -1,0 +1,107 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block content %}
+<style>
+  .app-layout { display: flex; height: 100vh; overflow: hidden; }
+  .app-content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .page-content { flex: 1; min-height: 0; min-width: 0; padding: 2rem; overflow-x: hidden; overflow-y: auto; }
+  .app-messages { flex: 0 0 auto; padding: 1rem 2rem 0; display: flex; flex-direction: column; gap: 0.75rem; }
+  @media (max-width: 639px) { .page-content { padding: 1rem; } .app-messages { padding: 1rem 1rem 0; } }
+</style>
+<div class="app-layout">
+  <aside class="sidebar" id="app-sidebar">
+    <a href="{% url 'autenticacion:dashboard' %}" class="sidebar-logo">
+      <img src="{% static 'imagenes/logoPolidoc.svg' %}" alt="POLIDOC">
+      <span class="sidebar-logo-text">POLIDOC</span>
+    </a>
+    <div class="sidebar-nav">
+      <a href="{% url 'autenticacion:dashboard' %}" class="sidebar-item {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}">
+        <i class="fa-solid fa-chart-pie"></i><span>Inicio</span>
+      </a>
+      <a href="{% url 'documentos:catalogo' %}" class="sidebar-item {% if request.resolver_match.url_name == 'catalogo' %}active{% endif %}">
+        <i class="fa-solid fa-file-circle-check"></i><span>Formularios</span>
+      </a>
+      <a href="{% url 'documentos:mis_documentos' %}" class="sidebar-item {% if request.resolver_match.url_name == 'mis_documentos' %}active{% endif %}">
+        <i class="fa-solid fa-file-lines"></i><span>Mis Documentos</span>
+      </a>
+      <a href="{% url 'documentos:seleccionar_tipo' %}" class="sidebar-item sidebar-item--primary {% if request.resolver_match.url_name == 'seleccionar_tipo' %}active{% endif %}">
+        <i class="fa-solid fa-plus-circle"></i><span>Nuevo Documento</span>
+      </a>
+      {% if user.perfil.es_jefe %}
+      <a href="{% url 'documentos:documentos_departamento' %}" class="sidebar-item {% if request.resolver_match.url_name == 'documentos_departamento' %}active{% endif %}">
+        <i class="fa-solid fa-building"></i><span>Departamento</span>
+      </a>
+      {% endif %}
+      {% if user.perfil.es_administrador %}
+      <a href="{% url 'autenticacion:gestionar_usuarios' %}" class="sidebar-item {% if request.resolver_match.url_name == 'gestionar_usuarios' %}active{% endif %}">
+        <i class="fa-solid fa-users-gear"></i><span>Usuarios</span>
+      </a>
+      {% endif %}
+      {% if user.perfil.es_administrador or user.perfil.es_jefe %}
+      <div class="sidebar-divider"></div>
+      <a href="{% url 'documentos:configuracion' %}" class="sidebar-item {% if 'configuracion' in request.resolver_match.url_name %}active{% endif %}">
+        <i class="fa-solid fa-gear"></i><span>Configuración</span>
+      </a>
+      {% endif %}
+    </div>
+  </aside>
+  <div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+  <div class="app-content">
+    <nav class="navbar">
+      <button class="navbar-toggle" id="sidebar-toggle" type="button"
+              aria-label="Abrir menú" aria-controls="app-sidebar" aria-expanded="false">
+        <span class="navbar-toggle-box"><span class="navbar-toggle-bar"></span></span>
+      </button>
+      <div class="navbar-search">
+        <i class="fa-solid fa-search navbar-search-icon"></i>
+        <input type="text" id="navbar-buscar" class="form-input" placeholder="Buscar documentos..."
+               autocomplete="off" role="combobox" aria-autocomplete="list"
+               aria-controls="navbar-buscar-resultados" aria-expanded="false">
+        <div id="navbar-buscar-resultados" class="navbar-search-results" role="listbox" aria-label="Resultados de búsqueda"></div>
+      </div>
+
+      <div class="navbar-right">
+        <button class="navbar-icon" onclick="toggleTheme()" data-tooltip="Cambiar tema" data-tooltip-position="bottom">
+          <i class="fa-solid fa-sun" id="theme-icon-sun"></i>
+          <i class="fa-solid fa-moon" id="theme-icon-moon" style="display: none;"></i>
+        </button>
+        <button class="navbar-icon" id="notifications-btn" data-tooltip="Notificaciones" data-tooltip-position="bottom">
+          <i class="fa-solid fa-bell"></i>
+          <span class="badge-count" id="notif-count">{{ notificaciones_no_leidas }}</span>
+        </button>
+        <div class="navbar-user-wrapper">
+          <div class="navbar-user" onclick="this.parentElement.classList.toggle('active')">
+            <div class="navbar-user-avatar">
+              {% if user.perfil.foto_perfil %}
+              <img src="{{ user.perfil.foto_perfil.url }}" alt="Foto de perfil">
+              {% else %}
+              {{ user.first_name|first|default:"U" }}
+              {% endif %}
+            </div>
+            <div class="navbar-user-info">
+              <span class="navbar-user-name">{{ user.first_name|default:user.username }}</span>
+              <span class="navbar-user-role">{{ user.perfil.get_rol_display|default:"Usuario" }}</span>
+            </div>
+            <i class="fa-solid fa-chevron-down navbar-user-chevron"></i>
+          </div>
+          <div class="navbar-dropdown">
+            <a href="{% url 'autenticacion:perfil' %}" class="navbar-dropdown-item"><i class="fa-solid fa-user"></i> Mi Perfil</a>
+            <a href="{% url 'documentos:mis_documentos' %}" class="navbar-dropdown-item"><i class="fa-solid fa-file-lines"></i> Mis Documentos</a>
+            <div class="navbar-dropdown-divider"></div>
+            <a href="{% url 'autenticacion:logout' %}" class="navbar-dropdown-item navbar-dropdown-item--danger"><i class="fa-solid fa-right-from-bracket"></i> Cerrar Sesión</a>
+          </div>
+        </div>
+      </div>
+    </nav>
+    {% include 'partials/_messages.html' %}
+
+    <main class="page-content">
+      {% block app_content %}{% endblock %}
+    </main>
+  </div>
+</div>
+<script src="{% static 'js/search.js' %}"></script>
+<script src="{% static 'js/sidebar.js' %}"></script>
+{% endblock %}

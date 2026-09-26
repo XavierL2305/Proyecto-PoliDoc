@@ -1,0 +1,249 @@
+.notifications-dropdown {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    width: 380px;
+    max-height: 500px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    z-index: 1000;
+    display: none;
+    overflow: hidden;
+}
+
+.notifications-dropdown.active {
+    display: block;
+}
+
+.notifications-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.notifications-header h4 {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--color-text);
+    margin: 0;
+}
+
+.notifications-list {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.notifications-loading,
+.notifications-empty {
+    padding: 2rem;
+    text-align: center;
+    color: var(--color-muted);
+    font-size: 0.875rem;
+}
+
+.notification-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--color-border);
+    cursor: pointer;
+    transition: background var(--transition);
+}
+
+.notification-item:hover {
+    background: var(--color-bg);
+}
+
+.notification-item.unread {
+    background: var(--color-primary-light);
+}
+
+.notification-item.unread:hover {
+    background: rgba(96, 165, 250, 0.15);
+}
+
+.notification-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.875rem;
+    flex-shrink: 0;
+}
+
+.notification-icon--solicitud_descarga {
+    background: var(--color-warning-light);
+    color: var(--color-warning);
+}
+
+.notification-icon--aprobacion_descarga {
+    background: var(--color-success-light);
+    color: var(--color-success);
+}
+
+.notification-icon--rechazo_descarga {
+    background: var(--color-danger-light);
+    color: var(--color-danger);
+}
+
+.notification-icon--documento_asignado {
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+}
+
+.notification-icon--solicitud_aprobacion {
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+}
+
+.notification-icon--aprobacion_documento {
+    background: var(--color-success-light);
+    color: var(--color-success);
+}
+
+.notification-icon--rechazo_documento {
+    background: var(--color-danger-light);
+    color: var(--color-danger);
+}
+
+.notification-icon--planilla_pendiente {
+    background: var(--color-warning-light);
+    color: var(--color-warning);
+}
+
+.notification-icon--documento_distribuido {
+    background: var(--color-info-light, rgba(96, 165, 250, 0.1));
+    color: var(--color-info, #60a5fa);
+}
+
+.notification-icon--nueva_version {
+    background: var(--color-success-light);
+    color: var(--color-success);
+}
+
+.notification-icon--propiedad_transferida {
+    background: var(--color-info-light, rgba(96, 165, 250, 0.1));
+    color: var(--color-info, #60a5fa);
+}
+
+.notification-icon--distribucion_revocada {
+    background: var(--color-danger-light);
+    color: var(--color-danger);
+}
+
+.notification-icon--cambio_vigencia {
+    background: var(--color-warning-light);
+    color: var(--color-warning);
+}
+
+.notification-icon--aprobacion_escalada {
+    background: var(--color-warning-light);
+    color: var(--color-warning);
+}
+
+.notification-icon--edicion_formato {
+    background: var(--color-info-light, rgba(96, 165, 250, 0.1));
+    color: var(--color-info, #60a5fa);
+}
+
+.notification-icon--sistema {
+    background: var(--color-bg);
+    color: var(--color-muted);
+}
+
+.notification-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.notification-title {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--color-text);
+    margin-bottom: 0.25rem;
+}
+
+.notification-message {
+    font-size: 0.8125rem;
+    color: var(--color-muted);
+    line-height: 1.4;
+    margin-bottom: 0.25rem;
+}
+
+.notification-time {
+    font-size: 0.75rem;
+    color: var(--color-muted);
+}
+
+/* Notification action buttons */
+.notification-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+.notif-btn {
+    padding: 0.375rem 0.75rem;
+    border: none;
+    border-radius: var(--radius);
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+}
+
+.notif-btn--view {
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+}
+.notif-btn--view:hover {
+    background: var(--color-primary);
+    color: white;
+}
+
+.notif-badge--success {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.25rem 0.5rem;
+    background: var(--color-success-light);
+    color: var(--color-success);
+    border-radius: var(--radius);
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.notif-badge--danger {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.25rem 0.5rem;
+    background: var(--color-danger-light);
+    color: var(--color-danger);
+    border-radius: var(--radius);
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.badge-dept {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.65rem;
+    background: #fef3cd;
+    color: #856404;
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-left: 6px;
+    font-weight: 500;
+    vertical-align: middle;
+}

@@ -1,0 +1,61 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Gestionar Asignaciones - POLIDOC{% endblock %}
+
+{% block extra_css %}
+<style>
+  .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2rem; }
+  .page-header h1 { font-size: 1.5rem; font-weight: 700; color: var(--color-text); margin: 0; }
+  .table-wrapper { overflow-x: auto; }
+  .empty-state { text-align: center; padding: 3rem; color: var(--color-muted); }
+  .empty-state i { font-size: 3rem; margin-bottom: 1rem; display: block; }
+</style>
+{% endblock %}
+
+{% block app_content %}
+      <div class="page-header">
+        <h1>Gestionar Asignaciones</h1>
+        <a href="{% url 'documentos:documentos_departamento' %}" class="btn btn--ghost">
+          <i class="fa-solid fa-arrow-left"></i> Volver
+        </a>
+      </div>
+
+      {% if asignaciones %}
+      <div class="section-card" style="background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); overflow: hidden;">
+        <div class="table-wrapper">
+          <table class="table table--hover">
+            <thead>
+              <tr>
+                <th>Documento</th>
+                <th>Tipo</th>
+                <th>Coordinador</th>
+                <th>Permisos</th>
+                <th>Fecha</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for asignacion in asignaciones %}
+              <tr>
+                <td class="table-cell--bold">{{ asignacion.documento.codigo }}</td>
+                <td><span class="badge badge--{{ asignacion.documento.tipo_id }}">{{ asignacion.documento.tipo.codigo }}</span></td>
+                <td>{{ asignacion.coordinador.get_full_name|default:asignacion.coordinador.username }}</td>
+                <td>
+                  {% if asignacion.puede_leer %}<span class="badge badge--success">Leer</span>{% endif %}
+                  {% if asignacion.puede_editar %}<span class="badge badge--primary">Editar</span>{% endif %}
+                  {% if asignacion.puede_eliminar %}<span class="badge badge--danger">Eliminar</span>{% endif %}
+                </td>
+                <td class="table-cell--muted">{{ asignacion.fecha_asignacion|date:"d/m/Y" }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% else %}
+      <div class="empty-state">
+        <i class="fa-solid fa-users"></i>
+        <p>No hay asignaciones activas</p>
+      </div>
+      {% endif %}
+{% endblock %}

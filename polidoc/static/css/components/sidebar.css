@@ -1,0 +1,227 @@
+/* ==========================================================================
+   POLIDOC - COMPONENTE: SIDEBAR
+   ========================================================================== */
+
+/* === BASE SIDEBAR === */
+.sidebar {
+  width: 260px;
+  height: 100vh;
+  position: sticky;
+  top: 0;
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  overflow-y: auto;
+  transition: all 0.3s ease;
+  display: flex;
+  flex-direction: column;
+}
+
+/* === SIDEBAR HIDDEN (Scroll behavior) === */
+.sidebar--hidden {
+  transform: translateY(-100%);
+  opacity: 0;
+}
+
+/* === SIDEBAR LOGO === */
+.sidebar-logo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 1.5rem 1rem 1.25rem;
+  border-bottom: 1px solid var(--color-border);
+  text-decoration: none;
+  transition: background var(--transition);
+}
+
+.sidebar-logo:hover {
+  background: var(--color-bg);
+}
+
+.sidebar-logo img {
+  width: 56px;
+  height: 56px;
+  margin-bottom: 0.75rem;
+}
+
+.sidebar-logo-text {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--color-text);
+  letter-spacing: 0.02em;
+}
+
+/* === SIDEBAR HEADER === */
+.sidebar-header {
+  padding: 1rem 1.25rem 0.75rem;
+}
+
+.sidebar-header h4 {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--color-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0;
+}
+
+/* === SIDEBAR NAV === */
+.sidebar-nav {
+  flex: 1;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+/* === SIDEBAR SECTION === */
+.sidebar-section {
+  margin-bottom: 1rem;
+}
+
+.sidebar-section-title {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--color-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.25rem;
+}
+
+/* === SIDEBAR ITEM === */
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.625rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-muted);
+  text-decoration: none;
+  border-radius: var(--radius);
+  transition: all var(--transition);
+  cursor: pointer;
+}
+
+.sidebar-item:hover {
+  color: var(--color-text);
+  background-color: var(--color-bg);
+}
+
+.sidebar-item.active {
+  color: var(--color-primary);
+  background-color: var(--color-primary-light);
+}
+
+[data-theme="dark"] .sidebar-item.active {
+  background-color: rgba(96, 165, 250, 0.15);
+}
+
+/* === SIDEBAR ITEM PRIMARY === */
+.sidebar-item--primary {
+  color: var(--color-primary);
+  font-weight: 500;
+}
+.sidebar-item--primary:hover {
+  color: var(--color-primary);
+  background-color: var(--color-primary-light);
+}
+
+/* === SIDEBAR ITEM ICON === */
+.sidebar-item i {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+}
+
+/* === SIDEBAR ITEM BADGE === */
+.sidebar-item-badge {
+  margin-left: auto;
+  background-color: var(--color-danger);
+  color: #FFFFFF;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  padding: 0.125rem 0.5rem;
+  border-radius: 50px;
+  min-width: 20px;
+  text-align: center;
+}
+
+/* === SIDEBAR DIVIDER === */
+.sidebar-divider {
+  height: 1px;
+  background: var(--color-border);
+  margin: 0.5rem 0.75rem;
+}
+
+/* === SIDEBAR FOOTER === */
+.sidebar-footer {
+  padding: 1rem 1.25rem;
+  border-top: 1px solid var(--color-border);
+  margin-top: auto;
+}
+
+/* === SIDEBAR COLLAPSE (Icon only) === */
+.sidebar.collapsed {
+  width: 72px;
+}
+
+.sidebar.collapsed .sidebar-header,
+.sidebar.collapsed .sidebar-section-title,
+.sidebar.collapsed .sidebar-item span,
+.sidebar.collapsed .sidebar-item-badge {
+  display: none;
+}
+
+.sidebar.collapsed .sidebar-item {
+  justify-content: center;
+  padding: 0.75rem;
+}
+
+.sidebar.collapsed .sidebar-item i {
+  margin: 0;
+}
+.sidebar.collapsed .sidebar-logo-text {
+  display: none;
+}
+.sidebar.collapsed .sidebar-logo {
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+}
+
+/* === SIDEBAR OVERLAY (base, fuera de media query) === */
+.sidebar-overlay {
+  display: none;
+}
+
+/* === RESPONSIVE === */
+@media (max-width: 768px) {
+  .sidebar {
+    position: fixed;
+    left: -260px;
+    top: 64px;
+    height: calc(100vh - 64px);
+    height: calc(100dvh - 64px);
+    z-index: 40;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .sidebar.active {
+    left: 0;
+  }
+
+  .sidebar-overlay {
+    display: none;
+    position: fixed;
+    inset: 64px 0 0 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 35;
+  }
+
+  .sidebar-overlay.active {
+    display: block;
+  }
+}

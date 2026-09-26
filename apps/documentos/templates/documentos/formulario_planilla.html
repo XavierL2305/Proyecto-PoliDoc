@@ -1,0 +1,609 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}{{ titulo }} - POLIDOC{% endblock %}
+
+{% block extra_css %}
+<style>
+  .page-header { margin-bottom: 2rem; }
+  .page-header h1 { font-size: 1.5rem; font-weight: 700; color: var(--color-text); margin-bottom: 0.25rem; }
+  .page-header p { font-size: 0.875rem; color: var(--color-muted); margin: 0; }
+  .form-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); margin-bottom: 1.5rem; }
+  .form-card-header { padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--color-border); }
+  .form-card-header h3 { font-size: 1rem; font-weight: 600; color: var(--color-text); margin: 0; }
+  .form-card-body { padding: 1.5rem; }
+  .form-card-footer { padding: 1rem 1.5rem; border-top: 1px solid var(--color-border); display: flex; align-items: center; justify-content: flex-end; gap: 0.75rem; }
+  .form-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.5rem; }
+  .form-group-full { grid-column: 1 / -1; }
+  .doc-info { display: flex; align-items: center; gap: 0.75rem; padding: 1rem; background: var(--color-info-light); border-radius: var(--radius); color: var(--color-info-dark); margin-bottom: 1rem; }
+  .doc-info i { font-size: 1.25rem; }
+  .version-compare { display: flex; align-items: center; gap: 0.75rem; padding: 1rem; background: var(--color-success-light); border-radius: var(--radius); color: var(--color-success-dark); }
+  .version-compare i { font-size: 1.25rem; }
+  .version-arrow { font-size: 1.25rem; font-weight: bold; }
+  .disabled-field { opacity: 0.7; background: var(--color-bg-alt) !important; cursor: not-allowed; }
+  .disabled-label { color: var(--color-muted); font-style: italic; }
+  .tooltip-help { cursor: help; color: var(--color-muted); }
+  .tooltip-help:hover { color: var(--color-primary); }
+  .depto-tags { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
+  .depto-tag { display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.375rem 0.75rem; font-size: 0.8125rem; font-weight: 500; background: var(--color-primary-light); color: var(--color-primary); border-radius: 50px; transition: all var(--transition); }
+  .depto-tag-remove { display: flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; background: none; border: none; cursor: pointer; color: inherit; font-size: 0.75rem; transition: background var(--transition); }
+  .depto-tag-remove:hover { background: rgba(0,0,0,0.1); }
+  [data-theme="dark"] .depto-tag { background: rgba(37, 99, 235, 0.2); color: #60A5FA; }
+  [data-theme="dark"] .depto-tag-remove:hover { background: rgba(255,255,255,0.15); }
+
+  /* File input styling */
+  .file-upload-wrapper { position: relative; cursor: pointer; }
+  .file-upload-wrapper input[type="file"] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    overflow: hidden;
+    z-index: -1;
+  }
+  .file-upload-label {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    border: 2px dashed var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-bg);
+    cursor: pointer;
+    transition: all var(--transition);
+    font-family: 'Inter', sans-serif;
+  }
+  .file-upload-label:hover {
+    border-color: var(--color-primary);
+    background: var(--color-primary-light);
+  }
+  .file-upload-label i {
+    font-size: 1.5rem;
+    color: var(--color-muted);
+    margin-bottom: 0.5rem;
+  }
+  .file-upload-label span {
+    font-size: 0.875rem;
+    color: var(--color-muted);
+  }
+  .file-upload-label.has-file {
+    border-color: var(--color-success);
+    background: var(--color-success-light);
+  }
+  .file-upload-label.has-file i {
+    color: var(--color-success);
+  }
+  .file-upload-label.has-file span {
+    color: var(--color-success-dark);
+    font-weight: 500;
+  }
+  .file-upload-label.drag-over {
+    border-color: var(--color-primary);
+    background: var(--color-primary-light);
+    box-shadow: 0 0 0 3px rgba(0, 90, 156, 0.15);
+  }
+  .file-upload-hint {
+    font-size: 0.75rem;
+    color: var(--color-muted);
+    margin-top: 0.5rem;
+    text-align: center;
+  }
+  @media (max-width: 768px) { .form-row { grid-template-columns: 1fr; } }
+</style>
+{% endblock %}
+
+{% block app_content %}
+      <div class="page-header">
+        <h1>{{ titulo }}</h1>
+        {% if documento %}
+        <p>{{ documento.descripcion|truncatewords:20 }}</p>
+        {% endif %}
+      </div>
+
+      <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        <input type="hidden" name="tipo_documento" value="{{ tipo_documento }}">
+        <input type="hidden" name="documento_uuid" value="{{ documento.uuid|default:'' }}">
+
+        {% if documento %}
+        <div class="form-card">
+          <div class="form-card-header"><h3><i class="fa-solid fa-file-lines"></i> Documento Actual</h3></div>
+          <div class="form-card-body">
+            <div class="doc-info">
+              <i class="fa-solid fa-file-lines"></i>
+              <div>
+                <strong>{{ documento.codigo }}</strong> - {{ documento.nombre }}
+                <br>
+                <span style="font-size: 0.75rem;">
+                  Versión actual: {{ documento.version_actual }} |
+                  Departamento: {{ documento.departamento.nombre }} |
+                  Estado: {{ documento.get_estado_display }}
+                </span>
+              </div>
+            </div>
+            <div class="version-compare">
+              <i class="fa-solid fa-code-compare"></i>
+              <div>
+                <strong>Control de Versiones:</strong>
+                Versión actual: <strong>v{{ version_actual }}</strong>
+                <span class="version-arrow">→</span>
+                Versión propuesta: <strong>v{{ proxima_version }}</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+        <div class="form-card">
+          <div class="form-card-header"><h3><i class="fa-solid fa-pen-to-square"></i> Cambios Propuestos</h3></div>
+          <div class="form-card-body">
+            <div class="form-group form-group-full">
+              <label class="form-label">Nombre del Documento *</label>
+              {{ form.nombre_propuesto }}
+              {% if form.nombre_propuesto.errors %}
+              <span class="form-error">{{ form.nombre_propuesto.errors.0 }}</span>
+              {% endif %}
+            </div>
+            <div class="form-group form-group-full">
+              <label class="form-label">Descripción Propuesta</label>
+              {{ form.descripcion_propuesta }}
+              {% if form.descripcion_propuesta.errors %}
+              <span class="form-error">{{ form.descripcion_propuesta.errors.0 }}</span>
+              {% endif %}
+            </div>
+            <div class="form-group form-group-full">
+              <label class="form-label">Archivo Propuesto</label>
+              <div class="file-upload-wrapper">
+                {{ form.archivo_propuesto }}
+                <label for="{{ form.archivo_propuesto.id_for_label }}" class="file-upload-label" id="label-{{ form.archivo_propuesto.id_for_label }}">
+                  <i class="fa-solid fa-cloud-arrow-up"></i>
+                  <span id="filename-{{ form.archivo_propuesto.id_for_label }}">
+                    {% if form.archivo_propuesto.value %}Archivo actual: {{ form.archivo_propuesto.value }}{% else %}Seleccione un archivo{% endif %}
+                  </span>
+                  <small class="file-upload-hint">PDF, DOC, DOCX, XLS, XLSX — Máximo 10MB</small>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {% if 'departamentos_afectados' in form.fields %}
+        <div class="form-card">
+          <div class="form-card-header"><h3><i class="fa-solid fa-building"></i> Departamentos Afectados</h3></div>
+          <div class="form-card-body">
+            <select id="depto-select" class="form-input form-select" onchange="addDepto(this)">
+              <option value="">Seleccione un departamento...</option>
+              {% for depto in departamentos_disponibles %}
+              <option value="{{ depto.id }}" data-nombre="{{ depto.nombre }}">{{ depto.nombre }}</option>
+              {% endfor %}
+            </select>
+            <div id="depto-tags" class="depto-tags"></div>
+            <div id="depto-hidden"></div>
+          </div>
+        </div>
+        {% if form.departamentos_afectados.errors %}
+        <div class="form-error" style="margin-top: 0.5rem;">
+          <i class="fa-solid fa-circle-exclamation"></i> {{ form.departamentos_afectados.errors }}
+        </div>
+        {% endif %}
+        {% endif %}
+
+        {% if 'responsables_propuestos' in form.fields %}
+        <div class="form-card">
+          <div class="form-card-header"><h3><i class="fa-solid fa-users"></i> Responsables (áreas)</h3></div>
+          <div class="form-card-body">
+            <select id="resp-select" class="form-input form-select" onchange="addResponsable(this)">
+              <option value="">Seleccione un área responsable...</option>
+              {% for depto in departamentos_disponibles %}
+              <option value="{{ depto.id }}" data-nombre="{{ depto.nombre }}">{{ depto.nombre }}</option>
+              {% endfor %}
+            </select>
+            <div id="resp-tags" class="depto-tags"></div>
+            <div id="resp-hidden"></div>
+          </div>
+        </div>
+        {% endif %}
+
+        {% if 'participantes_propuestos' in form.fields %}
+        <div class="form-card">
+          <div class="form-card-header"><h3><i class="fa-solid fa-tag"></i> Participantes</h3></div>
+          <div class="form-card-body">
+            <div style="display: flex; gap: 0.5rem;">
+              <input type="text" id="part-input" class="form-input"
+                     placeholder="Escriba un nombre y presione Agregar" onkeydown="if(event.key==='Enter'){event.preventDefault();addParticipante();}">
+              <button type="button" class="btn btn--primary btn--sm" onclick="addParticipante()">
+                <i class="fa-solid fa-plus"></i> Agregar
+              </button>
+            </div>
+            <div id="part-tags" class="depto-tags" style="margin-top: 0.75rem;"></div>
+            {{ form.participantes_propuestos }}
+          </div>
+        </div>
+        {% endif %}
+
+        {% if 'documentos_asociados_json' in form.fields %}
+        <div class="form-card">
+          <div class="form-card-header">
+            <h3>
+              <i class="fa-solid fa-link"></i> Documentos Asociados
+              {% if tipo_documento == 'proceso' %}
+                <span style="font-size: 0.75rem; color: var(--color-muted); margin-left: 0.5rem;">(Procedimientos)</span>
+              {% elif tipo_documento == 'procedimiento' %}
+                <span style="font-size: 0.75rem; color: var(--color-muted); margin-left: 0.5rem;">(Formularios)</span>
+              {% else %}
+                <span style="font-size: 0.75rem; color: var(--color-muted); margin-left: 0.5rem;">(Documentos relacionados)</span>
+              {% endif %}
+            </h3>
+          </div>
+          <div class="form-card-body">
+            <select id="asociado-select" class="form-input form-select" onchange="addAsociado(this)">
+              <option value="">Seleccione un documento...</option>
+            </select>
+            <div id="asociado-tags" class="depto-tags"></div>
+            <div id="asociado-hidden"></div>
+            <div id="asociado-info" style="font-size: 0.75rem; color: var(--color-muted); margin-top: 0.5rem;">
+              {% if tipo_documento == 'proceso' %}
+                <i class="fa-solid fa-info-circle"></i> Seleccione un departamento para ver sus procedimientos disponibles.
+              {% elif tipo_documento == 'procedimiento' %}
+                <i class="fa-solid fa-info-circle"></i> Seleccione un departamento para ver sus formularios disponibles.
+              {% else %}
+                <i class="fa-solid fa-info-circle"></i> Seleccione un departamento para ver documentos disponibles.
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        <input type="hidden" name="documentos_asociados_json" id="documentos-asociados-json" value="">
+        {% endif %}
+
+        <div class="form-card">
+          <div class="form-card-header"><h3><i class="fa-solid fa-circle-info"></i> Información Automática</h3></div>
+          <div class="form-card-body">
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label disabled-label">
+                  Responsable del Cambio
+                  <span data-tooltip="Se asigna automáticamente al usuario actual" data-tooltip-position="right" class="tooltip-help"><i class="fa-solid fa-circle-question"></i></span>
+                </label>
+                <input type="text" class="form-input disabled-field" value="{{ request.user.get_full_name|default:request.user.username }}" disabled readonly>
+                <input type="hidden" name="responsable" value="{{ request.user.pk }}">
+              </div>
+              <div class="form-group">
+                <label class="form-label disabled-label">
+                  Versión del Documento
+                  <span data-tooltip="Se calcula automáticamente según el control de versiones" data-tooltip-position="right" class="tooltip-help"><i class="fa-solid fa-circle-question"></i></span>
+                </label>
+                <input type="text" class="form-input disabled-field" value="{{ proxima_version }}" disabled readonly>
+                <input type="hidden" name="version_destino" value="{{ proxima_version }}">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {% if formato_dinamico %}
+        <div class="form-card">
+          <div class="form-card-header">
+            <h3><i class="fa-solid fa-file-circle-plus" style="margin-right:0.5rem;"></i> {{ formato_dinamico.codigo }} — {{ formato_dinamico.nombre }} <span style="font-weight:400;font-size:0.8125rem;color:var(--color-muted);">v{{ formato_dinamico.version }} E{{ formato_dinamico.edicion }}</span></h3>
+          </div>
+          <div class="form-card-body">
+            {% include 'documentos/_formato_dinamico.html' with formato=formato_dinamico respuestas=respuestas_formato read_only=False %}
+          </div>
+        </div>
+        {% endif %}
+
+        <div class="form-card">
+          <div class="form-card-footer">
+            <a href="{% if documento %}{% url 'documentos:detalle' tipo=tipo_documento documento_id=documento.uuid %}{% else %}{% url 'documentos:mis_documentos' %}{% endif %}" class="btn btn--ghost">Cancelar</a>
+            <button type="submit" name="accion" value="borrador" class="btn btn--ghost" formnovalidate>
+              <i class="fa-solid fa-save"></i> Guardar Borrador
+            </button>
+            <button type="submit" name="accion" value="enviar" class="btn btn--primary">
+              <i class="fa-solid fa-paper-plane"></i> Enviar a Revisión
+            </button>
+          </div>
+        </div>
+      </form>
+
+      <script>
+        // === Departamentos Afectados (tags) ===
+        const selectedDeptos = {};
+
+        function addDepto(select) {
+          const id = select.value;
+          const nombre = select.options[select.selectedIndex].dataset.nombre;
+          if (!id || selectedDeptos[id]) { select.value = ''; return; }
+          selectedDeptos[id] = nombre;
+          renderDeptos();
+          select.value = '';
+          // Actualizar documentos asociados cuando cambian los departamentos
+          actualizarDocumentosAsociados();
+        }
+
+        function removeDepto(id) {
+          delete selectedDeptos[id];
+          renderDeptos();
+          // Actualizar documentos asociados cuando cambian los departamentos
+          actualizarDocumentosAsociados();
+        }
+
+        function renderDeptos() {
+          const tags = document.getElementById('depto-tags');
+          const hidden = document.getElementById('depto-hidden');
+          if (!tags || !hidden) return;
+          tags.innerHTML = '';
+          hidden.innerHTML = '';
+          for (const [id, nombre] of Object.entries(selectedDeptos)) {
+            tags.innerHTML += '<span class="depto-tag">' + nombre + '<button type="button" class="depto-tag-remove" onclick="removeDepto(\'' + id + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
+            hidden.innerHTML += '<input type="hidden" name="departamentos_afectados" value="' + id + '">';
+          }
+        }
+
+        // Pre-poblar tags en edición
+        document.addEventListener('DOMContentLoaded', function() {
+          var deptoSelect = document.getElementById('depto-select');
+          if (!deptoSelect) return;
+          {% for depto_id in departamentos_seleccionados %}
+          deptoSelect.value = '{{ depto_id }}';
+          addDepto(deptoSelect);
+          {% endfor %}
+        });
+
+        // === Documentos Asociados (tags) ===
+        const selectedAsociados = {};
+        const tipoDocumento = '{{ tipo_documento|default:"" }}';
+
+        function addAsociado(select) {
+          const uuid = select.value;
+          const codigo = select.options[select.selectedIndex].dataset.codigo;
+          const nombre = select.options[select.selectedIndex].dataset.nombre;
+          const estado = select.options[select.selectedIndex].dataset.estado;
+          const tipo = select.options[select.selectedIndex].dataset.tipo;
+          if (!uuid || selectedAsociados[uuid]) { select.value = ''; return; }
+          selectedAsociados[uuid] = { codigo, nombre, estado, tipo };
+          renderAsociados();
+          select.value = '';
+        }
+
+        function removeAsociado(uuid) {
+          delete selectedAsociados[uuid];
+          renderAsociados();
+        }
+
+        function renderAsociados() {
+          const tags = document.getElementById('asociado-tags');
+          const hidden = document.getElementById('asociado-hidden');
+          const jsonInput = document.getElementById('documentos-asociados-json');
+          if (!tags || !hidden) return;
+          tags.innerHTML = '';
+          hidden.innerHTML = '';
+          const jsonArray = [];
+          for (const [uuid, doc] of Object.entries(selectedAsociados)) {
+            const estadoBadge = doc.estado === 'activo' ? 'Activo' : 'Borrador';
+            tags.innerHTML += '<span class="depto-tag">' + doc.codigo + ' - ' + doc.nombre + ' <small>(' + estadoBadge + ')</small><button type="button" class="depto-tag-remove" onclick="removeAsociado(\'' + uuid + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
+            jsonArray.push({ uuid, codigo: doc.codigo, nombre: doc.nombre, estado: doc.estado, tipo: doc.tipo });
+          }
+          if (jsonInput) {
+            jsonInput.value = JSON.stringify(jsonArray);
+          }
+        }
+
+        function actualizarDocumentosAsociados() {
+          const select = document.getElementById('asociado-select');
+          if (!select) return;
+          select.innerHTML = '<option value="">Cargando...</option>';
+          
+          const deptoIds = Object.keys(selectedDeptos);
+          
+          if (deptoIds.length === 0) {
+            select.innerHTML = '<option value="">Seleccione un departamento primero...</option>';
+            return;
+          }
+
+          const params = new URLSearchParams();
+          deptoIds.forEach(id => params.append('departamentos', id));
+
+          fetch('/documentos/api/procedimientos-por-departamentos/?' + params.toString())
+            .then(response => response.json())
+            .then(data => {
+              select.innerHTML = '<option value="">Seleccione un documento...</option>';
+              const docs = data.documentos;
+              if (docs && docs.length > 0) {
+                docs.forEach(doc => {
+                  const option = document.createElement('option');
+                  option.value = doc.uuid;
+                  option.textContent = doc.codigo + ' - ' + doc.nombre;
+                  option.dataset.codigo = doc.codigo;
+                  option.dataset.nombre = doc.nombre;
+                  option.dataset.estado = doc.estado;
+                  option.dataset.tipo = doc.tipo;
+                  select.appendChild(option);
+                });
+              } else {
+                select.innerHTML = '<option value="">No hay documentos disponibles</option>';
+              }
+            })
+            .catch(error => {
+              console.error('Error:', error);
+              select.innerHTML = '<option value="">Error al cargar documentos</option>';
+            });
+        }
+
+        // Pre-poblar documentos asociados en edición
+        document.addEventListener('DOMContentLoaded', function() {
+          var asociadoSelect = document.getElementById('asociado-select');
+          if (!asociadoSelect) return;
+          
+          {% for doc in documentos_asociados_iniciales %}
+          selectedAsociados['{{ doc.uuid }}'] = {
+            codigo: '{{ doc.codigo }}',
+            nombre: '{{ doc.nombre }}',
+            estado: '{{ doc.estado }}',
+            tipo: '{{ doc.tipo_id }}'
+          };
+          {% endfor %}
+          
+          renderAsociados();
+          
+          actualizarDocumentosAsociados();
+        });
+
+        // === Responsables Propuestos (tags) ===
+        const selectedResp = {};
+
+        function addResponsable(select) {
+          const id = select.value;
+          const nombre = select.options[select.selectedIndex].dataset.nombre;
+          if (!id || selectedResp[id]) { select.value = ''; return; }
+          selectedResp[id] = nombre;
+          renderResp();
+          select.value = '';
+        }
+
+        function removeResponsable(id) {
+          delete selectedResp[id];
+          renderResp();
+        }
+
+        function renderResp() {
+          const tags = document.getElementById('resp-tags');
+          const hidden = document.getElementById('resp-hidden');
+          if (!tags || !hidden) return;
+          tags.innerHTML = '';
+          hidden.innerHTML = '';
+          for (const [id, nombre] of Object.entries(selectedResp)) {
+            tags.innerHTML += '<span class="depto-tag">' + nombre + '<button type="button" class="depto-tag-remove" onclick="removeResponsable(\'' + id + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
+            hidden.innerHTML += '<input type="hidden" name="responsables_propuestos" value="' + id + '">';
+          }
+        }
+
+        // Pre-poblar responsables en edición
+        document.addEventListener('DOMContentLoaded', function() {
+          var respSelect = document.getElementById('resp-select');
+          if (!respSelect) return;
+          {% for resp_id, resp_nombre in responsables_seleccionados %}
+          respSelect.value = '{{ resp_id }}';
+          addResponsable(respSelect);
+          {% endfor %}
+        });
+
+        // === Participantes Propuestos (tags libres) ===
+        const selectedPart = {};
+
+        function addParticipante() {
+          const input = document.getElementById('part-input');
+          if (!input) return;
+          const nombre = input.value.trim();
+          if (!nombre || selectedPart[nombre]) { input.value = ''; return; }
+          selectedPart[nombre] = nombre;
+          renderParticipantes();
+          input.value = '';
+          input.focus();
+        }
+
+        function removeParticipante(nombre) {
+          delete selectedPart[nombre];
+          renderParticipantes();
+        }
+
+        function renderParticipantes() {
+          const tags = document.getElementById('part-tags');
+          const hidden = document.getElementById('participantes_propuestos');
+          if (!tags || !hidden) return;
+          tags.innerHTML = '';
+          const lista = Object.keys(selectedPart);
+          for (const nombre of lista) {
+            tags.innerHTML += '<span class="depto-tag">' + nombre + '<button type="button" class="depto-tag-remove" onclick="removeParticipante(\'' + nombre.replace(/'/g, "\\'") + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
+          }
+          hidden.value = JSON.stringify(lista);
+        }
+
+        // Pre-poblar participantes en edición
+        document.addEventListener('DOMContentLoaded', function() {
+          var partHidden = document.getElementById('participantes_propuestos');
+          if (!partHidden || !partHidden.value) return;
+          try {
+            var lista = JSON.parse(partHidden.value);
+            if (Array.isArray(lista)) {
+              for (const nombre of lista) {
+                selectedPart[nombre] = nombre;
+              }
+              renderParticipantes();
+            }
+          } catch(e) {}
+        });
+      </script>
+
+      <script>
+        // File input styling
+        document.addEventListener('DOMContentLoaded', function() {
+          document.querySelectorAll('input[type="file"]').forEach(function(input) {
+            var label = document.getElementById('label-' + input.id);
+            var filename = document.getElementById('filename-' + input.id);
+
+            if (label && filename) {
+              input.addEventListener('change', function() {
+                if (input.files && input.files.length > 0) {
+                  filename.textContent = input.files[0].name;
+                  label.classList.add('has-file');
+                } else {
+                  filename.textContent = 'Seleccione un archivo';
+                  label.classList.remove('has-file');
+                }
+              });
+
+              // Check initial state
+              if (input.files && input.files.length > 0) {
+                filename.textContent = input.files[0].name;
+                label.classList.add('has-file');
+              }
+            }
+          });
+
+          // === Drag and Drop para file uploads ===
+          document.querySelectorAll('.file-upload-wrapper').forEach(function(wrapper) {
+            var dropLabel = wrapper.querySelector('.file-upload-label');
+            var fileInput = wrapper.querySelector('input[type="file"]');
+            if (!dropLabel || !fileInput) return;
+
+            // Prevenir comportamiento default en toda la ventana
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(function(evt) {
+              window.addEventListener(evt, function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+              });
+            });
+
+            // Contador para evitar flicker al entrar/salir de elementos hijos
+            var dragCounter = 0;
+
+            dropLabel.addEventListener('dragenter', function(e) {
+              e.preventDefault();
+              dragCounter++;
+              dropLabel.classList.add('drag-over');
+            });
+
+            dropLabel.addEventListener('dragleave', function(e) {
+              e.preventDefault();
+              dragCounter--;
+              if (dragCounter === 0) {
+                dropLabel.classList.remove('drag-over');
+              }
+            });
+
+            dropLabel.addEventListener('drop', function(e) {
+              e.preventDefault();
+              dragCounter = 0;
+              dropLabel.classList.remove('drag-over');
+              
+              var files = e.dataTransfer.files;
+              if (files.length > 0) {
+                // Asignar archivos al input
+                fileInput.files = files;
+                // Disparar evento change para actualizar la UI
+                fileInput.dispatchEvent(new Event('change'));
+              }
+            });
+          });
+        });
+      </script>
+{% endblock %}

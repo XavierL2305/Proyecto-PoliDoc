@@ -1,0 +1,273 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Mis Documentos - POLIDOC{% endblock %}
+
+{% block extra_css %}
+<style>
+  .page-header { 
+    display: flex; 
+    align-items: center; 
+    justify-content: space-between; 
+    margin-bottom: 2rem; 
+    flex-wrap: wrap; 
+    gap: 1rem; 
+  }
+  .page-header h1 { 
+    font-size: 1.5rem; 
+    font-weight: 700; 
+    color: var(--color-text); 
+    margin: 0; 
+  }
+  .page-actions { 
+    display: flex; 
+    gap: 0.5rem; 
+  }
+  .filter-bar {
+    display: flex;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .filter-bar input,
+  .filter-bar select {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    font-size: 0.875rem;
+    background: var(--color-bg);
+    color: var(--color-text);
+  }
+  .filter-bar input {
+    flex: 1;
+    min-width: 200px;
+  }
+  .doc-icon { 
+    width: 40px; 
+    height: 40px; 
+    border-radius: var(--radius); 
+    display: flex; 
+    align-items: center; 
+    justify-content: center; 
+    font-size: 1rem; 
+    flex-shrink: 0; 
+  }
+  .doc-header { 
+    display: flex; 
+    align-items: center; 
+    gap: 0.75rem; 
+    margin-bottom: 0.75rem; 
+  }
+  .doc-title { 
+    font-size: 0.875rem; 
+    font-weight: 600; 
+    color: var(--color-text); 
+    margin: 0 0 0.25rem 0; 
+  }
+  .doc-codigo { 
+    font-size: 0.75rem; 
+    color: var(--color-muted); 
+    margin: 0; 
+  }
+  .doc-meta { 
+    display: flex; 
+    flex-wrap: wrap;
+    align-items: center; 
+    gap: 0.75rem; 
+    font-size: 0.75rem; 
+    color: var(--color-muted); 
+    margin-bottom: 0.75rem; 
+  }
+  .doc-actions { 
+    display: flex; 
+    flex-wrap: wrap;
+    gap: 0.5rem; 
+    padding-top: 0.75rem; 
+    border-top: 1px solid var(--color-border); 
+  }
+  .card-grid > .card { min-width: 0; }
+  .empty-state { 
+    text-align: center; 
+    padding: 3rem; 
+    color: var(--color-muted); 
+  }
+  .empty-state i { 
+    font-size: 3rem; 
+    margin-bottom: 1rem; 
+    display: block; 
+  }
+  .pagination {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 1.5rem;
+  }
+  .pagination a,
+  .pagination span {
+    padding: 0.375rem 0.75rem;
+    border-radius: var(--radius);
+    font-size: 0.875rem;
+    text-decoration: none;
+    color: var(--color-text);
+    border: 1px solid var(--color-border);
+  }
+  .pagination a:hover {
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+  }
+  .pagination .current {
+    background: var(--color-primary);
+    color: #fff;
+    border-color: var(--color-primary);
+  }
+  .pagination .disabled {
+    opacity: 0.4;
+    pointer-events: none;
+  }
+  @media (max-width: 639px) {
+    .page-content { padding: 1rem; }
+    .page-header { flex-direction: column; align-items: stretch; }
+    .page-actions { flex-wrap: wrap; }
+    .filter-bar { flex-direction: column; }
+    .filter-bar input { min-width: unset; }
+    .doc-actions .btn { flex: 1 1 auto; justify-content: center; }
+  }
+</style>
+{% endblock %}
+
+{% block app_content %}
+<div class="page-header">
+  <h1>Mis Documentos</h1>
+  <div class="page-actions">
+    <a href="{% url 'documentos:seleccionar_tipo' %}" class="btn btn--primary btn--sm"><i class="fa-solid fa-plus"></i> Nuevo Documento</a>
+  </div>
+</div>
+
+<form method="get" class="filter-bar">
+  <input type="text" name="buscar" value="{{ buscar }}" placeholder="Buscar por nombre o código...">
+  <select name="estado" onchange="this.form.submit()">
+    <option value="">Todos los estados</option>
+    <option value="borrador" {% if estado_filter == 'borrador' %}selected{% endif %}>Borrador</option>
+    <option value="en_revision" {% if estado_filter == 'en_revision' %}selected{% endif %}>En Revisión</option>
+    <option value="activo" {% if estado_filter == 'activo' %}selected{% endif %}>Activo</option>
+    <option value="obsoleto" {% if estado_filter == 'obsoleto' %}selected{% endif %}>Obsoleto</option>
+  </select>
+  <button type="submit" class="btn btn--primary btn--sm"><i class="fa-solid fa-search"></i> Buscar</button>
+</form>
+
+{% if tipos_documento %}
+<div class="accordion-group">
+  {% for tipo in tipos_documento %}
+  <div class="accordion{% if forloop.first %} active{% endif %}" data-accordion>
+    <button class="accordion-header" onclick="toggleAccordion(this)">
+      <span class="accordion-icon accordion-icon--{{ tipo.color }}"><i class="fa-solid fa-{{ tipo.icono }}"></i></span>
+      <span class="accordion-title">{{ tipo.nombre }}</span>
+      <span class="accordion-count">{{ tipo.documentos.paginator.count }}</span>
+      <i class="fa-solid fa-chevron-down accordion-chevron"></i>
+    </button>
+    <div class="accordion-content">
+      {% if tipo.documentos %}
+      <div class="card-grid" style="margin-top: 0.75rem;">
+        {% for doc in tipo.documentos %}
+        <div class="card card--elevated">
+          <div class="card-body">
+            <div class="doc-header">
+              <div class="doc-icon doc-icon--{{ tipo.color }}">
+                <i class="fa-solid fa-{{ tipo.icono }}"></i>
+              </div>
+              <div>
+                <h4 class="doc-title">{{ doc.nombre }}</h4>
+                <p class="doc-codigo">{{ doc.codigo }}</p>
+              </div>
+            </div>
+            <div class="doc-meta">
+              <span class="badge badge--{{ doc.estado }}">{{ doc.get_estado_display }}</span>
+              <span>v{{ doc.version_actual }}</span>
+              <span>{{ doc.fecha_modificacion|date:"d/m/Y" }}</span>
+              {% if doc.fecha_vencimiento %}
+                {% if doc.fecha_vencimiento <= hoy %}
+                <span class="badge badge--danger" style="font-size: 0.65rem;">Vencido</span>
+                {% elif doc.fecha_vencimiento <= dias7 %}
+                <span class="badge badge--warning" style="font-size: 0.65rem;">Vence pronto</span>
+                {% endif %}
+              {% endif %}
+            </div>
+            <div class="doc-actions">
+              <a href="{% url 'documentos:detalle' tipo=tipo.key documento_id=doc.uuid %}" class="btn btn--ghost btn--sm"><i class="fa-solid fa-eye"></i> Ver</a>
+              {% if doc.estado != 'obsoleto' and doc.estado != 'en_revision' %}
+                {% if doc.propietario == request.user or request.user.perfil.es_jefe or request.user.perfil.es_administrador %}
+                  {% if doc.estado == 'borrador' %}
+                <a href="{% url 'documentos:editar_borrador' tipo=tipo.key documento_id=doc.uuid %}" class="btn btn--ghost btn--sm"><i class="fa-solid fa-pen-to-square"></i> Editar Borrador</a>
+                  {% else %}
+                <a href="{% url 'documentos:editar' tipo=tipo.key documento_id=doc.uuid %}" class="btn btn--ghost btn--sm"><i class="fa-solid fa-file-signature"></i> Planilla de Cambios</a>
+                  {% endif %}
+                {% endif %}
+              {% endif %}
+              {% if doc.estado != 'obsoleto' and doc.estado != 'en_revision' %}
+                {% if doc.propietario == request.user or request.user.perfil.es_jefe or request.user.perfil.es_administrador %}
+                <a href="{% url 'documentos:eliminar' tipo=tipo.key documento_id=doc.uuid %}" class="btn btn--ghost btn--sm" style="color: var(--color-danger);">
+                  {% if request.user.perfil.es_jefe or request.user.perfil.es_administrador %}
+                  <i class="fa-solid fa-trash"></i> Inhabilitar
+                  {% else %}
+                  <i class="fa-solid fa-ban"></i> Solicitar Eliminación
+                  {% endif %}
+                </a>
+                {% endif %}
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+
+      {% if tipo.documentos.has_other_pages %}
+      <nav class="pagination">
+        {% if tipo.documentos.has_previous %}
+        <a href="?page_{{ tipo.key }}={{ tipo.documentos.previous_page_number }}&buscar={{ buscar }}&estado={{ estado_filter }}">&laquo; Anterior</a>
+        {% else %}
+        <span class="disabled">&laquo; Anterior</span>
+        {% endif %}
+        {% for num in tipo.documentos.paginator.page_range %}
+        {% if tipo.documentos.number == num %}
+        <span class="current">{{ num }}</span>
+        {% elif num > tipo.documentos.number|add:'-3' and num < tipo.documentos.number|add:'3' %}
+        <a href="?page_{{ tipo.key }}={{ num }}&buscar={{ buscar }}&estado={{ estado_filter }}">{{ num }}</a>
+        {% endif %}
+        {% endfor %}
+        {% if tipo.documentos.has_next %}
+        <a href="?page_{{ tipo.key }}={{ tipo.documentos.next_page_number }}&buscar={{ buscar }}&estado={{ estado_filter }}">Siguiente &raquo;</a>
+        {% else %}
+        <span class="disabled">Siguiente &raquo;</span>
+        {% endif %}
+      </nav>
+      {% endif %}
+
+      {% else %}
+      <div class="empty-state" style="padding: 2rem;">
+        <i class="fa-solid fa-{{ tipo.icono }}"></i>
+        <p>No hay {{ tipo.nombre|lower }} en esta página</p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% else %}
+<div class="empty-state">
+  <i class="fa-solid fa-folder-open"></i>
+  <p>No tienes documentos creados</p>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function toggleAccordion(btn) {
+  const accordion = btn.closest('.accordion');
+  accordion.classList.toggle('active');
+}
+</script>
+{% endblock %}

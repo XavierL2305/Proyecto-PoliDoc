@@ -1,0 +1,47 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}{{ accion }} Sección - {{ formato.codigo }}{% endblock %}
+
+{% block extra_css %}
+<style>
+  .page-content { display: flex; justify-content: center; align-items: flex-start; }
+  .form-card {
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg); max-width: 500px; width: 100%;
+  }
+  .form-card-header { padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--color-border); }
+  .form-card-header h3 { font-size: 1rem; font-weight: 600; color: var(--color-text); margin: 0; }
+  .form-card-body { padding: 1.5rem; }
+  .form-card-footer {
+    padding: 1rem 1.5rem; border-top: 1px solid var(--color-border);
+    display: flex; align-items: center; justify-content: flex-end; gap: 0.75rem;
+  }
+  .form-group { margin-bottom: 1rem; }
+  .form-label { display: block; font-size: 0.875rem; font-weight: 500; color: var(--color-text); margin-bottom: 0.5rem; }
+</style>
+{% endblock %}
+
+{% block app_content %}
+<div class="form-card">
+  <div class="form-card-header">
+    <h3>{{ accion }} Sección — {{ formato.codigo }}</h3>
+  </div>
+  <form method="post">
+    {% csrf_token %}
+    <div class="form-card-body">
+      {% for field in form %}
+      <div class="form-group">
+        <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}{% if field.help_text %}<span class="form-label-help" data-tooltip="{{ field.help_text }}" data-tooltip-position="right" tabindex="0" aria-label="{{ field.help_text }}"><i class="fa-solid fa-circle-info" aria-hidden="true"></i></span>{% endif %}</label>
+        {{ field }}
+        {% if field.errors %}<span class="form-error">{{ field.errors.0 }}</span>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    <div class="form-card-footer">
+      <a href="{% url 'documentos:formato_constructor' formato_id=formato.id %}" class="btn btn--ghost">Cancelar</a>
+      <button type="submit" class="btn btn--primary">{{ accion }}</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

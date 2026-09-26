@@ -1,0 +1,61 @@
+/* ==========================================================================
+   POLIDOC - UTILIDADES RESPONSIVE
+   ========================================================================== */
+
+/* === BREAKPOINTS ===
+   Mobile:  < 640px
+   Tablet:  640px - 1024px
+   Desktop: > 1024px
+*/
+
+/* === MOBILE (< 640px) === */
+@media (max-width: 639px) {
+  .hide-mobile { display: none !important; }
+  .show-mobile { display: block !important; }
+  .flex-mobile { flex-direction: column; }
+  
+  .container {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+}
+
+/* === TABLET (640px - 1024px) === */
+@media (min-width: 640px) and (max-width: 1023px) {
+  .hide-tablet { display: none !important; }
+  .show-tablet { display: block !important; }
+}
+
+/* === DESKTOP (> 1024px) === */
+@media (min-width: 1024px) {
+  .hide-desktop { display: none !important; }
+  .show-desktop { display: block !important; }
+}
+
+/* === CONTAINER === */
+.container {
+  width: 100%;
+  max-width: 1200px;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 1.5rem;
+  padding-right: 1.5rem;
+}
+
+/* === TEXT RESPONSIVE === */
+.text-responsive-sm {
+  font-size: 0.875rem;
+}
+
+.text-responsive-base {
+  font-size: 1rem;
+}
+
+@media (max-width: 639px) {
+  .text-responsive-sm {
+    font-size: 0.75rem;
+  }
+  .text-responsive-base {
+    font-size: 0.875rem;
+  }
+}

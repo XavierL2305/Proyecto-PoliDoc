@@ -1,0 +1,361 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Distribuir Documento - POLIDOC{% endblock %}
+
+{% block extra_css %}
+<style>
+  .page-content { display: flex; justify-content: center; align-items: flex-start; }
+
+  .form-card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    max-width: 640px;
+    width: 100%;
+  }
+  .form-card-header {
+    padding: 1.25rem 1.5rem;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .form-card-header h3 { font-size: 1rem; font-weight: 600; color: var(--color-text); margin: 0; }
+  .form-card-body { padding: 1.5rem; }
+  .form-card-footer {
+    padding: 1rem 1.5rem;
+    border-top: 1px solid var(--color-border);
+    display: flex; align-items: center; justify-content: flex-end; gap: 0.75rem;
+  }
+  .form-group { margin-bottom: 1.25rem; }
+  .form-label { display: block; font-size: 0.875rem; font-weight: 500; color: var(--color-text); margin-bottom: 0.5rem; }
+  .help-text { font-size: 0.75rem; color: var(--color-muted); margin-top: 0.25rem; }
+
+  .doc-info {
+    display: flex; align-items: center; gap: 0.75rem;
+    padding: 1rem; background: var(--color-info-light);
+    border-radius: var(--radius); color: var(--color-info-dark);
+    margin-bottom: 1.25rem;
+  }
+  .doc-info i { font-size: 1.25rem; }
+
+  /* === RADIO CARDS === */
+  .radio-cards { display: flex; gap: 0.75rem; }
+  .radio-card {
+    flex: 1; cursor: pointer; position: relative;
+  }
+  .radio-card input[type="radio"] {
+    position: absolute; opacity: 0; width: 0; height: 0;
+  }
+  .radio-card-body {
+    display: flex; flex-direction: column; align-items: center; gap: 0.375rem;
+    padding: 1rem 0.5rem;
+    border: 2px solid var(--color-border);
+    border-radius: var(--radius);
+    text-align: center;
+    transition: all 0.2s ease;
+  }
+  .radio-card-body i {
+    font-size: 1.25rem; color: var(--color-muted);
+    transition: color 0.2s ease;
+  }
+  .radio-card-body strong {
+    font-size: 0.8125rem; font-weight: 600; color: var(--color-text);
+  }
+  .radio-card-body small {
+    font-size: 0.6875rem; color: var(--color-muted); line-height: 1.3;
+  }
+  .radio-card input[type="radio"]:checked + .radio-card-body {
+    border-color: var(--color-primary);
+    background: var(--color-primary-light);
+  }
+  .radio-card input[type="radio"]:checked + .radio-card-body i {
+    color: var(--color-primary);
+  }
+  .radio-card:hover .radio-card-body {
+    border-color: var(--color-primary);
+  }
+
+  [data-theme="dark"] .radio-card-body { background: var(--color-bg); }
+  [data-theme="dark"] .radio-card input[type="radio"]:checked + .radio-card-body {
+    background: rgba(96, 165, 250, 0.1);
+  }
+
+  /* === USERS SELECTOR === */
+  .users-selector { position: relative; }
+  .users-trigger {
+    display: flex; align-items: center; gap: 0.5rem;
+    width: 100%; padding: 0.75rem 1rem;
+    font-size: 0.875rem; font-family: inherit;
+    color: var(--color-muted);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    cursor: pointer; transition: all 0.2s ease;
+    text-align: left;
+  }
+  .users-trigger:hover { border-color: var(--color-muted); }
+  .users-trigger.active { border-color: var(--color-primary); box-shadow: 0 0 0 3px rgba(0, 90, 156, 0.1); }
+  .users-trigger.has-selection { color: var(--color-text); }
+  .users-trigger .chevron {
+    margin-left: auto; font-size: 0.75rem;
+    transition: transform 0.2s ease;
+  }
+  .users-trigger.active .chevron { transform: rotate(180deg); }
+
+  .users-dropdown {
+    position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    z-index: 60; max-height: 280px;
+    opacity: 0; visibility: hidden; transform: translateY(-8px);
+    transition: all 0.15s ease;
+    display: flex; flex-direction: column;
+  }
+  .users-dropdown.open { opacity: 1; visibility: visible; transform: translateY(0); }
+
+  .users-search {
+    padding: 0.5rem; border-bottom: 1px solid var(--color-border);
+  }
+  .users-search input {
+    width: 100%; padding: 0.5rem 0.75rem;
+    font-size: 0.8125rem; font-family: inherit;
+    color: var(--color-text);
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    outline: none;
+  }
+  .users-search input:focus { border-color: var(--color-primary); }
+
+  .users-list { overflow-y: auto; max-height: 220px; padding: 0.25rem; }
+  .user-option {
+    display: flex; align-items: center; gap: 0.625rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--radius-sm);
+    cursor: pointer; transition: background 0.15s ease;
+    font-size: 0.8125rem; color: var(--color-text);
+  }
+  .user-option:hover { background: var(--color-bg); }
+  .user-option.selected { background: var(--color-primary-light); }
+  .user-option input[type="checkbox"] {
+    width: 16px; height: 16px; cursor: pointer; accent-color: var(--color-primary);
+  }
+  .user-option-info { display: flex; flex-direction: column; }
+  .user-option-name { font-weight: 500; }
+  .user-option-dept { font-size: 0.6875rem; color: var(--color-muted); }
+  .users-empty { padding: 1rem; text-align: center; color: var(--color-muted); font-size: 0.8125rem; }
+
+  /* === SELECTED TAGS === */
+  .selected-tags {
+    display: flex; flex-wrap: wrap; gap: 0.5rem;
+    margin-top: 0.75rem; min-height: 0;
+  }
+  .selected-tags:empty { display: none; }
+  .user-tag {
+    display: inline-flex; align-items: center; gap: 0.375rem;
+    padding: 0.3125rem 0.625rem;
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+    border-radius: 50px;
+    font-size: 0.75rem; font-weight: 500;
+  }
+  .user-tag-remove {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 16px; height: 16px;
+    background: var(--color-primary);
+    color: #fff; border: none; border-radius: 50%;
+    cursor: pointer; font-size: 0.625rem; line-height: 1;
+    transition: background 0.15s ease;
+    padding: 0;
+  }
+  .user-tag-remove:hover { background: var(--color-danger); }
+
+  [data-theme="dark"] .user-tag { background: #1E3A5F; color: #60A5FA; }
+  [data-theme="dark"] .user-tag-remove { background: #60A5FA; color: #1E3A5F; }
+  [data-theme="dark"] .user-tag-remove:hover { background: var(--color-danger); }
+</style>
+{% endblock %}
+
+{% block app_content %}
+<div class="form-card">
+  <div class="form-card-header">
+    <h3><i class="fa-solid fa-share-nodes"></i> Distribuir Documento</h3>
+  </div>
+  <form method="post" id="distribucion-form">
+    {% csrf_token %}
+    <div class="form-card-body">
+      <div class="doc-info">
+        <i class="fa-solid fa-file-lines"></i>
+        <div>
+          <strong>{{ documento.codigo }}</strong> - {{ documento.nombre }}
+          <br>
+          <span style="font-size: 0.75rem;">Estado: {{ documento.get_estado_display }} | Versión: {{ documento.version_actual }}</span>
+        </div>
+      </div>
+
+      <!-- MÉTODO DE DISTRIBUCIÓN -->
+      <div class="form-group">
+        <label class="form-label">Método de distribución</label>
+        <div class="radio-cards">
+          <label class="radio-card">
+            <input type="radio" name="metodo" value="sistema" checked>
+            <div class="radio-card-body">
+              <i class="fa-solid fa-desktop"></i>
+              <strong>Sistema</strong>
+              <small>Notificación en plataforma</small>
+            </div>
+          </label>
+          <label class="radio-card">
+            <input type="radio" name="metodo" value="email">
+            <div class="radio-card-body">
+              <i class="fa-solid fa-envelope"></i>
+              <strong>Email</strong>
+              <small>Correo electrónico</small>
+            </div>
+          </label>
+          <label class="radio-card">
+            <input type="radio" name="metodo" value="impreso">
+            <div class="radio-card-body">
+              <i class="fa-solid fa-print"></i>
+              <strong>Impreso</strong>
+              <small>Copia física</small>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <!-- DESTINATARIOS -->
+      <div class="form-group">
+        <label class="form-label">Destinatarios</label>
+        <div class="users-selector" id="users-selector">
+          <button type="button" class="users-trigger" id="users-trigger" onclick="toggleDropdown()">
+            <i class="fa-solid fa-users"></i>
+            <span id="trigger-text">Seleccionar usuarios...</span>
+            <i class="fa-solid fa-chevron-down chevron"></i>
+          </button>
+          <div class="users-dropdown" id="users-dropdown">
+            <div class="users-search">
+              <input type="text" placeholder="Buscar usuario..." id="user-search" oninput="filterUsers(this.value)">
+            </div>
+            <div class="users-list" id="users-list">
+              {% for user in form.usuarios_list %}
+              <label class="user-option" data-user-id="{{ user.id }}" data-user-name="{{ user.get_full_name|default:user.username }}" data-user-dept="{{ user.perfil.departamento|default:'' }}">
+                <input type="checkbox" value="{{ user.id }}" onchange="toggleUser({{ user.id }}, '{{ user.get_full_name|default:user.username|escapejs }}')">
+                <div class="user-option-info">
+                  <span class="user-option-name">{{ user.get_full_name|default:user.username }}</span>
+                  <span class="user-option-dept">{{ user.perfil.departamento|default:"Sin departamento" }}{% if user.email %} · {{ user.email }}{% else %} · <em>sin correo</em>{% endif %}</span>
+                </div>
+              </label>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+        <div class="selected-tags" id="selected-tags"></div>
+        <p class="help-text">Selecciona los usuarios que recibirán el documento</p>
+        {{ form.usuarios }}
+        {% if form.usuarios.errors %}
+        <span class="form-error"><i class="fa-solid fa-circle-exclamation"></i> {{ form.usuarios.errors.0 }}</span>
+        {% endif %}
+      </div>
+
+      <!-- OBSERVACIONES -->
+      <div class="form-group">
+        <label class="form-label" for="{{ form.observaciones.id_for_label }}">Observaciones</label>
+        {{ form.observaciones }}
+      </div>
+    </div>
+    <div class="form-card-footer">
+      <a href="{% url 'documentos:detalle' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost">Cancelar</a>
+      <button type="submit" class="btn btn--primary" id="btn-submit">
+        <i class="fa-solid fa-share-nodes"></i> Distribuir
+      </button>
+    </div>
+  </form>
+</div>
+
+<script>
+  const selectedUsers = new Map();
+  const hiddenInput = document.getElementById('id_usuarios');
+  const trigger = document.getElementById('users-trigger');
+  const triggerText = document.getElementById('trigger-text');
+  const dropdown = document.getElementById('users-dropdown');
+  const tagsContainer = document.getElementById('selected-tags');
+  const submitBtn = document.getElementById('btn-submit');
+  let dropdownOpen = false;
+
+  function toggleDropdown() {
+    dropdownOpen = !dropdownOpen;
+    dropdown.classList.toggle('open', dropdownOpen);
+    trigger.classList.toggle('active', dropdownOpen);
+  }
+
+  document.addEventListener('click', function(e) {
+    if (!document.getElementById('users-selector').contains(e.target) && dropdownOpen) {
+      toggleDropdown();
+    }
+  });
+
+  function toggleUser(id, name) {
+    if (selectedUsers.has(id)) {
+      selectedUsers.delete(id);
+    } else {
+      selectedUsers.set(id, name);
+    }
+    syncUI();
+  }
+
+  function removeUser(id) {
+    selectedUsers.delete(id);
+    const option = document.querySelector(`.user-option[data-user-id="${id}"] input`);
+    if (option) option.checked = false;
+    syncUI();
+  }
+
+  function syncUI() {
+    const ids = [];
+    const names = [];
+    selectedUsers.forEach((name, id) => {
+      ids.push(id);
+      names.push(name);
+    });
+    hiddenInput.value = ids.join(',');
+
+    triggerText.textContent = ids.length > 0
+      ? `${ids.length} usuario(s) seleccionado(s)`
+      : 'Seleccionar usuarios...';
+    trigger.classList.toggle('has-selection', ids.length > 0);
+
+    tagsContainer.innerHTML = '';
+    selectedUsers.forEach((name, id) => {
+      tagsContainer.innerHTML += `
+        <span class="user-tag">
+          ${name}
+          <button type="button" class="user-tag-remove" onclick="removeUser(${id})" title="Quitar">×</button>
+        </span>`;
+    });
+
+    document.querySelectorAll('.user-option').forEach(opt => {
+      const uid = parseInt(opt.dataset.userId);
+      opt.classList.toggle('selected', selectedUsers.has(uid));
+    });
+  }
+
+  function filterUsers(query) {
+    const q = query.toLowerCase();
+    document.querySelectorAll('.user-option').forEach(opt => {
+      const name = opt.dataset.userName.toLowerCase();
+      const dept = (opt.dataset.userDept || '').toLowerCase();
+      opt.style.display = (name.includes(q) || dept.includes(q)) ? '' : 'none';
+    });
+  }
+
+  document.getElementById('distribucion-form').addEventListener('submit', function(e) {
+    if (selectedUsers.size === 0) {
+      e.preventDefault();
+      alert('Debes seleccionar al menos un destinatario.');
+      return false;
+    }
+  });
+</script>
+{% endblock %}

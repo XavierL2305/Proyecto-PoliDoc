@@ -1,0 +1,43 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Desactivar Formato - Configuración{% endblock %}
+
+{% block extra_css %}
+<style>
+  .page-content { display: flex; justify-content: center; align-items: flex-start; }
+  .confirm-card {
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg); max-width: 500px; width: 100%;
+  }
+  .confirm-card-header { padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--color-border); }
+  .confirm-card-header h3 { font-size: 1rem; font-weight: 600; color: var(--color-text); margin: 0; }
+  .confirm-card-body { padding: 1.5rem; text-align: center; }
+  .confirm-card-body p { font-size: 0.875rem; color: var(--color-text); margin-bottom: 1rem; }
+  .confirm-card-body .icon-warning { font-size: 2rem; color: var(--color-warning); margin-bottom: 1rem; display: block; }
+  .confirm-card-footer {
+    padding: 1rem 1.5rem; border-top: 1px solid var(--color-border);
+    display: flex; align-items: center; justify-content: center; gap: 0.75rem;
+  }
+</style>
+{% endblock %}
+
+{% block app_content %}
+<div class="confirm-card">
+  <div class="confirm-card-header">
+    <h3>Desactivar Formato</h3>
+  </div>
+  <form method="post">
+    {% csrf_token %}
+    <div class="confirm-card-body">
+      <i class="fa-solid fa-triangle-exclamation icon-warning"></i>
+      <p>¿Está seguro de desactivar el formato <strong>{{ formato.codigo }}</strong> — {{ formato.nombre }}?</p>
+      <p style="font-size:0.8125rem;color:var(--color-muted);">El formato no será eliminado, solo quedará inactivo y no se podrá utilizar para crear documentos.</p>
+    </div>
+    <div class="confirm-card-footer">
+      <a href="{% url 'documentos:formatos_lista' %}" class="btn btn--ghost">Cancelar</a>
+      <button type="submit" class="btn btn--danger">Desactivar</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

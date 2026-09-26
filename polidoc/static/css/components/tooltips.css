@@ -1,0 +1,146 @@
+/* ==========================================================================
+   POLIDOC - COMPONENTE: TOOLTIPS
+   ========================================================================== */
+
+/* === BASE TOOLTIP === */
+[data-tooltip] {
+  position: relative;
+  cursor: help;
+}
+
+[data-tooltip]::before,
+[data-tooltip]::after {
+  position: absolute;
+  z-index: 100;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.15s ease;
+}
+
+/* === TOOLTIP TEXT === */
+[data-tooltip]::after {
+  content: attr(data-tooltip);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.4;
+  color: #FFFFFF;
+  background: #1E293B;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  max-width: 250px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+[data-theme="dark"] [data-tooltip]::after {
+  background: #F1F5F9;
+  color: #1E293B;
+}
+
+/* === TOOLTIP ARROW === */
+[data-tooltip]::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  background: #1E293B;
+  transform: rotate(45deg);
+}
+
+[data-theme="dark"] [data-tooltip]::before {
+  background: #F1F5F9;
+}
+
+/* === SHOW TOOLTIP === */
+[data-tooltip]:hover::before,
+[data-tooltip]:hover::after,
+[data-tooltip]:focus::before,
+[data-tooltip]:focus::after {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* === TOOLTIP TOP (Default) === */
+[data-tooltip]::after {
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+[data-tooltip]::before {
+  bottom: calc(100% + 5px);
+  left: 50%;
+  transform: translateX(-50%) rotate(45deg);
+}
+
+/* === TOOLTIP BOTTOM === */
+[data-tooltip-position="bottom"]::after {
+  bottom: auto;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+[data-tooltip-position="bottom"]::before {
+  bottom: auto;
+  top: calc(100% + 5px);
+  left: 50%;
+  transform: translateX(-50%) rotate(45deg);
+}
+
+/* === TOOLTIP LEFT === */
+[data-tooltip-position="left"]::after {
+  bottom: auto;
+  top: 50%;
+  left: auto;
+  right: calc(100% + 8px);
+  transform: translateY(-50%);
+}
+
+[data-tooltip-position="left"]::before {
+  bottom: auto;
+  top: 50%;
+  left: auto;
+  right: calc(100% + 5px);
+  transform: translateY(-50%) rotate(45deg);
+}
+
+/* === TOOLTIP RIGHT === */
+[data-tooltip-position="right"]::after {
+  bottom: auto;
+  top: 50%;
+  left: calc(100% + 8px);
+  transform: translateY(-50%);
+}
+
+[data-tooltip-position="right"]::before {
+  bottom: auto;
+  top: 50%;
+  left: calc(100% + 5px);
+  transform: translateY(-50%) rotate(45deg);
+}
+
+/* === TOOLTIP WITH ICON === */
+[data-tooltip] .tooltip-icon {
+  cursor: help;
+}
+
+/* === TOOLTIP RESPONSIVE === */
+@media (max-width: 639px) {
+  [data-tooltip]::after {
+    max-width: 180px;
+    white-space: normal;
+    text-align: center;
+  }
+}
+
+/* === TOOLTIP FORM-LABEL-HELP (wrap for long text) === */
+.form-label-help[data-tooltip]::after {
+  white-space: normal;
+  width: max-content;
+  max-width: 280px;
+  text-align: left;
+  line-height: 1.4;
+  text-overflow: clip;
+}

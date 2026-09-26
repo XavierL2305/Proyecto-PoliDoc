@@ -1,0 +1,21 @@
+{
+  "$schema": "https://opencode.ai",
+  "model": "opencode/mimo-v2.5-free", 
+  "agents": {
+    "explore": {
+      "description": "Subagente de lectura profunda para escanear todo tu proyecto o repositorio.",
+      "model": "opencode/nemotron-3-ultra-free",
+      "mode": "subagent"
+    },
+    "build": {
+      "description": "Agente principal para razonar problemas complejos y aplicar cambios inteligentes.",
+      "model": "opencode/mimo-v2.5-free",
+      "mode": "primary"
+    },
+    "fast-write": {
+      "description": "Subagente veloz para hacer parches inmediatos y ediciones directas.",
+      "model": "opencode/big-pickle",
+      "mode": "subagent"
+    }
+  }
+}

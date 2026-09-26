@@ -1,0 +1,1133 @@
+{% extends 'base_app.html' %}
+{% load static formato_extras %}
+
+{% block title %}{{ documento.codigo }} - POLIDOC{% endblock %}
+
+{% block extra_css %}
+<style>
+  .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2rem; flex-wrap: wrap; gap: 1rem; }
+  .page-header h1 { font-size: 1.5rem; font-weight: 700; color: var(--color-text); margin: 0; }
+  .doc-detail { display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem; }
+  .detail-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); min-width: 0; }
+  .detail-header { padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--color-border); }
+  .detail-header h3 { font-size: 1rem; font-weight: 600; color: var(--color-text); margin: 0; }
+  .detail-body { padding: 1.5rem; }
+  .detail-row { display: flex; justify-content: space-between; padding: 0.75rem 0; border-bottom: 1px solid var(--color-border); }
+  .detail-row:last-child { border-bottom: none; }
+  .detail-label { font-size: 0.875rem; color: var(--color-muted); font-weight: 500; }
+  .detail-value { font-size: 0.875rem; color: var(--color-text); font-weight: 500; }
+  .version-list { display: flex; flex-direction: column; }
+  .version-item { display: flex; align-items: center; gap: 1rem; padding: 0.75rem 0; border-bottom: 1px solid var(--color-border); }
+  #pdf-viewer canvas { max-width: 100%; height: auto; }
+  .version-item:last-child { border-bottom: none; }
+  .version-number { font-weight: 600; color: var(--color-primary); }
+  .version-date { font-size: 0.75rem; color: var(--color-muted); }
+  @media (max-width: 1024px) { .doc-detail { grid-template-columns: 1fr; } }
+  #pdf-viewer { width: 100%; overflow: auto; background: #525659; }
+  #pdf-viewer canvas { display: block; margin: 10px auto; box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+  .tabs { display: flex; flex-direction: row; border-bottom: 1px solid var(--color-border); overflow-x: auto; }
+  .tab { padding: 0.75rem 1.5rem; cursor: pointer; font-size: 0.875rem; font-weight: 500; color: var(--color-muted); border-bottom: 2px solid transparent; transition: all var(--transition); white-space: nowrap; }
+  .tab:hover { color: var(--color-text); }
+  .tab.active { color: var(--color-primary); border-bottom-color: var(--color-primary); }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+  .dist-item { display: flex; align-items: center; gap: 1rem; padding: 0.75rem 0; border-bottom: 1px solid var(--color-border); }
+  .dist-item:last-child { border-bottom: none; }
+  .dist-avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--color-primary-light); display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: 600; color: var(--color-primary); }
+  .dist-info { flex: 1; }
+  .dist-name { font-size: 0.875rem; font-weight: 500; color: var(--color-text); }
+  .dist-meta { font-size: 0.75rem; color: var(--color-muted); }
+  .dist-item--revocada { opacity: 0.6; }
+  .dist-item--revocada .dist-avatar { background: var(--color-danger-light); color: var(--color-danger); }
+  .badge--revocada { background: var(--color-danger-light); color: var(--color-danger); font-size: 0.7rem; padding: 0.15rem 0.4rem; border-radius: var(--radius); margin-left: 0.5rem; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+{% endblock %}
+
+{% block app_content %}
+      <div class="page-header">
+        <div>
+          <h1>{{ documento.nombre }}</h1>
+          <p>{{ documento.codigo }} - Versión {{ documento.version_actual }}</p>
+        </div>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+          {% if documento.estado == 'obsoleto' and puede_inhabilitar %}
+          <button class="btn btn--success btn--sm" onclick="cambiarEstadoDocumento('{{ tipo }}', '{{ documento.uuid }}', 'activo')">
+            <i class="fa-solid fa-rotate-left"></i> Habilitar
+          </button>
+          {% endif %}
+          {% if puede_editar %}
+            {% if documento.estado == 'borrador' %}
+          <a href="{% url 'documentos:editar_borrador' tipo=tipo documento_id=documento.uuid %}" class="btn btn--primary btn--sm">
+            <i class="fa-solid fa-pen-to-square"></i> Editar Borrador
+          </a>
+          <form method="post" action="{% url 'documentos:enviar_documento' tipo=tipo documento_id=documento.uuid %}" style="display:inline;">
+            {% csrf_token %}
+            <button type="submit" class="btn btn--success btn--sm">
+              <i class="fa-solid fa-paper-plane"></i> Enviar a Revisión
+            </button>
+          </form>
+            {% else %}
+          <a href="{% url 'documentos:editar' tipo=tipo documento_id=documento.uuid %}" class="btn btn--primary btn--sm">
+            <i class="fa-solid fa-file-signature"></i> Planilla de Cambios
+          </a>
+            {% endif %}
+          {% endif %}
+          {% if puede_eliminar %}
+          <a href="{% url 'documentos:eliminar' tipo=tipo documento_id=documento.uuid %}" class="btn btn--danger btn--sm">
+            {% if request.user.perfil.es_jefe or request.user.perfil.es_administrador %}
+            <i class="fa-solid fa-trash"></i> Inhabilitar
+            {% else %}
+            <i class="fa-solid fa-ban"></i> Solicitar Eliminación
+            {% endif %}
+          </a>
+          {% endif %}
+          {% if request.user.is_superuser and documento.estado == 'obsoleto' and documento.fecha_destruccion and documento.fecha_destruccion <= hoy %}
+          <a href="{% url 'documentos:destruir_documento' tipo=tipo documento_id=documento.uuid %}" class="btn btn--danger btn--sm">
+            <i class="fa-solid fa-skull-crossbones"></i> Destruir
+          </a>
+          {% endif %}
+          {% if puede_descargar %}
+          <a href="{% url 'documentos:descargar_archivo' tipo=tipo documento_id=documento.uuid %}" class="btn btn--primary btn--sm">
+            <i class="fa-solid fa-download"></i> Descargar
+          </a>
+          {% elif solicitud_pendiente %}
+          <span class="badge badge--warning" style="display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.375rem 0.75rem;">
+            <i class="fa-solid fa-clock"></i> Solicitud pendiente de aprobación
+          </span>
+          {% else %}
+          <a href="{% url 'documentos:solicitar_descarga' tipo=tipo documento_id=documento.uuid %}" class="btn btn--secondary btn--sm">
+            <i class="fa-solid fa-download"></i> Solicitar Descarga
+          </a>
+          {% endif %}
+        </div>
+      </div>
+
+      {% if solicitud_aprobacion and solicitud_aprobacion.estado == 'pendiente' %}
+      <div class="alert alert--warning" style="margin-bottom: 1rem;">
+        <span class="alert-icon"><i class="fa-solid fa-clock"></i></span>
+        <div class="alert-content">
+          <strong>
+            {% if solicitud_aprobacion.rol_aprobador == 'evaluador' %}
+              Documento pendiente de evaluación
+            {% else %}
+              Documento pendiente de autorización
+            {% endif %}
+          </strong>
+          <p style="margin: 0.25rem 0 0; font-size: 0.875rem;">
+            Enviado por {{ solicitud_aprobacion.solicitante.get_full_name|default:solicitud_aprobacion.solicitante.username }}
+            el {{ solicitud_aprobacion.fecha_solicitud|date:"d/m/Y H:i" }}
+          </p>
+        </div>
+        {% if puede_aprobar %}
+        <div style="display: flex; gap: 0.5rem; margin-left: auto;">
+          <button class="btn btn--success btn--sm" onclick="aprobarDocumentoDirecto('{{ tipo }}', '{{ documento.uuid }}')">
+            {% if solicitud_aprobacion.rol_aprobador == 'evaluador' %}
+              <i class="fa-solid fa-magnifying-glass"></i> Evaluar
+            {% else %}
+              <i class="fa-solid fa-stamp"></i> Autorizar
+            {% endif %}
+          </button>
+          <button class="btn btn--danger btn--sm" onclick="mostrarRechazoDirecto()">
+            <i class="fa-solid fa-xmark"></i> Rechazar
+          </button>
+        </div>
+        {% endif %}
+      </div>
+      <div id="rechazo-directo-form" style="display:none; margin-bottom: 1rem; padding: 1rem; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius);">
+        <label class="form-label">Motivo del rechazo</label>
+        <textarea class="form-input form-textarea" id="motivo-rechazo-directo" rows="3" placeholder="Ingrese el motivo del rechazo..."></textarea>
+        <div style="display: flex; gap: 0.5rem; margin-top: 0.75rem;">
+          <button class="btn btn--danger btn--sm" onclick="confirmarRechazoDirecto('{{ tipo }}', '{{ documento.uuid }}')">
+            Confirmar rechazo
+          </button>
+          <button class="btn btn--ghost btn--sm" onclick="ocultarRechazoDirecto()">
+            Cancelar
+          </button>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if espera_msg %}
+      <div class="alert alert--warning" style="margin-bottom: 1rem;">
+        <span class="alert-icon"><i class="fa-solid fa-hourglass-half"></i></span>
+        <div class="alert-content">
+          <strong>{{ espera_msg }}</strong>
+          <p style="margin: 0.25rem 0 0; font-size: 0.875rem;">
+            El documento permanecerá en revisión hasta completar la cadena de aprobación.
+          </p>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if solicitud_aprobacion and solicitud_aprobacion.estado == 'aprobada' %}
+      <div class="alert alert--success" style="margin-bottom: 1rem;">
+        <span class="alert-icon"><i class="fa-solid fa-circle-check"></i></span>
+        <div class="alert-content">
+          <strong>Documento aprobado</strong>
+          <p style="margin: 0.25rem 0 0; font-size: 0.875rem;">
+            Aprobado por {{ solicitud_aprobacion.aprobador.get_full_name|default:solicitud_aprobacion.aprobador.username }}
+            el {{ solicitud_aprobacion.fecha_respuesta|date:"d/m/Y H:i" }}
+          </p>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if solicitud_aprobacion and solicitud_aprobacion.estado == 'rechazada' and documento.estado != 'activo' %}
+      <div class="alert alert--danger" style="margin-bottom: 1rem;">
+        <span class="alert-icon"><i class="fa-solid fa-circle-xmark"></i></span>
+        <div class="alert-content">
+          <strong>Documento rechazado</strong>
+          <p style="margin: 0.25rem 0 0; font-size: 0.875rem;">
+            Motivo: {{ solicitud_aprobacion.motivo_rechazo|default:"No especificado" }}
+          </p>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if ia_habilitada or documento.resumen_ia or documento.resumen_ia_estado %}
+      <div class="detail-card" style="margin-bottom: 1.5rem;" id="card-resumen-ia">
+        <div class="detail-header" style="display:flex; align-items:center; justify-content:space-between; gap:.5rem;">
+          <h3 style="display:flex; align-items:center; gap:.5rem; margin:0;">
+            <i class="fa-solid fa-wand-magic-sparkles" style="color: var(--color-primary);"></i>
+            Resumen IA
+          </h3>
+          {% if ia_habilitada %}
+          <button type="button" class="btn btn--ghost btn--sm" id="btn-resumen-ia" onclick="generarResumenIA()">
+            <i class="fa-solid fa-rotate"></i>
+            <span id="btn-resumen-ia-text">{% if documento.resumen_ia %}Regenerar{% else %}Generar resumen{% endif %}</span>
+          </button>
+          {% endif %}
+        </div>
+        <div class="detail-body">
+          <div id="resumen-ia-loading" style="display:none; text-align:center; padding:1rem;">
+            <i class="fa-solid fa-spinner fa-spin" style="font-size:1.5rem; color: var(--color-primary);"></i>
+            <p style="margin-top:.5rem; color: var(--color-muted); font-size:.875rem;">Analizando el documento con IA...</p>
+          </div>
+          <div id="resumen-ia-error" class="badge badge--danger" style="display:none; white-space:normal;"></div>
+          <div id="resumen-ia-content">
+            {% if documento.resumen_ia %}
+              {% if not documento.resumen_ia_actualizado %}
+              <p style="font-size:.8rem; color: var(--color-muted); margin-bottom:.75rem;">
+                <i class="fa-solid fa-triangle-exclamation"></i>
+                Generado para la versión {{ documento.resumen_ia_version }}; la versión actual es {{ documento.version_actual }}.
+              </p>
+              {% endif %}
+              {% with r=documento.resumen_ia %}
+                {% if r.objetivo %}<div style="margin-bottom:.75rem;"><span class="detail-label">Objetivo</span><p style="margin:.25rem 0 0; font-size:.875rem;">{% resaltar r.objetivo r.palabras_clave %}</p></div>{% endif %}
+                {% if r.alcance %}<div style="margin-bottom:.75rem;"><span class="detail-label">Alcance</span><p style="margin:.25rem 0 0; font-size:.875rem;">{% resaltar r.alcance r.palabras_clave %}</p></div>{% endif %}
+                {% if r.definiciones_clave %}<div style="margin-bottom:.75rem;"><span class="detail-label">Definiciones clave</span><ul style="margin:.25rem 0 0 1.25rem; font-size:.875rem;">{% for d in r.definiciones_clave %}<li>{% resaltar d r.palabras_clave %}</li>{% endfor %}</ul></div>{% endif %}
+                {% if r.puntos_principales %}<div style="margin-bottom:.75rem;"><span class="detail-label">Puntos principales</span><ul style="margin:.25rem 0 0 1.25rem; font-size:.875rem;">{% for p in r.puntos_principales %}<li>{% resaltar p r.palabras_clave %}</li>{% endfor %}</ul></div>{% endif %}
+                {% if r.responsables %}<div style="margin-bottom:.75rem;"><span class="detail-label">Responsables</span><ul style="margin:.25rem 0 0 1.25rem; font-size:.875rem;">{% for resp in r.responsables %}<li><strong>{{ resp.rol }}:</strong> {% resaltar resp.funcion r.palabras_clave %}</li>{% endfor %}</ul></div>{% endif %}
+                {% if r.documentos_relacionados %}
+                <div style="margin-bottom:.75rem;">
+                  <span class="detail-label">Documentos relacionados</span>
+                  <ul style="margin:.25rem 0 0 1.25rem; font-size:.875rem;">
+                    {% for rel in r.documentos_relacionados %}
+                    <li>
+                      {% if rel.codigo %}
+                        {% with codigo_up=rel.codigo|upper %}
+                          {% with info=codigos_relacionados|get_item:codigo_up %}
+                            {% if info.puede_ver %}
+                            <a href="{% url 'documentos:detalle' tipo=info.tipo documento_id=info.uuid %}"><strong>{{ rel.codigo }}</strong></a>
+                            {% else %}
+                            <strong>{{ rel.codigo }}</strong>
+                            {% endif %}
+                          {% endwith %}
+                        {% endwith %}
+                      {% endif %}
+                      {% if rel.nombre %} — {% resaltar rel.nombre r.palabras_clave %}{% endif %}
+                      {% if rel.relacion %} <span style="color: var(--color-muted);">({{ rel.relacion }})</span>{% endif %}
+                    </li>
+                    {% endfor %}
+                  </ul>
+                </div>
+                {% elif r.relacionados %}
+                <div style="margin-bottom:.75rem;"><span class="detail-label">Documentos/registros relacionados</span><ul style="margin:.25rem 0 0 1.25rem; font-size:.875rem;">{% for rel in r.relacionados %}<li>{% resaltar rel r.palabras_clave %}</li>{% endfor %}</ul></div>
+                {% endif %}
+                {% if r.conclusion %}<div><span class="detail-label">Conclusión</span><p style="margin:.25rem 0 0; font-size:.875rem;">{% resaltar r.conclusion r.palabras_clave %}</p></div>{% endif %}
+              {% endwith %}
+            {% elif documento.resumen_ia_texto %}
+              <p style="white-space: pre-line; font-size:.875rem;">{{ documento.resumen_ia_texto }}</p>
+            {% elif ia_habilitada %}
+              <p style="color: var(--color-muted); font-size:.875rem; margin:0;">
+                Genera un resumen automático del contenido de este documento.
+              </p>
+            {% endif %}
+            {% if documento.resumen_ia_fecha %}
+            <p style="margin-top:.75rem; font-size:.75rem; color: var(--color-muted);">
+              <i class="fa-solid fa-robot"></i> {{ documento.resumen_ia_modelo }} · {{ documento.resumen_ia_fecha|date:"d/m/Y H:i" }}
+            </p>
+            {% endif %}
+            {% if ia_habilitada %}
+            <p style="margin-top:.5rem; font-size:.75rem; color: var(--color-muted);">
+              <i class="fa-solid fa-gauge-simple-high"></i>
+              Resúmenes IA hoy: {{ ia_usos_hoy }}{% if ia_limite > 0 %}/{{ ia_limite }}{% endif %}
+              · El contenido del documento se envía a Google (Gemini) para generar el resumen.
+            </p>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if documento.archivo %}
+      <div class="detail-card" style="margin-bottom: 1.5rem;">
+        <div class="detail-header"><h3>Documento</h3></div>
+        <div class="detail-body" style="padding: 0;">
+          
+          {% if convirtiendo %}
+            <div style="padding: 3rem; text-align: center;">
+              <i class="fa-solid fa-spinner fa-spin" style="font-size: 2rem; color: var(--color-primary);"></i>
+              <p style="margin-top: 1rem; color: var(--color-muted);">
+                Convirtiendo documento... Actualiza en unos segundos.
+              </p>
+            </div>
+            
+          {% elif documento.archivo_pdf %}
+            <div class="pdf-controls" style="display: flex; align-items: center; gap: 0.5rem; justify-content: center; padding: 1rem; background: var(--color-bg-secondary); border-bottom: 1px solid var(--color-border);">
+              <button id="btn-prev" class="btn btn--ghost btn--sm" onclick="goToPage(currentPage - 1)" disabled>← Anterior</button>
+              <input type="number" id="page-input" min="1" value="1" style="width: 60px; text-align: center; padding: 0.25rem; border: 1px solid var(--color-border); border-radius: 4px;" onkeypress="if(event.key==='Enter') goToPage(this.value)">
+              <span style="color: var(--color-muted);">de <span id="page-info">1</span></span>
+              <button id="btn-next" class="btn btn--ghost btn--sm" onclick="goToPage(currentPage + 1)">Siguiente →</button>
+            </div>
+            <div style="max-height: 70vh; overflow-y: auto; background: #6b6b6b;">
+              <div id="pdf-viewer" data-url="{% url 'documentos:ver_archivo' tipo=tipo documento_id=documento.uuid %}" style="display: flex; justify-content: center;"></div>
+            </div>
+            
+          {% elif documento.tipo_archivo == 'pdf' %}
+            <div class="pdf-controls" style="display: flex; align-items: center; gap: 0.5rem; justify-content: center; padding: 1rem; background: var(--color-bg-secondary); border-bottom: 1px solid var(--color-border);">
+              <button id="btn-prev" class="btn btn--ghost btn--sm" onclick="goToPage(currentPage - 1)" disabled>← Anterior</button>
+              <input type="number" id="page-input" min="1" value="1" style="width: 60px; text-align: center; padding: 0.25rem; border: 1px solid var(--color-border); border-radius: 4px;" onkeypress="if(event.key==='Enter') goToPage(this.value)">
+              <span style="color: var(--color-muted);">de <span id="page-info">1</span></span>
+              <button id="btn-next" class="btn btn--ghost btn--sm" onclick="goToPage(currentPage + 1)">Siguiente →</button>
+            </div>
+            <div style="max-height: 70vh; overflow-y: auto; background: #6b6b6b;">
+              <div id="pdf-viewer" data-url="{% url 'documentos:ver_archivo' tipo=tipo documento_id=documento.uuid %}" style="display: flex; justify-content: center;"></div>
+            </div>
+            
+          {% else %}
+            <div style="padding: 1.5rem; text-align: center;">
+              <i class="fa-solid fa-file" style="font-size: 3rem; color: var(--color-muted);"></i>
+              <p style="margin: 1rem 0; color: var(--color-muted);">
+                Vista previa no disponible para este tipo de archivo
+              </p>
+              {% if puede_descargar %}
+              <a href="{% url 'documentos:descargar_archivo' tipo=tipo documento_id=documento.uuid %}" class="btn btn--primary">
+                <i class="fa-solid fa-download"></i> Descargar
+              </a>
+              {% endif %}
+            </div>
+          {% endif %}
+          
+        </div>
+      </div>
+      {% endif %}
+
+      <div class="doc-detail">
+        <div>
+          <div class="detail-card" style="margin-bottom: 1.5rem;">
+            <div class="detail-header"><h3>Información General</h3></div>
+            <div class="detail-body">
+              <div class="detail-row">
+                <span class="detail-label">Nombre</span>
+                <span class="detail-value">{{ documento.nombre }}</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">Código</span>
+                <span class="detail-value">{{ documento.codigo }}</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">Estado</span>
+                <span class="badge badge--{{ documento.estado }}">{{ documento.get_estado_display }}</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">Versión Actual</span>
+                <span class="detail-value">{{ documento.version_actual }}</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">Propietario</span>
+                <span class="detail-value">{{ documento.propietario.get_full_name|default:documento.propietario.username }}</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">Departamento</span>
+                <span class="detail-value">{{ documento.departamento }}</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">Última Modificación</span>
+                <span class="detail-value">{{ documento.fecha_modificacion|date:"d/m/Y H:i" }}</span>
+              </div>
+              {% if documento.fecha_vencimiento %}
+              <div class="detail-row">
+                <span class="detail-label">Vencimiento</span>
+                <span class="detail-value">
+                  {% if documento.fecha_vencimiento <= hoy %}
+                    <span class="badge badge--danger">Vencido {{ documento.fecha_vencimiento|date:"d/m/Y" }}</span>
+                  {% elif documento.fecha_vencimiento <= dias7 %}
+                    <span class="badge badge--warning">Vence {{ documento.fecha_vencimiento|date:"d/m/Y" }}</span>
+                  {% else %}
+                    <span class="badge badge--success">{{ documento.fecha_vencimiento|date:"d/m/Y" }}</span>
+                  {% endif %}
+                  {% if puede_renovar %}
+                  <button class="btn btn--ghost btn--sm" onclick="document.getElementById('modal-renovar').classList.add('active')" style="margin-left: 0.5rem; font-size: 0.75rem;">
+                    <i class="fa-solid fa-rotate"></i> Renovar
+                  </button>
+                  {% endif %}
+                </span>
+              </div>
+              {% endif %}
+              {% if documento.descripcion %}
+              <div style="margin-top: 1rem;">
+                <span class="detail-label">Descripción</span>
+                <p style="margin-top: 0.5rem; font-size: 0.875rem; color: var(--color-text);">{{ documento.descripcion }}</p>
+              </div>
+              {% endif %}
+            </div>
+          </div>
+
+
+          {% if departamentos_afectados %}
+          <div class="detail-card" style="margin-bottom: 1.5rem;">
+            <div class="detail-header"><h3>Departamentos Afectados</h3></div>
+            <div class="detail-body">
+              {% for depto in departamentos_afectados %}
+              <div class="detail-row">
+                <span class="detail-value"><i class="fa-solid fa-building" style="color: var(--color-primary); margin-right: 0.5rem;"></i>{{ depto.nombre }}</span>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          {% if responsables %}
+          <div class="detail-card" style="margin-bottom: 1.5rem;">
+            <div class="detail-header"><h3>Responsables (áreas)</h3></div>
+            <div class="detail-body">
+              {% for depto in responsables %}
+              <div class="detail-row">
+                <span class="detail-value"><i class="fa-solid fa-user-tie" style="color: var(--color-primary); margin-right: 0.5rem;"></i>{{ depto.nombre }}</span>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          {% if documento.participantes %}
+          <div class="detail-card" style="margin-bottom: 1.5rem;">
+            <div class="detail-header"><h3>Participantes</h3></div>
+            <div class="detail-body">
+              {% for p in documento.participantes %}
+              <div class="detail-row">
+                <span class="detail-value"><i class="fa-solid fa-tag" style="color: var(--color-primary); margin-right: 0.5rem;"></i>{{ p }}</span>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          {% if documento.aprobado_por or documento.fecha_aprobacion or documento.fecha_vigencia or documento.fecha_vencimiento or documento.fecha_retencion or documento.fecha_destruccion or documento.historial_cambios %}
+          <div class="detail-card" style="margin-bottom: 1.5rem;">
+            <div class="detail-header"><h3>Control ISO 9001:2015</h3></div>
+            <div class="detail-body">
+              {% if documento.revision != '0' %}
+              <div class="detail-row">
+                <span class="detail-label">Revisión</span>
+                <span class="detail-value">v{{ documento.revision }}</span>
+              </div>
+              {% endif %}
+              {% if documento.aprobado_por %}
+              <div class="detail-row">
+                <span class="detail-label">Aprobado por</span>
+                <span class="detail-value">{{ documento.aprobado_por.get_full_name|default:documento.aprobado_por.username }}</span>
+              </div>
+              {% endif %}
+              {% if documento.fecha_aprobacion %}
+              <div class="detail-row">
+                <span class="detail-label">Fecha de Aprobación</span>
+                <span class="detail-value">{{ documento.fecha_aprobacion|date:"d/m/Y H:i" }}</span>
+              </div>
+              {% endif %}
+              {% if documento.fecha_vigencia %}
+              <div class="detail-row">
+                <span class="detail-label">Fecha de Vigencia</span>
+                <span class="detail-value">{{ documento.fecha_vigencia|date:"d/m/Y H:i" }}</span>
+              </div>
+              {% endif %}
+              {% if documento.fecha_vencimiento %}
+              <div class="detail-row">
+                <span class="detail-label">Fecha de Vencimiento</span>
+                <span class="detail-value">{{ documento.fecha_vencimiento|date:"d/m/Y" }}</span>
+              </div>
+              {% endif %}
+              {% if documento.proxima_revision %}
+              <div class="detail-row">
+                <span class="detail-label">Próxima Revisión</span>
+                <span class="detail-value">{{ documento.proxima_revision|date:"d/m/Y" }}</span>
+              </div>
+              {% endif %}
+              {% if documento.periodo_vigencia %}
+              <div class="detail-row">
+                <span class="detail-label">Período de Vigencia</span>
+                <span class="detail-value" style="display:flex; align-items:center; gap:0.5rem;">
+                  {{ documento.periodo_vigencia.nombre }}
+                  {% if puede_establecer_vigencia %}
+                  <button type="button" class="btn btn--ghost btn--sm" onclick="document.getElementById('modal-vigencia').classList.add('active')" style="font-size:0.75rem;">
+                    <i class="fa-solid fa-pen"></i> Cambiar
+                  </button>
+                  {% endif %}
+                </span>
+              </div>
+              {% elif puede_establecer_vigencia %}
+              <div class="detail-row">
+                <span class="detail-label">Período de Vigencia</span>
+                <span class="detail-value">
+                  <button type="button" class="btn btn--primary btn--sm" onclick="document.getElementById('modal-vigencia').classList.add('active')">
+                    <i class="fa-solid fa-plus"></i> Establecer vigencia
+                  </button>
+                </span>
+              </div>
+              {% endif %}
+              {% if documento.periodo_retencion %}
+              <div class="detail-row">
+                <span class="detail-label">Período de Retención</span>
+                <span class="detail-value">{{ documento.periodo_retencion.nombre }}</span>
+              </div>
+              {% endif %}
+              {% if documento.fecha_retencion %}
+              <div class="detail-row">
+                <span class="detail-label">Fecha de Retención</span>
+                <span class="detail-value">{{ documento.fecha_retencion|date:"d/m/Y" }}</span>
+              </div>
+              {% endif %}
+              {% if documento.fecha_destruccion %}
+              <div class="detail-row">
+                <span class="detail-label">Fecha de Destrucción</span>
+                <span class="detail-value">{{ documento.fecha_destruccion|date:"d/m/Y" }}</span>
+              </div>
+              {% endif %}
+              {% if documento.historial_cambios %}
+              <div style="margin-top: 1rem;">
+                <span class="detail-label">Historial de Cambios</span>
+                <pre style="margin-top: 0.5rem; padding: 0.75rem; background: var(--color-bg-alt); border-radius: var(--radius); font-size: 0.75rem; white-space: pre-wrap; color: var(--color-text);">{{ documento.historial_cambios }}</pre>
+              </div>
+              {% endif %}
+            </div>
+          </div>
+          {% endif %}
+
+          {% if documentos_relacionados %}
+          <div class="detail-card" style="margin-bottom: 1.5rem;">
+            <div class="detail-header"><h3>Documentos Relacionados</h3></div>
+            <div class="detail-body">
+              {% for doc_rel in documentos_relacionados %}
+              <div class="detail-row">
+                <span class="detail-value">
+                  <a href="{% url 'documentos:detalle' tipo=doc_rel.tipo_id documento_id=doc_rel.uuid %}" style="color: var(--color-primary); text-decoration: none;">
+                    <i class="fa-solid fa-link" style="margin-right: 0.5rem;"></i>{{ doc_rel.codigo }} - {{ doc_rel.nombre }}
+                  </a>
+                </span>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          {% if referencias_pendientes %}
+          <div class="detail-card" style="margin-bottom: 1.5rem;">
+            <div class="detail-header"><h3>Referencias Pendientes</h3></div>
+            <div class="detail-body">
+              {% for ref in referencias_pendientes %}
+              <div class="detail-row">
+                <span class="detail-value">
+                  <span class="depto-tag depto-tag--pendiente" style="display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.375rem 0.75rem; font-size: 0.8125rem; font-weight: 500; border: 1.5px dashed var(--color-warning); background: var(--color-warning-light); color: var(--color-warning-dark); border-radius: 50px; cursor: default;" title="Documento aún no creado. Se enlazará automáticamente cuando sea aprobado.">
+                    <i class="fa-solid fa-clock"></i> {{ ref.codigo_destino }}
+                    <span class="badge badge--warning" style="font-size: 0.65rem;">Pendiente</span>
+                  </span>
+                </span>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          {% if documentos_llamado_por %}
+          <div class="detail-card" style="margin-bottom: 1.5rem;">
+            <div class="detail-header"><h3>Llamado por</h3></div>
+            <div class="detail-body">
+              {% for doc_origen in documentos_llamado_por %}
+              <div class="detail-row">
+                <span class="detail-value">
+                  <a href="{% url 'documentos:detalle' tipo=doc_origen.tipo_id documento_id=doc_origen.uuid %}" style="color: var(--color-primary); text-decoration: none;">
+                    <i class="fa-solid fa-arrow-right" style="margin-right: 0.5rem;"></i>{{ doc_origen.codigo }} - {{ doc_origen.nombre }}
+                  </a>
+                </span>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          <div class="detail-card">
+            <div class="detail-header">
+              <h3>Acciones</h3>
+            </div>
+            <div class="detail-body">
+              <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                <a href="{% url 'documentos:historial_versiones' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost btn--sm">
+                  <i class="fa-solid fa-clock-rotate-left"></i> Historial
+                </a>
+                {% if puede_asignar %}
+                <a href="{% url 'documentos:asignar_documento' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost btn--sm">
+                  <i class="fa-solid fa-user-plus"></i> Asignar
+                </a>
+                {% endif %}
+                {% if puede_transferir_vista %}
+                <a href="{% url 'documentos:transferir_propiedad' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost btn--sm">
+                  <i class="fa-solid fa-right-left"></i> Transferir
+                </a>
+                {% endif %}
+                {% if documento.estado == 'activo' and puede_distribuir %}
+                <a href="{% url 'documentos:distribuir_documento' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost btn--sm">
+                  <i class="fa-solid fa-share-nodes"></i> Distribuir
+                </a>
+                <a href="{% url 'documentos:historial_distribucion' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost btn--sm">
+                  <i class="fa-solid fa-list"></i> Distribución
+                </a>
+                {% endif %}
+                <a href="{% url 'documentos:mis_documentos' %}" class="btn btn--ghost btn--sm">
+                  <i class="fa-solid fa-xmark"></i> Cancelar
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="detail-card">
+          <div class="tabs">
+            <div class="tab active" onclick="switchTab('versiones')">Últimas Versiones</div>
+            <div class="tab" onclick="switchTab('distribucion')">Distribución</div>
+            <div class="tab" onclick="switchTab('estado')">Historial de Estado</div>
+            {% if renovaciones %}
+            <div class="tab" onclick="switchTab('renovaciones')">Renovaciones</div>
+            {% endif %}
+          </div>
+          <div class="detail-body">
+            <div id="tab-versiones" class="tab-content active">
+              {% if versiones %}
+              <div class="version-list">
+                {% for version in versiones|slice:":5" %}
+                <div class="version-item">
+                  <div>
+                    <span class="version-number">v{{ version.numero_version }}</span>
+                    <span class="version-date">{{ version.fecha_creacion|date:"d/m/Y" }}</span>
+                  </div>
+                  <span style="font-size: 0.75rem; color: var(--color-muted);">{{ version.creado_por.username }}</span>
+                </div>
+                {% endfor %}
+              </div>
+              {% else %}
+              <p style="font-size: 0.875rem; color: var(--color-muted); text-align: center;">No hay versiones registradas</p>
+              {% endif %}
+            </div>
+            <div id="tab-distribucion" class="tab-content">
+              {% if distribuciones %}
+              <div class="dist-list">
+                {% for dist in distribuciones %}
+                <div class="dist-item{% if dist.revocado %} dist-item--revocada{% endif %}">
+                  <div class="dist-avatar">{{ dist.usuario.username|first|upper }}</div>
+                  <div class="dist-info">
+                    <div class="dist-name">
+                      {{ dist.usuario.get_full_name|default:dist.usuario.username }}
+                      {% if dist.revocado %}
+                        <span class="badge badge--revocada">Revocada</span>
+                      {% endif %}
+                    </div>
+                    <div class="dist-meta">
+                      {{ dist.fecha_distribucion|date:"d/m/Y H:i" }} · {{ dist.get_metodo_display }} · por {{ dist.distribuido_por.get_full_name|default:dist.distribuido_por.username }}
+                      {% if dist.revocado %}
+                        · Revocada {{ dist.fecha_revocacion|date:"d/m/Y H:i" }} por {{ dist.revocado_por.get_full_name|default:dist.revocado_por.username }}
+                      {% endif %}
+                    </div>
+                    {% if dist.revocado and dist.motivo_revocacion %}
+                    <div class="dist-meta" style="color: var(--color-danger);">Motivo: {{ dist.motivo_revocacion }}</div>
+                    {% endif %}
+                  </div>
+                  {% if not dist.revocado and puede_revocar %}
+                  <button class="btn btn--ghost btn--sm" style="color: var(--color-danger); font-size: 0.75rem;" data-dist-id="{{ dist.id }}" data-dist-nombre="{{ dist.usuario.get_full_name|default:dist.usuario.username|escapejs }}" onclick="abrirModalRevocar(this.dataset.distId, this.dataset.distNombre)">
+                    <i class="fa-solid fa-ban"></i> Revocar
+                  </button>
+                  {% endif %}
+                </div>
+                {% endfor %}
+              </div>
+              {% else %}
+              <p style="font-size: 0.875rem; color: var(--color-muted); text-align: center;">Este documento no ha sido distribuido</p>
+              {% endif %}
+            </div>
+            <div id="tab-estado" class="tab-content">
+              {% if historial_estados %}
+              <div class="version-list">
+                {% for solicitud in historial_estados %}
+                <div class="version-item">
+                  <div>
+                    <span class="version-number">{{ solicitud.get_accion_solicitud_display }}</span>
+                    <span class="version-date">{{ solicitud.fecha_solicitud|date:"d/m/Y H:i" }}</span>
+                  </div>
+                  <div style="font-size: 0.75rem; color: var(--color-muted);">
+                    por {{ solicitud.solicitante.get_full_name|default:solicitud.solicitante.username }}
+                    {% if solicitud.version_a_eliminar %}
+                    · Versión {{ solicitud.version_a_eliminar.numero_version }}
+                    {% endif %}
+                    {% if solicitud.aprobador %}
+                    · <strong>{{ solicitud.get_estado_display }}</strong>
+                    {% if solicitud.fecha_respuesta %}
+                    · {{ solicitud.fecha_respuesta|date:"d/m/Y H:i" }}
+                    {% endif %}
+                    {% endif %}
+                  </div>
+                </div>
+                {% endfor %}
+              </div>
+              {% else %}
+              <p style="font-size: 0.875rem; color: var(--color-muted); text-align: center;">No hay historial de estado registrado</p>
+              {% endif %}
+            </div>
+            {% if renovaciones %}
+            <div id="tab-renovaciones" class="tab-content">
+              <div class="version-list">
+                {% for r in renovaciones %}
+                <div class="version-item">
+                  <div>
+                    <span class="version-number">{{ r.fecha_anterior|date:"d/m/Y" }} → {{ r.fecha_nueva|date:"d/m/Y" }}</span>
+                    <span class="version-date">{{ r.fecha_renovacion|date:"d/m/Y H:i" }}</span>
+                  </div>
+                  <div style="font-size: 0.75rem; color: var(--color-muted);">
+                    por {{ r.renovado_por.get_full_name|default:r.renovado_por.username }}
+                    {% if r.observacion %} · {{ r.observacion }}{% endif %}
+                  </div>
+                </div>
+                {% endfor %}
+              </div>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      {% if solicitudes_cambio %}
+      <div class="detail-card" style="margin-top: 1.5rem;">
+        <div class="detail-header">
+          <h3><i class="fa-solid fa-file-circle-plus" style="margin-right:0.5rem;"></i> Formularios SGC</h3>
+        </div>
+        <div class="detail-body">
+          {% for sc in solicitudes_cambio %}
+          <div class="version-item" style="margin-bottom: 1rem; flex-direction: column; align-items: flex-start;">
+            <div style="display:flex; justify-content:space-between; width:100%; flex-wrap:wrap; gap:0.5rem; margin-bottom:0.5rem;">
+              <div>
+                <span class="version-number">{{ sc.codigo }}</span>
+                <span class="version-date">{{ sc.fecha_creacion|date:"d/m/Y H:i" }}</span>
+              </div>
+              <div style="display:flex; flex-wrap:wrap; gap:0.5rem; align-items:center;">
+                <span class="badge {% if sc.estado == 'aprobado' %}badge--success{% elif sc.estado == 'rechazado' %}badge--danger{% elif sc.estado == 'en_revision' %}badge--warning{% else %}badge--secondary{% endif %}">
+                  {{ sc.get_estado_display }}
+                </span>
+                {% if sc_permisos|get_item:sc.uuid %}
+                <a href="{% url 'documentos:descargar_solicitud_xlsx' solicitud_uuid=sc.uuid %}" class="btn btn--outline btn--sm" title="Exportar XLSX">
+                  <i class="fa-solid fa-file-excel"></i>
+                </a>
+                <a href="{% url 'documentos:descargar_solicitud_pdf' solicitud_uuid=sc.uuid %}" class="btn btn--outline btn--sm" title="Exportar PDF">
+                  <i class="fa-solid fa-file-pdf"></i>
+                </a>
+                {% endif %}
+              </div>
+            </div>
+            <div style="font-size:0.8125rem; color:var(--color-muted); margin-bottom:0.5rem;">
+              {{ sc.formato.codigo }} v{{ sc.formato.version }} · {{ sc.get_operacion_display }} · por {{ sc.solicitante.get_full_name|default:sc.solicitante.username }}
+            </div>
+            <div style="width:100%; min-width:0;">
+              {% include 'documentos/_formato_dinamico.html' with formato=sc.formato respuestas=sc.respuestas read_only=True %}
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      {% if descargas_pendientes_aprobar %}
+      <div class="detail-card" style="margin-top: 1.5rem; border-color: var(--color-warning);">
+        <div class="detail-header">
+          <h3 style="color: var(--color-warning);">
+            <i class="fa-solid fa-download"></i> Solicitudes de Descarga Pendientes
+          </h3>
+        </div>
+        <div class="detail-body">
+          {% for aprobacion in descargas_pendientes_aprobar %}
+          <div class="version-item" style="margin-bottom: 0.75rem;">
+            <div>
+              <span class="detail-label">Solicitante</span>
+              <span style="font-size: 0.875rem; color: var(--color-text);">
+                {{ aprobacion.solicitud.solicitado_por.get_full_name|default:aprobacion.solicitud.solicitado_por.username }}
+              </span>
+            </div>
+            {% if aprobacion.solicitud.motivo %}
+            <div style="font-size: 0.8125rem; color: var(--color-muted); margin-top: 0.25rem;">
+              <strong>Motivo:</strong> {{ aprobacion.solicitud.motivo }}
+            </div>
+            {% endif %}
+            <div style="font-size: 0.8125rem; color: var(--color-muted); margin-top: 0.25rem;">
+              {{ aprobacion.solicitud.fecha_solicitud|date:"d/m/Y H:i" }}
+            </div>
+            <div style="margin-top: 0.5rem; display: flex; gap: 0.5rem;">
+              <a href="{% url 'documentos:aprobar_descarga' solicitud_id=aprobacion.solicitud.id %}" class="btn btn--success btn--sm">
+                <i class="fa-solid fa-check"></i> Atender
+              </a>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Modal Renovar Vencimiento -->
+      {% if puede_renovar %}
+      <div id="modal-renovar" class="modal">
+        <div class="modal-content" style="background: var(--color-surface); border-radius: var(--radius-lg); padding: 1.5rem; max-width: 450px; width: 100%; box-shadow: var(--shadow-lg);">
+          <h3 style="margin: 0 0 1rem; font-size: 1rem;">Renovar Vencimiento</h3>
+          <form method="post" action="{% url 'documentos:renovar_vencimiento' tipo=tipo documento_id=documento.uuid %}">
+            {% csrf_token %}
+            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem;">
+              <button type="button" class="btn btn--ghost btn--sm" onclick="setFechaRenovacion(6)">+6 meses</button>
+              <button type="button" class="btn btn--ghost btn--sm" onclick="setFechaRenovacion(12)">+1 año</button>
+              <button type="button" class="btn btn--ghost btn--sm" onclick="setFechaRenovacion(24)">+2 años</button>
+              <button type="button" class="btn btn--ghost btn--sm" onclick="setFechaRenovacion(60)">+5 años</button>
+              <button type="button" class="btn btn--ghost btn--sm" onclick="setFechaRenovacion(120)">+10 años</button>
+            </div>
+            <div class="form-group" style="margin-bottom: 1rem;">
+              <label class="form-label">Nueva fecha de vencimiento *</label>
+              <input type="date" name="fecha_nueva" id="fecha-renovacion" class="form-input" required>
+            </div>
+            <div class="form-group" style="margin-bottom: 1.5rem;">
+              <label class="form-label">Observación (opcional)</label>
+              <textarea name="observacion" class="form-input" rows="2" placeholder="Motivo de la renovación..."></textarea>
+            </div>
+            <div style="display: flex; gap: 0.75rem; justify-content: flex-end;">
+              <button type="button" class="btn btn--ghost" onclick="document.getElementById('modal-renovar').classList.remove('active')">Cancelar</button>
+              <button type="submit" class="btn btn--primary">Renovar</button>
+            </div>
+          </form>
+        </div>
+      </div>
+      <script>
+      function setFechaRenovacion(meses) {
+        var hoy = new Date();
+        hoy.setMonth(hoy.getMonth() + meses);
+        var yyyy = hoy.getFullYear();
+        var mm = String(hoy.getMonth() + 1).padStart(2, '0');
+        var dd = String(hoy.getDate()).padStart(2, '0');
+        document.getElementById('fecha-renovacion').value = yyyy + '-' + mm + '-' + dd;
+      }
+      </script>
+      {% endif %}
+
+      <!-- Modal Establecer Vigencia -->
+      {% if puede_establecer_vigencia %}
+      <div id="modal-vigencia" class="modal">
+        <div class="modal-content" style="background: var(--color-surface); border-radius: var(--radius-lg); padding: 1.5rem; max-width: 450px; width: 100%; box-shadow: var(--shadow-lg);">
+          <h3 style="margin: 0 0 1rem; font-size: 1rem;">Establecer Período de Vigencia</h3>
+          <form method="post" action="{% url 'documentos:establecer_vigencia' tipo=tipo documento_id=documento.uuid %}">
+            {% csrf_token %}
+            <div class="form-group" style="margin-bottom: 1.5rem;">
+              <label class="form-label">Período de Vigencia *</label>
+              <select name="periodo_vigencia" class="form-input" required>
+                <option value="">Seleccione un período...</option>
+                {% for p in periodos_vigencia %}
+                <option value="{{ p.id }}" {% if documento.periodo_vigencia_id == p.id %}selected{% endif %}>{{ p.nombre }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div style="display: flex; gap: 0.75rem; justify-content: flex-end;">
+              <button type="button" class="btn btn--ghost" onclick="document.getElementById('modal-vigencia').classList.remove('active')">Cancelar</button>
+              <button type="submit" class="btn btn--primary">Establecer</button>
+            </div>
+          </form>
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Modal Revocar Distribución -->
+      {% if puede_revocar %}
+      <div id="modal-revocar" class="modal">
+        <div class="modal-content" style="background: var(--color-surface); border-radius: var(--radius-lg); padding: 1.5rem; max-width: 450px; width: 100%; box-shadow: var(--shadow-lg);">
+          <h3 style="margin: 0 0 1rem; font-size: 1rem;">Revocar Distribución</h3>
+          <p style="font-size: 0.875rem; color: var(--color-muted); margin-bottom: 1rem;">Se revocará la distribución a <strong id="revocar-destinatario"></strong>.</p>
+          <form method="post" id="revocar-form">
+            {% csrf_token %}
+            <div class="form-group" style="margin-bottom: 1.5rem;">
+              <label class="form-label">Motivo (opcional)</label>
+              <textarea name="motivo" class="form-input" rows="3" placeholder="Motivo de la revocación..."></textarea>
+            </div>
+            <div style="display: flex; gap: 0.75rem; justify-content: flex-end;">
+              <button type="button" class="btn btn--ghost" onclick="document.getElementById('modal-revocar').classList.remove('active')">Cancelar</button>
+              <button type="submit" class="btn btn--danger">Revocar</button>
+            </div>
+          </form>
+        </div>
+      </div>
+      {% endif %}
+
+      <style>
+      .modal { display: none; }
+      .modal.active {
+        display: flex; align-items: center; justify-content: center;
+        position: fixed; inset: 0; padding: 1rem;
+        background: rgba(0,0,0,0.5); z-index: 2000;
+        max-height: none; transform: none; border-radius: 0; overflow: auto;
+      }
+      </style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function aprobarDocumentoDirecto(tipo, docId) {
+  if (!confirm('¿Estás seguro de aprobar este documento?')) return;
+  console.log('Aprobando documento:', tipo, docId);
+
+  fetch(`/documentos/api/${tipo}/${docId}/aprobar-creacion/`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': '{{ csrf_token }}',
+    },
+    body: JSON.stringify({ observaciones: '' })
+  })
+  .then(response => {
+    console.log('Response status:', response.status);
+    return response.json();
+  })
+  .then(data => {
+    console.log('Response data:', data);
+    if (data.success) {
+      location.reload();
+    } else {
+      alert(data.mensaje || 'Error al aprobar');
+    }
+  })
+  .catch(error => {
+    console.error('Error:', error);
+    alert('Error de conexión al aprobar');
+  });
+}
+
+function mostrarRechazoDirecto() {
+  document.getElementById('rechazo-directo-form').style.display = 'block';
+}
+
+function cambiarEstadoDocumento(tipo, docId, nuevoEstado) {
+  const mensaje = nuevoEstado === 'activo'
+    ? '¿Reactivar este documento (pasar a Activo)?'
+    : '¿Inhabilitar este documento (pasar a Obsoleto)?';
+  if (!confirm(mensaje)) return;
+
+  fetch(`/documentos/api/${tipo}/${docId}/cambiar-estado/`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': '{{ csrf_token }}',
+    },
+    body: JSON.stringify({
+      estado: nuevoEstado,
+      motivo_seleccion: 'Cambio manual desde UI',
+      motivo_texto: ''
+    })
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.success) location.reload();
+    else alert(data.mensaje || 'Error al cambiar estado');
+  })
+  .catch(() => alert('Error de conexión'));
+}
+
+function ocultarRechazoDirecto() {
+  document.getElementById('rechazo-directo-form').style.display = 'none';
+}
+
+function confirmarRechazoDirecto(tipo, docId) {
+  const motivo = document.getElementById('motivo-rechazo-directo').value;
+  if (!motivo) {
+    alert('El motivo de rechazo es requerido');
+    return;
+  }
+  console.log('Rechazando documento:', tipo, docId, 'motivo:', motivo);
+
+  fetch(`/documentos/api/${tipo}/${docId}/rechazar-creacion/`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': '{{ csrf_token }}',
+    },
+    body: JSON.stringify({ motivo: motivo })
+  })
+  .then(response => {
+    console.log('Response status:', response.status);
+    return response.json();
+  })
+  .then(data => {
+    console.log('Response data:', data);
+    if (data.success) {
+      location.reload();
+    } else {
+      alert(data.mensaje || 'Error al rechazar');
+    }
+  })
+  .catch(error => {
+    console.error('Error:', error);
+    alert('Error de conexión al rechazar');
+  });
+}
+
+// PDF.js Viewer - Paginado, sin botones de descarga/impresión
+let currentPdf = null;
+let currentPage = 1;
+let totalPages = 0;
+
+function renderPage(pageNum) {
+  if (!currentPdf) return;
+  
+  currentPdf.getPage(pageNum).then(function(page) {
+    const scale = 1.5;
+    const viewport = page.getViewport({scale: scale});
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    
+    const viewer = document.getElementById('pdf-viewer');
+    viewer.innerHTML = '';
+    viewer.appendChild(canvas);
+    
+    page.render({canvasContext: canvas.getContext('2d'), viewport: viewport});
+    updateControls();
+  });
+}
+
+function goToPage(page) {
+  page = parseInt(page);
+  if (page >= 1 && page <= totalPages) {
+    currentPage = page;
+    renderPage(currentPage);
+  }
+}
+
+function updateControls() {
+  const pageInput = document.getElementById('page-input');
+  const pageInfo = document.getElementById('page-info');
+  const btnPrev = document.getElementById('btn-prev');
+  const btnNext = document.getElementById('btn-next');
+  
+  if (pageInput) pageInput.value = currentPage;
+  if (pageInfo) pageInfo.textContent = totalPages;
+  if (btnPrev) btnPrev.disabled = (currentPage === 1);
+  if (btnNext) btnNext.disabled = (currentPage === totalPages);
+}
+
+function switchTab(tabName) {
+  document.querySelectorAll('.tab').forEach(function(tab) {
+    tab.classList.remove('active');
+  });
+  document.querySelectorAll('.tab-content').forEach(function(content) {
+    content.classList.remove('active');
+  });
+  event.target.classList.add('active');
+  document.getElementById('tab-' + tabName).classList.add('active');
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  const viewer = document.getElementById('pdf-viewer');
+  if (!viewer) return;
+  
+  const url = viewer.getAttribute('data-url');
+  if (!url) return;
+  
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  
+  pdfjsLib.getDocument(url).promise.then(function(pdf) {
+    currentPdf = pdf;
+    totalPages = pdf.numPages;
+    currentPage = 1;
+    
+    renderPage(currentPage);
+    updateControls();
+  });
+});
+
+function abrirModalRevocar(distId, nombre) {
+  document.getElementById('revocar-destinatario').textContent = nombre;
+  document.getElementById('revocar-form').action = '/documentos/{{ tipo }}/{{ documento.uuid }}/distribucion/' + distId + '/revocar/';
+  document.getElementById('modal-revocar').classList.add('active');
+}
+
+{% if ia_habilitada %}
+var _resumenIATimer = null;
+var _resumenIAUrl = "{% url 'documentos:resumen_ia' tipo=tipo documento_id=documento.uuid %}";
+
+function _resumenIALoading(on) {
+  var loading = document.getElementById('resumen-ia-loading');
+  var content = document.getElementById('resumen-ia-content');
+  var btn = document.getElementById('btn-resumen-ia');
+  if (loading) loading.style.display = on ? '' : 'none';
+  if (content) content.style.display = on ? 'none' : '';
+  if (btn) btn.disabled = on;
+}
+
+function _resumenIAError(msg) {
+  var box = document.getElementById('resumen-ia-error');
+  if (box) { box.textContent = msg; box.style.display = ''; }
+  _resumenIALoading(false);
+  var btnText = document.getElementById('btn-resumen-ia-text');
+  if (btnText) btnText.textContent = 'Regenerar';
+}
+
+function _resumenIAPoll() {
+  fetch(_resumenIAUrl, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.estado === 'pendiente' || data.estado === 'procesando') {
+        _resumenIALoading(true);
+        _resumenIATimer = setTimeout(_resumenIAPoll, 3000);
+      } else if (data.estado === 'error') {
+        _resumenIAError(data.error || 'Ocurrió un error al generar el resumen.');
+      } else {
+        window.location.reload();
+      }
+    })
+    .catch(function() { _resumenIAError('No se pudo consultar el estado del resumen.'); });
+}
+
+function generarResumenIA() {
+  var box = document.getElementById('resumen-ia-error');
+  if (box) box.style.display = 'none';
+  _resumenIALoading(true);
+  var btnText = document.getElementById('btn-resumen-ia-text');
+  if (btnText) btnText.textContent = 'Generando...';
+  fetch(_resumenIAUrl, {
+    method: 'POST',
+    headers: { 'X-CSRFToken': '{{ csrf_token }}', 'X-Requested-With': 'XMLHttpRequest' },
+  })
+    .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+    .then(function(res) {
+      if (!res.ok) { _resumenIAError(res.data.error || 'No se pudo iniciar el resumen.'); return; }
+      _resumenIAPoll();
+    })
+    .catch(function() { _resumenIAError('No se pudo iniciar el resumen.'); });
+}
+
+{% if documento.resumen_ia_estado == 'pendiente' or documento.resumen_ia_estado == 'procesando' %}
+document.addEventListener('DOMContentLoaded', function() {
+  _resumenIALoading(true);
+  _resumenIAPoll();
+});
+{% endif %}
+{% endif %}
+</script>
+{% endblock %}

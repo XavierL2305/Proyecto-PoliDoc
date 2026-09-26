@@ -1,0 +1,102 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Seleccionar Tipo de Documento - POLIDOC{% endblock %}
+
+{% block extra_css %}
+<style>
+  .page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 2rem;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+  .page-header h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--color-text);
+    margin: 0;
+  }
+  .tipo-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1rem;
+  }
+  .tipo-card {
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-decoration: none;
+    color: inherit;
+    display: block;
+  }
+  .tipo-card:hover {
+    border-color: var(--color-primary);
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.15);
+    transform: translateY(-2px);
+  }
+  .tipo-card__icon {
+    width: 48px;
+    height: 48px;
+    border-radius: var(--radius);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.25rem;
+    margin-bottom: 1rem;
+  }
+  .tipo-card__title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--color-text);
+    margin: 0 0 0.25rem 0;
+  }
+  .tipo-card__code {
+    font-size: 0.875rem;
+    color: var(--color-muted);
+    margin: 0 0 0.5rem 0;
+    font-family: monospace;
+  }
+  .tipo-card__desc {
+    font-size: 0.875rem;
+    color: var(--color-muted);
+    margin: 0;
+  }
+  .tipo-card--disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .tipo-card--disabled:hover {
+    transform: none;
+    box-shadow: none;
+    border-color: var(--color-border);
+  }
+</style>
+{% endblock %}
+
+{% block app_content %}
+<div class="page-header">
+  <h1>Seleccionar Tipo de Documento</h1>
+</div>
+
+<p style="color: var(--color-muted); margin-bottom: 1.5rem;">
+  Selecciona el tipo de documento que deseas crear. Los documentos serán generados con un código único automático.
+</p>
+
+<div class="tipo-grid">
+  {% for tipo in tipos %}
+  <a href="{% url 'documentos:crear_documento' tipo=tipo.key %}" class="tipo-card">
+    <div class="tipo-card__icon" style="background: var(--color-{{ tipo.color }}-light); color: var(--color-{{ tipo.color }});">
+      <i class="fa-solid fa-{{ tipo.icono }}"></i>
+    </div>
+    <h3 class="tipo-card__title">{{ tipo.nombre }}</h3>
+    <p class="tipo-card__code">{{ tipo.codigo }}</p>
+  </a>
+  {% endfor %}
+</div>
+{% endblock %}

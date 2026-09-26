@@ -1,0 +1,127 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Historial de Versiones - POLIDOC{% endblock %}
+
+{% block extra_css %}
+<style>
+  .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2rem; }
+  .page-header h1 { font-size: 1.5rem; font-weight: 700; color: var(--color-text); margin: 0; }
+  .version-timeline { position: relative; padding-left: 2rem; }
+  .version-timeline::before { content: ''; position: absolute; left: 0.5rem; top: 0; bottom: 0; width: 2px; background: var(--color-border); }
+  .version-item { position: relative; margin-bottom: 1.5rem; padding: 1rem; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); }
+  .version-item::before { content: ''; position: absolute; left: -1.75rem; top: 1.25rem; width: 12px; height: 12px; border-radius: 50%; background: var(--color-primary); border: 2px solid var(--color-surface); }
+  .version-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem; gap: 1rem; flex-wrap: wrap; }
+  .version-number { font-weight: 700; color: var(--color-primary); font-size: 1.125rem; }
+  .version-date { font-size: 0.75rem; color: var(--color-muted); }
+  .version-author { font-size: 0.875rem; color: var(--color-muted); }
+  .version-changes { font-size: 0.875rem; color: var(--color-text); margin-top: 0.5rem; }
+  .version-actions { margin-top: 0.75rem; display: flex; gap: 0.5rem; align-items: center; }
+  .empty-state { text-align: center; padding: 3rem; color: var(--color-muted); }
+  .empty-state i { font-size: 3rem; margin-bottom: 1rem; display: block; }
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center; }
+  .modal-overlay.active { display: flex; }
+  .modal { background: var(--color-surface); border-radius: var(--radius-lg); padding: 1.5rem; max-width: 420px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.2); }
+  .modal h3 { margin: 0 0 0.75rem; font-size: 1.125rem; color: var(--color-text); }
+  .modal p { margin: 0 0 1rem; font-size: 0.875rem; color: var(--color-muted); }
+  .modal-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
+</style>
+{% endblock %}
+
+{% block app_content %}
+      <div class="page-header">
+        <div>
+          <h1>Historial de Versiones</h1>
+          <p style="font-size: 0.875rem; color: var(--color-muted);">{{ documento.nombre }} - {{ documento.codigo }}</p>
+        </div>
+        <a href="{% url 'documentos:detalle' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost">
+          <i class="fa-solid fa-arrow-left"></i> Volver
+        </a>
+      </div>
+
+      {% if versiones %}
+      <div class="version-timeline">
+        {% for version in versiones %}
+        <div class="version-item">
+          <div class="version-header">
+            <div>
+              <span class="version-number">Versión {{ version.numero_version }}</span>
+              {% if version.numero_version == documento.version_actual %}
+              <span class="badge badge--success" style="margin-left: 0.5rem; font-size: 0.7rem;">Actual</span>
+              {% endif %}
+              {% if not version.archivo %}
+              <span class="badge badge--warning" style="margin-left: 0.5rem; font-size: 0.7rem;">Sin archivo</span>
+              {% endif %}
+            </div>
+            <span class="version-date">{{ version.fecha_creacion|date:"d/m/Y H:i" }}</span>
+          </div>
+          <p class="version-author">Creado por: {{ version.creado_por.get_full_name|default:version.creado_por.username }}</p>
+          {% if version.cambios %}
+          <p class="version-changes">{{ version.cambios }}</p>
+          {% endif %}
+          <div class="version-actions">
+            {% if user.perfil.es_administrador or user.perfil.es_jefe or documento.propietario == user and version.creado_por == user %}
+              {% if version.id in solicitudes_pendientes_ids %}
+              <span class="badge badge--warning" style="font-size: 0.75rem;"><i class="fa-solid fa-clock"></i> Pendiente de aprobación</span>
+              {% else %}
+              <button class="btn btn--danger btn--sm" onclick="confirmarEliminacion('{{ version.numero_version }}', '{% url 'documentos:eliminar_version' tipo=tipo documento_id=documento.uuid version_id=version.id %}', {{ version.numero_version|floatformat:0 }})">
+                <i class="fa-solid fa-trash"></i> Eliminar
+              </button>
+              {% endif %}
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="empty-state">
+        <i class="fa-solid fa-clock-rotate-left"></i>
+        <p>No hay versiones registradas</p>
+      </div>
+      {% endif %}
+
+      <div id="modal-eliminar" class="modal-overlay" onclick="if(event.target===this)cerrarModal()">
+        <div class="modal">
+          <h3 id="modal-titulo">Eliminar Versión</h3>
+          <p id="modal-mensaje"></p>
+          <div class="modal-actions">
+            <button class="btn btn--ghost btn--sm" onclick="cerrarModal()">Cancelar</button>
+            <button class="btn btn--danger btn--sm" id="modal-confirmar-btn" onclick="ejecutarEliminacion()">
+              <i class="fa-solid fa-trash"></i> Eliminar
+            </button>
+          </div>
+        </div>
+      </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let eliminarUrl = '';
+
+function confirmarEliminacion(versionNum, url, versionInt) {
+  eliminarUrl = url;
+  const esActual = (versionInt === {{ documento.version_actual|floatformat:0 }});
+  document.getElementById('modal-titulo').textContent = 'Eliminar Versión ' + versionNum;
+  document.getElementById('modal-mensaje').textContent = esActual
+    ? 'Esta es la versión actual. Se restaurará la versión anterior como base. ¿Deseas continuar?'
+    : 'La versión ' + versionNum + ' será eliminada del historial. ¿Deseas continuar?';
+  document.getElementById('modal-eliminar').classList.add('active');
+}
+
+function cerrarModal() {
+  document.getElementById('modal-eliminar').classList.remove('active');
+  eliminarUrl = '';
+}
+
+function ejecutarEliminacion() {
+  if (!eliminarUrl) return;
+  const form = document.createElement('form');
+  form.method = 'POST';
+  form.action = eliminarUrl;
+  const csrf = document.querySelector('[name=csrfmiddlewaretoken]');
+  if (csrf) form.appendChild(csrf.cloneNode(true));
+  document.body.appendChild(form);
+  form.submit();
+}
+</script>
+{% endblock %}

@@ -1,0 +1,251 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Ciclo de Vida del Documento — Configuración{% endblock %}
+
+{% block app_content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Ciclo de Vida del Documento</h1>
+    <p class="page-subtitle">Flujo completo desde la creación hasta la destrucción</p>
+  </div>
+  <a href="{% url 'documentos:configuracion' %}" class="btn btn--ghost">
+    <i class="fa-solid fa-arrow-left"></i> Volver
+  </a>
+</div>
+
+<div class="cards-grid" style="margin-top: 1.5rem;">
+  <div class="detail-card" style="grid-column: 1 / -1;">
+    <div class="lifecycle-flow">
+      <!-- Paso 1: Creación -->
+      <div class="lifecycle-step">
+        <div class="lifecycle-icon lifecycle-icon--crear">
+          <i class="fa-solid fa-file-circle-plus"></i>
+        </div>
+        <div class="lifecycle-content">
+          <h3>1. Creación</h3>
+          <p>El trabajador crea un documento nuevo. Se asigna versión 1.0 y estado <strong>borrador</strong>.</p>
+          <ul>
+            <li>Campos obligatorios: nombre, código, fecha</li>
+            <li>Opcional: fecha de vencimiento</li>
+            <li>El propietario puede editarlo libremente</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="lifecycle-arrow"><i class="fa-solid fa-chevron-right"></i></div>
+
+      <!-- Paso 2: Revisión -->
+      <div class="lifecycle-step">
+        <div class="lifecycle-icon lifecycle-icon--revision">
+          <i class="fa-solid fa-magnifying-glass"></i>
+        </div>
+        <div class="lifecycle-content">
+          <h3>2. En Revisión</h3>
+          <p>El propietario envía a revisión. El sistema asigna un aprobador automáticamente (load-balancing GG).</p>
+          <ul>
+            <li>Estado: <strong>en_revision</strong></li>
+            <li>Jefe ve solicitudes pendientes en su dashboard</li>
+            <li>Puede aprobar o rechazar con observaciones</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="lifecycle-arrow"><i class="fa-solid fa-chevron-right"></i></div>
+
+      <!-- Paso 3: Activo -->
+      <div class="lifecycle-step">
+        <div class="lifecycle-icon lifecycle-icon--activo">
+          <i class="fa-solid fa-circle-check"></i>
+        </div>
+        <div class="lifecycle-content">
+          <h3>3. Activo</h3>
+          <p>Documento aprobado y vigente. Visible para el departamento y usuarios con acceso.</p>
+          <ul>
+            <li>Estado: <strong>activo</strong></li>
+            <li>Se pueden crear nuevas versiones</li>
+            <li>Se puede distribuir a usuarios</li>
+            <li>Si tiene fecha de vencimiento, inicia countdown</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="lifecycle-arrow"><i class="fa-solid fa-chevron-right"></i></div>
+
+      <!-- Paso 4: Vencimiento -->
+      <div class="lifecycle-step">
+        <div class="lifecycle-icon lifecycle-icon--vencimiento">
+          <i class="fa-solid fa-clock"></i>
+        </div>
+        <div class="lifecycle-content">
+          <h3>4. Vencimiento</h3>
+          <p>Cuando se cumple la fecha de vencimiento, el sistema marca el documento como obsoleto automáticamente.</p>
+          <ul>
+            <li>7 días antes: aviso al propietario y jefe</li>
+            <li>En la fecha: cambio a <strong>obsoleto</strong></li>
+            <li>El propietario puede renovar antes de vencer</li>
+            <li>Renovación: fecha nueva + registro en historial</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="lifecycle-arrow"><i class="fa-solid fa-chevron-right"></i></div>
+
+      <!-- Paso 5: Obsoleto / Retención -->
+      <div class="lifecycle-step">
+        <div class="lifecycle-icon lifecycle-icon--obsoleto">
+          <i class="fa-solid fa-box-archive"></i>
+        </div>
+        <div class="lifecycle-content">
+          <h3>5. Obsoleto / Retención</h3>
+          <p>Documento sin vigencia pero conservado por obligación legal o normativa.</p>
+          <ul>
+            <li>Estado: <strong>obsoleto</strong></li>
+            <li>No se puede editar ni distribuir</li>
+            <li>Se conserva durante el período de retención</li>
+            <li>Visible en auditoría para trazabilidad</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="lifecycle-arrow"><i class="fa-solid fa-chevron-right"></i></div>
+
+      <!-- Paso 6: Destrucción -->
+      <div class="lifecycle-step">
+        <div class="lifecycle-icon lifecycle-icon--destruccion">
+          <i class="fa-solid fa-trash-can"></i>
+        </div>
+        <div class="lifecycle-content">
+          <h3>6. Destrucción</h3>
+          <p>Fin del ciclo. El documento y sus archivos se eliminan permanentemente del sistema.</p>
+          <ul>
+            <li>Solo después del período de retención</li>
+            <li>Requiere autorización de administrador</li>
+            <li>Registro en auditoría: quién, cuándo, por qué</li>
+            <li>Acción irreversible</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Diagrama visual -->
+    <div style="margin-top: 2rem; padding: 1.5rem; background: var(--color-bg); border-radius: var(--radius-lg); border: 1px solid var(--color-border);">
+      <h3 style="font-size: 0.875rem; margin-bottom: 1rem; color: var(--color-muted);">RESUMEN DEL FLUJO</h3>
+      <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.8rem; font-weight: 600;">
+        <span class="badge" style="background: var(--color-info-light); color: var(--color-info);">Borrador</span>
+        <i class="fa-solid fa-arrow-right" style="color: var(--color-muted); font-size: 0.7rem;"></i>
+        <span class="badge" style="background: var(--color-warning-light); color: var(--color-warning);">En Revisión</span>
+        <i class="fa-solid fa-arrow-right" style="color: var(--color-muted); font-size: 0.7rem;"></i>
+        <span class="badge" style="background: var(--color-success-light); color: var(--color-success);">Activo</span>
+        <i class="fa-solid fa-arrow-right" style="color: var(--color-muted); font-size: 0.7rem;"></i>
+        <span class="badge" style="background: var(--color-warning-light); color: var(--color-warning);">Vence</span>
+        <i class="fa-solid fa-arrow-right" style="color: var(--color-muted); font-size: 0.7rem;"></i>
+        <span class="badge" style="background: var(--color-bg); color: var(--color-muted); border: 1px solid var(--color-border);">Obsoleto</span>
+        <i class="fa-solid fa-arrow-right" style="color: var(--color-muted); font-size: 0.7rem;"></i>
+        <span class="badge" style="background: var(--color-danger-light); color: var(--color-danger);">Destrucción</span>
+      </div>
+      <p style="font-size: 0.75rem; color: var(--color-muted); margin-top: 0.75rem;">
+        <i class="fa-solid fa-rotate-left"></i>
+        En cualquier momento antes de la destrucción, el propietario puede <strong>renovar</strong> un documento vencido para reactivarlo.
+      </p>
+    </div>
+  </div>
+</div>
+
+<style>
+.lifecycle-flow {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+  overflow-x: auto;
+  padding-bottom: 1rem;
+}
+.lifecycle-step {
+  flex: 1;
+  min-width: 160px;
+  text-align: center;
+}
+.lifecycle-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 0.75rem;
+  font-size: 1.25rem;
+}
+.lifecycle-icon--crear { background: var(--color-info-light); color: var(--color-info); }
+.lifecycle-icon--revision { background: var(--color-warning-light); color: var(--color-warning); }
+.lifecycle-icon--activo { background: var(--color-success-light); color: var(--color-success); }
+.lifecycle-icon--vencimiento { background: #fef3c7; color: #d97706; }
+.lifecycle-icon--obsoleto { background: var(--color-bg); color: var(--color-muted); border: 1px solid var(--color-border); }
+.lifecycle-icon--destruccion { background: var(--color-danger-light); color: var(--color-danger); }
+.lifecycle-content h3 {
+  font-size: 0.8rem;
+  margin-bottom: 0.25rem;
+}
+.lifecycle-content p {
+  font-size: 0.75rem;
+  color: var(--color-muted);
+  margin-bottom: 0.5rem;
+}
+.lifecycle-content ul {
+  list-style: none;
+  padding: 0;
+  text-align: left;
+}
+.lifecycle-content li {
+  font-size: 0.7rem;
+  color: var(--color-muted);
+  padding: 0.15rem 0;
+  padding-left: 1rem;
+  position: relative;
+}
+.lifecycle-content li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-muted);
+  opacity: 0.5;
+}
+.lifecycle-arrow {
+  display: flex;
+  align-items: center;
+  padding-top: 1.25rem;
+  color: var(--color-muted);
+  font-size: 0.7rem;
+  opacity: 0.5;
+}
+
+@media (max-width: 768px) {
+  .lifecycle-flow {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .lifecycle-step {
+    display: flex;
+    gap: 1rem;
+    text-align: left;
+    min-width: 0;
+  }
+  .lifecycle-icon {
+    margin: 0;
+    flex-shrink: 0;
+    width: 44px;
+    height: 44px;
+    font-size: 1rem;
+  }
+  .lifecycle-arrow {
+    padding: 0.25rem 0 0.25rem 1rem;
+    transform: rotate(90deg);
+    transform-origin: left center;
+  }
+}
+</style>
+{% endblock %}

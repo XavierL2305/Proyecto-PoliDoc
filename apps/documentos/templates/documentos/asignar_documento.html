@@ -1,0 +1,59 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Asignar Documento - POLIDOC{% endblock %}
+
+{% block extra_css %}
+<style>
+  .page-content { display: flex; justify-content: center; align-items: flex-start; }
+  .form-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); max-width: 600px; width: 100%; }
+  .form-card-header { padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--color-border); }
+  .form-card-header h3 { font-size: 1rem; font-weight: 600; color: var(--color-text); margin: 0; }
+  .form-card-body { padding: 1.5rem; }
+  .form-card-footer { padding: 1rem 1.5rem; border-top: 1px solid var(--color-border); display: flex; align-items: center; justify-content: flex-end; gap: 0.75rem; }
+  .checkbox-group { display: flex; flex-wrap: wrap; gap: 1rem; }
+</style>
+{% endblock %}
+
+{% block app_content %}
+      <div class="form-card">
+        <div class="form-card-header"><h3>Asignar Documento a Coordinador o Trabajador</h3></div>
+        <div class="form-card-body">
+          <p style="font-size: 0.875rem; color: var(--color-muted); margin-bottom: 1rem;">
+            Documento: <strong>{{ documento.nombre }}</strong> ({{ documento.codigo }})
+          </p>
+
+          <form method="post">
+            {% csrf_token %}
+            <div class="form-group" style="margin-bottom: 1rem;">
+              <label class="form-label">Coordinador o Trabajador *</label>
+              {{ form.coordinador }}
+              {% if form.coordinador.errors %}
+              <span class="form-error">{{ form.coordinador.errors.0 }}</span>
+              {% endif %}
+            </div>
+            <div class="form-group">
+              <label class="form-label">Permisos</label>
+              <div class="checkbox-group">
+                <label class="form-checkbox-wrapper">
+                  {{ form.puede_leer }}
+                  <span class="form-checkbox-label">Leer</span>
+                </label>
+                <label class="form-checkbox-wrapper">
+                  {{ form.puede_editar }}
+                  <span class="form-checkbox-label">Editar</span>
+                </label>
+                <label class="form-checkbox-wrapper">
+                  {{ form.puede_eliminar }}
+                  <span class="form-checkbox-label">Eliminar</span>
+                </label>
+              </div>
+            </div>
+            <div class="form-card-footer">
+              <a href="{% url 'documentos:detalle' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost">Cancelar</a>
+              <button type="submit" class="btn btn--primary">Asignar</button>
+            </div>
+          </form>
+        </div>
+      </div>
+{% endblock %}

@@ -1,0 +1,96 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Períodos - Configuración{% endblock %}
+
+{% block extra_css %}
+<style>
+  .page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 2rem;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+  .page-header h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--color-text);
+    margin: 0;
+  }
+</style>
+{% endblock %}
+
+{% block app_content %}
+<div class="page-header">
+  <h1>Períodos</h1>
+  {% if user.perfil.es_administrador %}
+  <a href="{% url 'documentos:periodo_crear' %}" class="btn btn--primary btn--sm">
+    <i class="fa-solid fa-plus"></i> Nuevo Período
+  </a>
+  {% endif %}
+</div>
+
+<div class="table-container">
+  <table class="table table--hover">
+    <thead>
+      <tr>
+        <th>Nombre</th>
+        <th>Meses</th>
+        <th>Orden</th>
+        <th>Estado</th>
+        {% if user.perfil.es_administrador %}
+        <th>Acciones</th>
+        {% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for periodo in periodos %}
+      <tr>
+        <td><strong>{{ periodo.nombre }}</strong></td>
+        <td>{{ periodo.meses }}</td>
+        <td>{{ periodo.orden }}</td>
+        <td>
+          {% if periodo.activo %}
+          <span class="badge badge--success">Activo</span>
+          {% else %}
+          <span class="badge badge--danger">Inactivo</span>
+          {% endif %}
+        </td>
+        {% if user.perfil.es_administrador %}
+        <td>
+          <div class="actions">
+            <a href="{% url 'documentos:periodo_editar' periodo_id=periodo.id %}" class="btn btn--ghost btn--sm">
+              <i class="fa-solid fa-pen"></i>
+            </a>
+            {% if periodo.activo %}
+            <form method="post" action="{% url 'documentos:periodo_eliminar' periodo_id=periodo.id %}" style="display: inline;">
+              {% csrf_token %}
+              <button type="submit" class="btn btn--ghost btn--sm" onclick="return confirm('¿Desactivar este período?')">
+                <i class="fa-solid fa-trash"></i>
+              </button>
+            </form>
+            {% else %}
+            <form method="post" action="{% url 'documentos:periodo_reactivar' periodo_id=periodo.id %}" style="display: inline;">
+              {% csrf_token %}
+              <button type="submit" class="btn btn--ghost btn--sm" data-tooltip="Reactivar" data-tooltip-position="top">
+                <i class="fa-solid fa-rotate-right"></i>
+              </button>
+            </form>
+            {% endif %}
+          </div>
+        </td>
+        {% endif %}
+      </tr>
+      {% empty %}
+      <tr>
+        <td colspan="5" style="text-align: center; padding: 2rem; color: var(--color-muted);">
+          No hay períodos registrados.
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

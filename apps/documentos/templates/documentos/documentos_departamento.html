@@ -1,0 +1,87 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Documentos del Departamento - POLIDOC{% endblock %}
+
+{% block extra_css %}
+<style>
+  .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2rem; flex-wrap: wrap; gap: 1rem; }
+  .page-header h1 { font-size: 1.5rem; font-weight: 700; color: var(--color-text); margin: 0; }
+  .section-title { font-size: 1.125rem; font-weight: 600; color: var(--color-text); margin: 1.5rem 0 1rem; }
+  .doc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; }
+  .doc-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: 1rem; transition: all var(--transition); }
+  .doc-card:hover { box-shadow: var(--shadow-md); }
+  .doc-card-header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; }
+  .doc-icon { width: 40px; height: 40px; border-radius: var(--radius); display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0; }
+  .doc-info h4 { font-size: 0.875rem; font-weight: 600; color: var(--color-text); margin: 0 0 0.25rem 0; }
+  .doc-info p { font-size: 0.75rem; color: var(--color-muted); margin: 0; }
+  .doc-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; font-size: 0.75rem; color: var(--color-muted); }
+  .doc-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--color-border); }
+  .doc-card { min-width: 0; }
+</style>
+{% endblock %}
+
+{% block app_content %}
+      <div class="page-header">
+        <div>
+          <h1>Documentos del Departamento</h1>
+          <p style="font-size: 0.875rem; color: var(--color-muted);">{{ departamento.nombre }}</p>
+        </div>
+        <div style="display: flex; gap: 0.5rem;">
+          <a href="{% url 'documentos:gestionar_asignaciones' %}" class="btn btn--ghost btn--sm">
+            <i class="fa-solid fa-users"></i> Gestionar Asignaciones
+          </a>
+        </div>
+      </div>
+
+      {% if solicitudes_pendientes %}
+      <div class="alert alert--warning" style="margin-bottom: 1.5rem;">
+        <span class="alert-icon"><i class="fa-solid fa-clock"></i></span>
+        <div class="alert-content">
+          <strong>{{ solicitudes_pendientes.count }}</strong> solicitudes de descarga pendientes de revisión
+        </div>
+      </div>
+      {% endif %}
+
+      {% if tipos_documento %}
+      {% for tipo in tipos_documento %}
+      <h2 class="section-title">{{ tipo.nombre }}</h2>
+      <div class="doc-grid">
+        {% for doc in tipo.documentos %}
+        <div class="doc-card">
+          <div class="doc-card-header">
+            <div class="doc-icon" style="background: var(--color-{{ tipo.color }}-light); color: var(--color-{{ tipo.color }});">
+              <i class="fa-solid fa-{{ tipo.icono }}"></i>
+            </div>
+            <div class="doc-info">
+              <h4>{{ doc.nombre }}</h4>
+              <p>{{ doc.codigo }}</p>
+            </div>
+          </div>
+          <div class="doc-meta">
+            <span class="badge badge--{{ doc.estado }}">{{ doc.get_estado_display }}</span>
+            <span>v{{ doc.version_actual }}</span>
+            <span>{{ doc.fecha_modificacion|date:"d/m/Y" }}</span>
+            {% if doc.fecha_vencimiento %}
+              {% if doc.fecha_vencimiento <= hoy %}
+              <span class="badge badge--danger" style="font-size: 0.65rem;">Vencido</span>
+              {% elif doc.fecha_vencimiento <= dias7 %}
+              <span class="badge badge--warning" style="font-size: 0.65rem;">Vence pronto</span>
+              {% endif %}
+            {% endif %}
+          </div>
+          <div class="doc-actions">
+            <a href="{% url 'documentos:detalle' tipo=tipo.key documento_id=doc.uuid %}" class="btn btn--ghost btn--sm"><i class="fa-solid fa-eye"></i> Ver</a>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endfor %}
+      {% else %}
+      <div style="text-align: center; padding: 3rem; background: var(--color-surface); border: 1px dashed var(--color-border); border-radius: var(--radius-lg); color: var(--color-muted); margin-top: 1.5rem;">
+        <i class="fa-solid fa-folder-open" style="font-size: 2.5rem; opacity: 0.4; display: block; margin-bottom: 1rem;"></i>
+        <p style="font-size: 1rem; font-weight: 600; margin: 0 0 0.5rem;">No hay documentos en el departamento</p>
+        <p style="font-size: 0.875rem; margin: 0;">{{ departamento.nombre }} — cuando se registren documentos aparecerán aquí.</p>
+      </div>
+      {% endif %}
+{% endblock %}

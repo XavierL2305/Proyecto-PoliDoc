@@ -1,0 +1,286 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Inicio - POLIDOC{% endblock %}
+
+{% block extra_css %}
+<style>
+  .page-header { 
+    margin-bottom: 2rem; 
+  }
+  .page-header h1 { 
+    font-size: 1.5rem; 
+    font-weight: 700; 
+    color: var(--color-text); 
+    margin-bottom: 0.25rem; 
+  }
+  .page-header p { 
+    font-size: 0.875rem; 
+    color: var(--color-muted); 
+    margin: 0; 
+  }
+  .stats-grid { 
+    display: grid; 
+    grid-template-columns: repeat(4, 1fr); 
+    gap: 1.5rem; 
+    margin-bottom: 2rem; 
+  }
+  .stat-card { 
+    background: var(--color-surface); 
+    border: 1px solid var(--color-border); 
+    border-radius: var(--radius-lg); 
+    padding: 1.5rem; 
+    display: flex; 
+    align-items: flex-start; 
+    gap: 1rem; 
+    transition: all var(--transition); 
+  }
+  .stat-card:hover { 
+    box-shadow: var(--shadow-md); 
+    transform: translateY(-2px); 
+  }
+  .stat-icon { 
+    width: 48px; 
+    height: 48px; 
+    border-radius: var(--radius); 
+    display: flex; 
+    align-items: center; 
+    justify-content: center; 
+    font-size: 1.25rem; 
+    flex-shrink: 0; 
+  }
+  .stat-icon--primary { 
+    background: var(--color-primary-light); 
+    color: var(--color-primary); 
+  }
+  .stat-icon--success { 
+    background: var(--color-success-light); 
+    color: var(--color-success); 
+  }
+  .stat-icon--warning { 
+    background: var(--color-warning-light); 
+    color: var(--color-warning); 
+  }
+  .stat-icon--danger { 
+    background: var(--color-danger-light); 
+    color: var(--color-danger); 
+  }
+  .stat-info { 
+    display: flex; 
+    flex-direction: column; 
+    gap: 0.25rem; 
+  }
+  .stat-value { 
+    font-size: 1.75rem; 
+    font-weight: 700; 
+    color: var(--color-text); 
+    line-height: 1; 
+  }
+  .stat-label { 
+    font-size: 0.8125rem; 
+    color: var(--color-muted); 
+    font-weight: 500; 
+  }
+  .sections-grid { 
+    display: grid; 
+    grid-template-columns: 2fr 1fr; 
+    gap: 1.5rem; 
+  }
+  .section-card { 
+    background: var(--color-surface); 
+    border: 1px solid var(--color-border); 
+    border-radius: var(--radius-lg); 
+    overflow: hidden; 
+  }
+  .section-header { 
+    display: flex; 
+    align-items: center; 
+    justify-content: space-between; 
+    padding: 1rem 1.5rem; 
+    border-bottom: 1px solid var(--color-border); 
+  }
+  .section-header h3 { 
+    font-size: 0.9375rem; 
+    font-weight: 600; 
+    color: var(--color-text); 
+    margin: 0; 
+  }
+  .section-body { 
+    padding: 1rem 1.5rem; 
+  }
+  .activity-list { 
+    display: flex; 
+    flex-direction: column; 
+  }
+  .activity-item { 
+    display: flex; 
+    align-items: flex-start; 
+    gap: 0.75rem; 
+    padding: 0.875rem 0; 
+    border-bottom: 1px solid var(--color-border); 
+  }
+  .activity-item:last-child { 
+    border-bottom: none; 
+  }
+  .activity-avatar { 
+    width: 36px; 
+    height: 36px; 
+    border-radius: 50%; 
+    background: var(--color-primary-light); 
+    color: var(--color-primary); 
+    display: flex; 
+    align-items: center; 
+    justify-content: center; 
+    font-size: 0.875rem; 
+    font-weight: 600; 
+    flex-shrink: 0; 
+  }
+  [data-theme="dark"] .activity-avatar { 
+    background: rgba(96, 165, 250, 0.15); 
+  }
+  .activity-content { 
+    flex: 1; 
+    min-width: 0; 
+  }
+  .activity-text { 
+    font-size: 0.875rem; 
+    color: var(--color-text); 
+    line-height: 1.4; 
+    margin: 0; 
+  }
+  .activity-text strong { 
+    font-weight: 600; 
+  }
+  .activity-time { 
+    font-size: 0.75rem; 
+    color: var(--color-muted); 
+    margin-top: 0.25rem; 
+    display: block; 
+  }
+  .empty-state { text-align: center; padding: 2rem; color: var(--color-muted); }
+  .empty-state i { font-size: 2rem; margin-bottom: 0.5rem; display: block; }
+  @media (max-width: 1024px) { 
+    .stats-grid { 
+      grid-template-columns: repeat(2, 1fr); 
+    } 
+    .sections-grid { 
+      grid-template-columns: 1fr; 
+    } 
+  }
+  @media (max-width: 639px) { 
+    .stats-grid { 
+      grid-template-columns: 1fr; 
+    } 
+    .page-content { 
+      padding: 1rem; 
+    } 
+  }
+</style>
+{% endblock %}
+
+{% block app_content %}
+<div class="page-header">
+  <h1>Panel Principal</h1>
+  <p>Vista general del sistema de gestión documental</p>
+</div>
+
+<div class="stats-grid">
+  <div class="stat-card">
+    <div class="stat-icon stat-icon--primary"><i class="fa-solid fa-file-lines"></i></div>
+    <div class="stat-info"><span class="stat-value">{{ total_mis_documentos }}</span><span class="stat-label">Mis Documentos</span></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon stat-icon--success"><i class="fa-solid fa-circle-check"></i></div>
+    <div class="stat-info"><span class="stat-value">{{ total_activos }}</span><span class="stat-label">Activos</span></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon stat-icon--warning"><i class="fa-solid fa-file-pen"></i></div>
+    <div class="stat-info"><span class="stat-value">{{ total_borradores }}</span><span class="stat-label">Borradores</span></div>
+  </div>
+  {% if user.perfil.es_jefe %}
+  <div class="stat-card">
+    <div class="stat-icon stat-icon--danger"><i class="fa-solid fa-clock"></i></div>
+    <div class="stat-info"><span class="stat-value">{{ solicitudes_pendientes }}</span><span class="stat-label">Solicitudes Pendientes</span></div>
+  </div>
+  {% else %}
+  <div class="stat-card">
+    <div class="stat-icon stat-icon--danger"><i class="fa-solid fa-bell"></i></div>
+    <div class="stat-info"><span class="stat-value">{{ notificaciones_no_leidas }}</span><span class="stat-label">Notificaciones</span></div>
+  </div>
+  {% endif %}
+</div>
+
+<div class="sections-grid">
+  <div class="section-card">
+    <div class="section-header">
+      <h3>Mis Documentos Recientes</h3>
+      <a href="{% url 'documentos:mis_documentos' %}" class="btn btn--ghost btn--sm">Ver todos</a>
+    </div>
+    <div class="table-wrapper">
+      <table class="table table--hover">
+        <thead><tr><th>Nombre</th><th>Código</th><th>Tipo</th><th>Estado</th><th>Fecha</th></tr></thead>
+        <tbody>
+          {% for doc in ultimos_documentos %}
+          <tr>
+            <td class="table-cell--bold">{{ doc.nombre }}</td>
+            <td>{{ doc.codigo }}</td>
+            <td><span class="badge badge--primary">{{ doc.get_tipo_display }}</span></td>
+            <td><span class="badge badge--{{ doc.estado }}">{{ doc.get_estado_display }}</span></td>
+            <td class="table-cell--muted">{{ doc.fecha_modificacion|date:"d/m/Y" }}</td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="5" class="empty-state">
+              <i class="fa-solid fa-file-lines"></i>
+              <p>No hay documentos recientes</p>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+    <div class="section-card">
+      <div class="section-header"><h3>Últimas Versiones</h3></div>
+      <div class="section-body">
+        {% if ultimas_versiones %}
+        <div class="activity-list">
+          {% for version in ultimas_versiones %}
+          <div class="activity-item">
+            <div class="activity-avatar">v{{ version.numero_version|truncatechars:3 }}</div>
+            <div class="activity-content">
+              <p class="activity-text">{{ version.documento.get_tipo_display }}: {{ version.documento.nombre }}</p>
+              <span class="activity-time">{{ version.fecha_creacion|date:"d/m/Y H:i" }}</span>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state">
+          <i class="fa-solid fa-clock-rotate-left"></i>
+          <p>No hay versiones recientes</p>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="section-card">
+      <div class="section-header"><h3>Accesos Rápidos</h3></div>
+      <div class="section-body">
+        <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+          <a href="{% url 'documentos:seleccionar_tipo' %}" class="btn btn--primary btn--sm" style="width: 100%;">
+            <i class="fa-solid fa-plus"></i> Nuevo Documento
+          </a>
+          {% if user.perfil.es_jefe %}
+          <a href="{% url 'documentos:documentos_departamento' %}" class="btn btn--ghost btn--sm" style="width: 100%;">
+            <i class="fa-solid fa-building"></i> Departamento
+          </a>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

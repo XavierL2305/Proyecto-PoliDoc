@@ -1,0 +1,67 @@
+{% extends 'base_app.html' %}
+
+{% block title %}Destruir Documento - POLIDOC{% endblock %}
+
+{% block app_content %}
+<div class="page-header">
+  <h1>Destruir Documento</h1>
+</div>
+
+<div class="alert alert--danger" style="margin-bottom: 1.5rem;">
+  <span class="alert-icon"><i class="fa-solid fa-triangle-exclamation"></i></span>
+  <div class="alert-content">
+    <strong>Acción irreversible</strong>
+    <p>El documento será eliminado permanentemente del sistema. Esta acción no se puede deshacer.</p>
+  </div>
+</div>
+
+<div class="detail-card">
+  <div class="detail-header"><h3>Documento a destruir</h3></div>
+  <div class="detail-body">
+    <div class="detail-row">
+      <span class="detail-label">Nombre</span>
+      <span class="detail-value">{{ documento.nombre }}</span>
+    </div>
+    <div class="detail-row">
+      <span class="detail-label">Código</span>
+      <span class="detail-value">{{ documento.codigo }}</span>
+    </div>
+    <div class="detail-row">
+      <span class="detail-label">Estado</span>
+      <span class="badge badge--obsoleto">Obsoleto</span>
+    </div>
+    <div class="detail-row">
+      <span class="detail-label">Fecha de destrucción</span>
+      <span class="detail-value">{{ documento.fecha_destruccion|date:"d/m/Y" }}</span>
+    </div>
+    {% if documento.periodo_retencion %}
+    <div class="detail-row">
+      <span class="detail-label">Período de retención</span>
+      <span class="detail-value">{{ documento.periodo_retencion.nombre }}</span>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<form method="post" style="margin-top: 1.5rem;">
+  {% csrf_token %}
+  <div class="form-card">
+    <div class="form-card-header"><h3>Confirmación de destrucción</h3></div>
+    <div class="form-card-body">
+      <p style="font-size: 0.875rem; color: var(--color-muted); margin-bottom: 1rem;">
+        Escriba <strong>DESTRUIR</strong> para confirmar la eliminación permanente:
+      </p>
+      <input type="text" name="confirmacion" class="form-input" 
+             placeholder="Escriba DESTRUIR" required
+             pattern="DESTRUIR" autocomplete="off"
+             style="max-width: 300px; font-family: monospace; text-transform: uppercase;">
+    </div>
+    <div class="form-card-footer">
+      <a href="{% url 'documentos:detalle' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost">Cancelar</a>
+      <button type="submit" class="btn btn--danger">
+        <i class="fa-solid fa-skull-crossbones"></i> Destruir permanentemente
+      </button>
+    </div>
+  </div>
+</form>
+{% endblock %}

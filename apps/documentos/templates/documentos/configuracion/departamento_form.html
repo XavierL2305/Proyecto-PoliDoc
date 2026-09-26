@@ -1,0 +1,52 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}{{ accion }} Departamento — Configuración{% endblock %}
+
+{% block app_content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">{{ accion }} Departamento</h1>
+    <p class="page-subtitle">
+      {% if accion == 'Crear' %}Registrar nuevo departamento{% else %}Editar {{ depto.nombre }}{% endif %}
+    </p>
+  </div>
+  <a href="{% url 'documentos:departamentos_lista' %}" class="btn btn--ghost">
+    <i class="fa-solid fa-arrow-left"></i> Volver
+  </a>
+</div>
+
+<div class="detail-card" style="margin-top: 1.5rem; max-width: 600px;">
+  <form method="post">
+    {% csrf_token %}
+    {% for field in form %}
+    <div class="form-group" style="margin-bottom: 1.25rem;">
+      <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+      {{ field }}
+      {% if field.errors %}
+      <div style="color: var(--color-danger); font-size: 0.75rem; margin-top: 0.25rem;">
+        {{ field.errors.0 }}
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+
+    {% if accion == 'Editar' and depto.jefe %}
+    <div style="padding: 0.75rem; background: var(--color-bg); border: 1px solid var(--color-border); border-radius: var(--radius); margin-bottom: 1.25rem;">
+      <p style="font-size: 0.8rem; margin: 0; color: var(--color-muted);">
+        <i class="fa-solid fa-info-circle"></i>
+        El jefe de departamento se asigna automáticamente desde el perfil del usuario. No se puede editar aquí.
+      </p>
+      <p style="font-size: 0.8rem; margin: 0.5rem 0 0; font-weight: 600;">
+        Jefe actual: {{ depto.jefe.get_full_name|default:depto.jefe.username }}
+      </p>
+    </div>
+    {% endif %}
+
+    <div style="display: flex; gap: 0.75rem; justify-content: flex-end;">
+      <a href="{% url 'documentos:departamentos_lista' %}" class="btn btn--ghost">Cancelar</a>
+      <button type="submit" class="btn btn--primary">{{ accion }}</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

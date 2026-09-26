@@ -1,0 +1,36 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Eliminar Departamento — Configuración{% endblock %}
+
+{% block app_content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Eliminar Departamento</h1>
+    <p class="page-subtitle">Esta acción no se puede deshacer</p>
+  </div>
+  <a href="{% url 'documentos:departamentos_lista' %}" class="btn btn--ghost">
+    <i class="fa-solid fa-arrow-left"></i> Volver
+  </a>
+</div>
+
+<div class="detail-card" style="margin-top: 1.5rem; max-width: 500px; border-color: var(--color-danger);">
+  <div style="text-align: center; padding: 1.5rem;">
+    <i class="fa-solid fa-triangle-exclamation" style="font-size: 2.5rem; color: var(--color-danger); opacity: 0.6;"></i>
+    <h3 style="margin: 1rem 0 0.5rem; font-size: 1rem;">¿Eliminar departamento?</h3>
+    <p style="font-size: 0.875rem; color: var(--color-muted); margin-bottom: 1rem;">
+      Se eliminará <strong>{{ depto.nombre }}</strong> ({{ depto.codigo }}).
+      {% if depto.jefe %}
+      <br>El jefe actual ({{ depto.jefe.get_full_name|default:depto.jefe.username }}) perderá su rol de jefe.
+      {% endif %}
+    </p>
+    <form method="post">
+      {% csrf_token %}
+      <div style="display: flex; gap: 0.75rem; justify-content: center;">
+        <a href="{% url 'documentos:departamentos_lista' %}" class="btn btn--ghost">Cancelar</a>
+        <button type="submit" class="btn" style="background: var(--color-danger); color: white;">Eliminar</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

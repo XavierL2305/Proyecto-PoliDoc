@@ -1,0 +1,141 @@
+/* ==========================================================================
+   POLIDOC - COMPONENTE: ALERTS
+   ========================================================================== */
+
+/* === BASE ALERT === */
+.alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 1rem 1.25rem;
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  animation: alertSlideIn 0.2s ease;
+}
+
+@keyframes alertSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* === ALERT VARIANTS === */
+.alert--success {
+  background-color: var(--color-success-light);
+  color: #065F46;
+  border: 1px solid #A7F3D0;
+}
+
+[data-theme="dark"] .alert--success {
+  background-color: #064E3B;
+  color: #6EE7B7;
+  border-color: #065F4E;
+}
+
+.alert--warning {
+  background-color: var(--color-warning-light);
+  color: #92400E;
+  border: 1px solid #FDE68A;
+}
+
+[data-theme="dark"] .alert--warning {
+  background-color: #78350F;
+  color: #FCD34D;
+  border-color: #92400E;
+}
+
+.alert--danger {
+  background-color: var(--color-danger-light);
+  color: #991B1B;
+  border: 1px solid #FECACA;
+}
+
+[data-theme="dark"] .alert--danger {
+  background-color: #7F1D1D;
+  color: #FCA5A5;
+  border-color: #7F1D1D;
+}
+
+.alert--info {
+  background-color: var(--color-info-light);
+  color: #1E40AF;
+  border: 1px solid #BFDBFE;
+}
+
+[data-theme="dark"] .alert--info {
+  background-color: #1E3A5F;
+  color: #93C5FD;
+  border-color: #1E3A5F;
+}
+
+/* === ALERT ICON === */
+.alert-icon {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+}
+
+.alert--success .alert-icon { color: #059669; }
+.alert--warning .alert-icon { color: #D97706; }
+.alert--danger .alert-icon { color: #DC2626; }
+.alert--info .alert-icon { color: #2563EB; }
+
+[data-theme="dark"] .alert--success .alert-icon { color: #6EE7B7; }
+[data-theme="dark"] .alert--warning .alert-icon { color: #FCD34D; }
+[data-theme="dark"] .alert--danger .alert-icon { color: #FCA5A5; }
+[data-theme="dark"] .alert--info .alert-icon { color: #93C5FD; }
+
+/* === ALERT CONTENT === */
+.alert-content {
+  flex: 1;
+}
+
+.alert-content strong {
+  font-weight: 600;
+}
+
+/* === ALERT CLOSE === */
+.alert-close {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition);
+  font-size: 1rem;
+  line-height: 1;
+  opacity: 0.7;
+}
+
+.alert-close:hover {
+  opacity: 1;
+  background-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="dark"] .alert-close:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* === ALERT WITH TITLE === */
+.alert-title {
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+/* === ALERT LIST === */
+.alert-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}

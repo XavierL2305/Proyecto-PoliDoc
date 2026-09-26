@@ -1,0 +1,118 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Historial de Distribución - POLIDOC{% endblock %}
+
+{% block extra_css %}
+<style>
+  .page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 2rem;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+  .page-header h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--color-text);
+    margin: 0;
+  }
+  .badge--sistema {
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+  }
+  .badge--email {
+    background: var(--color-success-light);
+    color: var(--color-success);
+  }
+  .badge--impreso {
+    background: var(--color-warning-light);
+    color: var(--color-warning);
+  }
+  .badge--activa {
+    background: var(--color-success-light);
+    color: var(--color-success);
+  }
+  .badge--revocada {
+    background: var(--color-danger-light);
+    color: var(--color-danger);
+  }
+</style>
+{% endblock %}
+
+{% block app_content %}
+<div class="page-header">
+  <h1>Historial de Distribución</h1>
+  <a href="{% url 'documentos:detalle' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost btn--sm">
+    <i class="fa-solid fa-arrow-left"></i> Volver al documento
+  </a>
+</div>
+
+<div style="margin-bottom: 1rem; padding: 1rem; background: var(--color-info-light); border-radius: var(--radius); color: var(--color-info-dark);">
+  <strong>{{ documento.codigo }}</strong> - {{ documento.nombre }}
+</div>
+
+<div class="table-container">
+  <table class="table table--hover">
+    <thead>
+      <tr>
+        <th>Destinatario</th>
+        <th>Fecha</th>
+        <th>Método</th>
+        <th>Estado</th>
+        <th>Distribuido por</th>
+        <th>Observaciones</th>
+        {% if puede_revocar %}<th>Acciones</th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for dist in distribuciones %}
+      <tr{% if dist.revocado %} style="opacity: 0.6;"{% endif %}>
+        <td><strong>{{ dist.usuario.get_full_name|default:dist.usuario.username }}</strong></td>
+        <td>{{ dist.fecha_distribucion|date:"d/m/Y H:i" }}</td>
+        <td>
+          <span class="badge badge--{{ dist.metodo }}">{{ dist.get_metodo_display }}</span>
+        </td>
+        <td>
+          {% if dist.revocado %}
+            <span class="badge badge--revocada">Revocada</span>
+            <div style="font-size: 0.75rem; color: var(--color-muted); margin-top: 0.25rem;">
+              {{ dist.fecha_revocacion|date:"d/m/Y H:i" }} · por {{ dist.revocado_por.get_full_name|default:dist.revocado_por.username }}
+            </div>
+            {% if dist.motivo_revocacion %}
+            <div style="font-size: 0.75rem; color: var(--color-danger); margin-top: 0.25rem;">
+              Motivo: {{ dist.motivo_revocacion }}
+            </div>
+            {% endif %}
+          {% else %}
+            <span class="badge badge--activa">Activa</span>
+          {% endif %}
+        </td>
+        <td>{{ dist.distribuido_por.get_full_name|default:dist.distribuido_por.username }}</td>
+        <td>{{ dist.observaciones|default:"-" }}</td>
+        {% if puede_revocar %}
+        <td>
+          {% if not dist.revocado %}
+          <form method="post" action="{% url 'documentos:revocar_distribucion' tipo=tipo documento_id=documento.uuid dist_id=dist.id %}" style="display:inline;" onsubmit="return confirm('¿Estás seguro de revocar esta distribución?')">
+            {% csrf_token %}
+            <button type="submit" class="btn btn--ghost btn--sm" style="color: var(--color-danger); font-size: 0.75rem;">
+              <i class="fa-solid fa-ban"></i> Revocar
+            </button>
+          </form>
+          {% endif %}
+        </td>
+        {% endif %}
+      </tr>
+      {% empty %}
+      <tr>
+        <td colspan="{% if puede_revocar %}7{% else %}6{% endif %}" style="text-align: center; padding: 2rem; color: var(--color-muted);">
+          Este documento aún no ha sido distribuido.
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

@@ -1,0 +1,53 @@
+# --- Secretos / entorno ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa
+id_ed25519
+
+# --- Bases de datos (nunca versionar datos) ---
+*.sqlite3
+*.sqlite3-*
+*.db
+*.bak-*
+/db_data/
+/data/
+
+# --- Media / subidas (documentos y fotos sensibles) ---
+/polidoc/media/
+/fotos/
+
+# --- Static recopilado ---
+/staticfiles/
+/polidoc/staticfiles/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# --- Entornos virtuales ---
+venv/
+.venv/
+env/
+ENV/
+
+# --- Celery ---
+celerybeat-schedule
+celerybeat-schedule.db
+celerybeat.pid
+
+# --- Logs ---
+*.log
+
+# --- IDE / SO ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

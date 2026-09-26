@@ -1,0 +1,196 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Aprobar Planilla - POLIDOC{% endblock %}
+
+{% block extra_css %}
+<style>
+  .page-content { display: flex; justify-content: center; align-items: flex-start; }
+  .form-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); max-width: 800px; width: 100%; margin-top: 0; }
+  .form-card-header { padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--color-border); }
+  .form-card-header h3 { font-size: 1rem; font-weight: 600; color: var(--color-text); margin: 0; }
+  .form-card-body { padding: 1.5rem; }
+  .form-card-footer { padding: 1rem 1.5rem; border-top: 1px solid var(--color-border); display: flex; align-items: center; justify-content: flex-end; gap: 0.75rem; }
+  .detail-row { display: flex; justify-content: space-between; padding: 0.75rem 0; border-bottom: 1px solid var(--color-border); }
+  .detail-row:last-child { border-bottom: none; }
+  .detail-label { font-size: 0.875rem; color: var(--color-muted); font-weight: 500; }
+  .detail-value { font-size: 0.875rem; color: var(--color-text); font-weight: 500; }
+  #pdf-viewer canvas { max-width: 100%; height: auto; }
+</style>
+{% endblock %}
+
+{% block app_content %}
+      <div class="form-card">
+        <div class="form-card-header">
+          <h3>
+            {% with aprobacion=planilla.aprobaciones.all.0 %}
+            {% if aprobacion.rol_aprobador == 'evaluador' %}
+              <i class="fa-solid fa-magnifying-glass"></i> Evaluar Planilla de Cambios
+            {% else %}
+              <i class="fa-solid fa-stamp"></i> Autorizar Planilla de Cambios
+            {% endif %}
+            {% endwith %}
+          </h3>
+        </div>
+        <div class="form-card-body">
+          <div class="detail-row">
+            <span class="detail-label">Código</span>
+            <span class="detail-value">{{ planilla.codigo }}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Tipo de Cambio</span>
+            <span class="detail-value">{{ planilla.get_tipo_cambio_display }}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Documento</span>
+            <span class="detail-value">{{ planilla.documento.get_tipo_display }} {{ planilla.documento.codigo }}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Responsable</span>
+            <span class="detail-value">{{ planilla.responsable.get_full_name|default:planilla.responsable.username }}</span>
+          </div>
+          {% if planilla.justificacion %}
+          <div style="margin-top: 1rem;">
+            <span class="detail-label">Justificación</span>
+            <p style="margin-top: 0.5rem; font-size: 0.875rem; color: var(--color-text);">{{ planilla.justificacion }}</p>
+          </div>
+          {% endif %}
+
+          {% if archivo_preview %}
+          <div style="margin-top: 1.5rem; border: 1px solid var(--color-border); border-radius: var(--radius-md);">
+            <div style="padding: 0.75rem 1rem; background: var(--color-bg-secondary); border-bottom: 1px solid var(--color-border);">
+              <span class="detail-label" style="font-weight: 600;">Vista Previa del Documento</span>
+            </div>
+            {% if es_pdf %}
+              <div class="pdf-controls" style="display: flex; align-items: center; gap: 0.5rem; justify-content: center; padding: 0.75rem; background: var(--color-bg-secondary); border-bottom: 1px solid var(--color-border);">
+                <button id="btn-prev" class="btn btn--ghost btn--sm" onclick="goToPage(currentPage - 1)" disabled>← Anterior</button>
+                <input type="number" id="page-input" min="1" value="1" style="width: 60px; text-align: center; padding: 0.25rem; border: 1px solid var(--color-border); border-radius: 4px;" onkeypress="if(event.key==='Enter') goToPage(this.value)">
+                <span style="color: var(--color-muted);">de <span id="page-info">1</span></span>
+                <button id="btn-next" class="btn btn--ghost btn--sm" onclick="goToPage(currentPage + 1)">Siguiente →</button>
+              </div>
+              <div style="max-height: 60vh; overflow-y: auto; background: #6b6b6b;">
+                <div id="pdf-viewer" data-url="{{ archivo_preview.url }}" style="display: flex; justify-content: center;"></div>
+              </div>
+            {% else %}
+              <div style="padding: 2rem; text-align: center;">
+                <i class="fa-solid fa-spinner fa-spin" style="font-size: 2rem; color: var(--color-primary);"></i>
+                <p style="margin-top: 0.5rem; color: var(--color-muted);">Convirtiendo documento a PDF para vista previa...</p>
+              </div>
+            {% endif %}
+          </div>
+          {% endif %}
+
+          {% if planilla.estado != 'en_revision' %}
+          <div style="margin-top: 1.5rem; padding: 1rem; background: {% if planilla.estado == 'aprobado' %}rgba(34, 197, 94, 0.1){% elif planilla.estado == 'rechazado' %}rgba(239, 68, 68, 0.1){% else %}rgba(234, 179, 8, 0.1){% endif %}; border: 1px solid {% if planilla.estado == 'aprobado' %}var(--color-success){% elif planilla.estado == 'rechazado' %}var(--color-danger){% else %}var(--color-warning){% endif %}; border-radius: var(--radius-md); text-align: center;">
+            <i class="fa-solid {% if planilla.estado == 'aprobado' %}fa-check-circle{% elif planilla.estado == 'rechazado' %}fa-times-circle{% else %}fa-info-circle{% endif %}" style="font-size: 1.5rem; color: {% if planilla.estado == 'aprobado' %}var(--color-success){% elif planilla.estado == 'rechazado' %}var(--color-danger){% else %}var(--color-warning){% endif %};"></i>
+            <p style="margin-top: 0.5rem; font-weight: 600; color: var(--color-text);">
+              {% if planilla.estado == 'aprobado' %}Esta planilla ya fue aprobada{% elif planilla.estado == 'rechazado' %}Esta planilla ya fue rechazada{% else %}Esta planilla está en estado: {{ planilla.get_estado_display }}{% endif %}
+            </p>
+          </div>
+          {% endif %}
+
+          <form method="post" style="margin-top: 1.5rem;">
+            {% csrf_token %}
+            <div class="form-group">
+              <label class="form-label">Observaciones (opcional)</label>
+              <textarea name="observaciones" class="form-input form-textarea" rows="3" placeholder="Agregue observaciones..." {% if planilla.estado != 'en_revision' %}disabled{% endif %}></textarea>
+            </div>
+          </form>
+        </div>
+        <div class="form-card-footer">
+          <a href="{% url 'documentos:detalle_planilla' planilla_uuid=planilla.uuid %}" class="btn btn--ghost">Volver</a>
+          {% if planilla.estado == 'en_revision' %}
+          <form method="post" style="display: inline;">
+            {% csrf_token %}
+            <input type="hidden" name="accion" value="rechazar">
+            <button type="submit" class="btn btn--danger">Rechazar</button>
+          </form>
+          <form method="post" style="display: inline;">
+            {% csrf_token %}
+            <input type="hidden" name="accion" value="aprobar">
+            <button type="submit" class="btn btn--success">
+              {% with aprobacion=planilla.aprobaciones.all.0 %}
+              {% if aprobacion.rol_aprobador == 'evaluador' %}
+                <i class="fa-solid fa-magnifying-glass"></i> Evaluar y Enviar a Autorización
+              {% else %}
+                <i class="fa-solid fa-stamp"></i> Autorizar
+              {% endif %}
+              {% endwith %}
+            </button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+
+{% if es_pdf %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+let currentPdf = null;
+let currentPage = 1;
+let totalPages = 0;
+
+function renderPage(pageNum) {
+  if (!currentPdf) return;
+  
+  currentPdf.getPage(pageNum).then(function(page) {
+    const scale = 1.5;
+    const viewport = page.getViewport({scale: scale});
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    
+    const viewer = document.getElementById('pdf-viewer');
+    if (!viewer) return;
+    viewer.innerHTML = '';
+    viewer.appendChild(canvas);
+    
+    page.render({canvasContext: canvas.getContext('2d'), viewport: viewport});
+    updateControls();
+  });
+}
+
+function goToPage(page) {
+  page = parseInt(page);
+  if (page >= 1 && page <= totalPages) {
+    currentPage = page;
+    renderPage(currentPage);
+  }
+}
+
+function updateControls() {
+  const pageInput = document.getElementById('page-input');
+  const pageInfo = document.getElementById('page-info');
+  const btnPrev = document.getElementById('btn-prev');
+  const btnNext = document.getElementById('btn-next');
+  
+  if (pageInput) pageInput.value = currentPage;
+  if (pageInfo) pageInfo.textContent = totalPages;
+  if (btnPrev) btnPrev.disabled = (currentPage === 1);
+  if (btnNext) btnNext.disabled = (currentPage === totalPages);
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  const viewer = document.getElementById('pdf-viewer');
+  if (!viewer) return;
+  
+  const url = viewer.getAttribute('data-url');
+  if (!url) return;
+  
+  // Solo intentar renderizar si es PDF
+  if (!url.toLowerCase().endsWith('.pdf')) return;
+  
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  
+  pdfjsLib.getDocument(url).promise.then(function(pdf) {
+    currentPdf = pdf;
+    totalPages = pdf.numPages;
+    currentPage = 1;
+    
+    renderPage(currentPage);
+    updateControls();
+  });
+});
+</script>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,13 @@
+{% if messages %}
+<div class="app-messages">
+  {% for message in messages %}
+  <div class="alert alert--{{ message.tags }}">
+    <span class="alert-icon">
+      <i class="fa-solid fa-{% if 'success' in message.tags %}circle-check{% elif 'danger' in message.tags or 'error' in message.tags %}circle-xmark{% elif 'warning' in message.tags %}triangle-exclamation{% else %}circle-info{% endif %}"></i>
+    </span>
+    <div class="alert-content">{{ message }}</div>
+    <button class="alert-close" type="button">&times;</button>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}

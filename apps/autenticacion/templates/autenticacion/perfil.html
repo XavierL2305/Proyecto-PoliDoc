@@ -1,0 +1,248 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Mi Perfil - POLIDOC{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/perfil.css' %}">
+{% endblock %}
+
+{% block app_content %}
+<div class="profile-page">
+  <div class="profile-header">
+    <h1>Mi Perfil</h1>
+  </div>
+
+  <div class="profile-grid">
+    <div class="profile-main">
+      <div class="profile-card profile-card--info">
+        <div class="profile-info-header">
+          <div class="profile-avatar">
+            {% if perfil.foto_perfil %}
+            <img src="{{ perfil.foto_perfil.url }}" alt="Foto de perfil">
+            {% else %}
+            <div class="profile-avatar-placeholder">
+              {{ user.first_name|first|default:"U" }}
+            </div>
+            {% endif %}
+          </div>
+          <div class="profile-info-text">
+            <h2>{{ user.get_full_name|default:user.username }}</h2>
+            <span class="profile-role">{{ perfil.get_rol_display }}</span>
+            <span class="profile-dept">
+              {% if perfil.departamento %}{{ perfil.departamento }}{% else %}Sin departamento asignado{% endif %}
+            </span>
+          </div>
+        </div>
+
+        <div class="profile-info-rows">
+          <div class="profile-info-row">
+            <span class="profile-info-label">Username</span>
+            <span class="profile-info-value">{{ user.username }}</span>
+          </div>
+          <div class="profile-info-row">
+            <span class="profile-info-label">Email</span>
+            <span class="profile-info-value">{{ user.email|default:"-" }}</span>
+          </div>
+          {% if perfil.cedula_identidad %}
+          <div class="profile-info-row">
+            <span class="profile-info-label">Cédula</span>
+            <span class="profile-info-value">{{ perfil.cedula_identidad }}</span>
+          </div>
+          {% endif %}
+          {% if perfil.numero_empleado %}
+          <div class="profile-info-row">
+            <span class="profile-info-label">N° Empleado</span>
+            <span class="profile-info-value">{{ perfil.numero_empleado }}</span>
+          </div>
+          {% endif %}
+          {% if perfil.telefono %}
+          <div class="profile-info-row">
+            <span class="profile-info-label">Teléfono</span>
+            <span class="profile-info-value">{{ perfil.telefono }}</span>
+          </div>
+          {% endif %}
+          <div class="profile-info-row">
+            <span class="profile-info-label">Último acceso</span>
+            <span class="profile-info-value">{{ user.last_login|date:"d/m/Y H:i"|default:"Nunca" }}</span>
+          </div>
+          <div class="profile-info-row">
+            <span class="profile-info-label">Miembro desde</span>
+            <span class="profile-info-value">{{ user.date_joined|date:"d/m/Y" }}</span>
+          </div>
+        </div>
+
+        {% if perfil.biografia %}
+        <div class="profile-bio">
+          <span class="profile-info-label">Biografía</span>
+          <p>{{ perfil.biografia }}</p>
+        </div>
+        {% endif %}
+      </div>
+
+      <div class="profile-card profile-card--edit">
+        <div class="profile-card-header">
+          <h3>Editar Información Personal</h3>
+          <p class="profile-card-subtitle">Solo los campos que no vienen de Active Directory</p>
+        </div>
+        <form method="post" enctype="multipart/form-data" class="profile-form">
+          {% csrf_token %}
+          <div class="profile-form-group">
+            <label class="form-label">Correo electrónico</label>
+            {{ form.email }}
+          </div>
+          <div class="profile-form-group">
+            <label class="form-label">Teléfono</label>
+            {{ form.telefono }}
+          </div>
+          <div class="profile-form-group">
+            <label class="form-label">Biografía</label>
+            {{ form.biografia }}
+          </div>
+          <div class="profile-form-group">
+            <label class="form-label">Foto de Perfil</label>
+            <div class="profile-foto-upload">
+              <div class="profile-foto-preview" id="foto-preview-container">
+                {% if perfil.foto_perfil %}
+                <img src="{{ perfil.foto_perfil.url }}" alt="Foto actual" id="foto-preview">
+                {% else %}
+                <div class="profile-avatar-placeholder" id="foto-preview-placeholder">
+                  {{ user.first_name|first|default:"U" }}
+                </div>
+                <img src="" alt="Nueva foto" id="foto-preview" style="display:none;">
+                {% endif %}
+              </div>
+              <div class="profile-foto-actions">
+                <label class="btn btn--secondary btn--sm" for="id_foto_perfil">
+                  <i class="fa-solid fa-cloud-arrow-up"></i> Seleccionar imagen
+                </label>
+                {% if perfil.foto_perfil %}
+                <button type="button" class="btn btn--danger btn--sm" id="btn-eliminar-foto">
+                  <i class="fa-solid fa-trash"></i> Eliminar foto
+                </button>
+                {% endif %}
+              </div>
+              {{ form.foto_perfil }}
+              <p class="profile-foto-hint">Formatos: JPG, JPEG, PNG, GIF, WEBP. Máximo 5MB.</p>
+              <p class="profile-foto-error" id="foto-error" style="display:none; color: var(--color-danger); font-size: 0.75rem;"></p>
+            </div>
+          </div>
+          <div class="profile-form-actions">
+            <button type="submit" class="btn btn--primary">
+              <i class="fa-solid fa-check"></i> Guardar Cambios
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="profile-sidebar">
+      <div class="profile-card profile-card--stats">
+        <h3>Estadísticas</h3>
+        <div class="profile-stats">
+          <div class="profile-stat">
+            <div class="profile-stat-icon"><i class="fa-solid fa-file-lines"></i></div>
+            <div class="profile-stat-info">
+              <span class="profile-stat-value">{{ total_documentos }}</span>
+              <span class="profile-stat-label">Documentos</span>
+            </div>
+          </div>
+          <div class="profile-stat">
+            <div class="profile-stat-icon profile-stat-icon--primary"><i class="fa-solid fa-download"></i></div>
+            <div class="profile-stat-info">
+              <span class="profile-stat-value">{{ solicitudes_descarga }}</span>
+              <span class="profile-stat-label">Descargas</span>
+            </div>
+          </div>
+          <div class="profile-stat">
+            <div class="profile-stat-icon profile-stat-icon--success"><i class="fa-solid fa-user-check"></i></div>
+            <div class="profile-stat-info">
+              <span class="profile-stat-value">{{ asignaciones }}</span>
+              <span class="profile-stat-label">Asignaciones</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  const fileInput = document.getElementById('id_foto_perfil');
+  const preview = document.getElementById('foto-preview');
+  const placeholder = document.getElementById('foto-preview-placeholder');
+  const errorEl = document.getElementById('foto-error');
+  const btnEliminar = document.getElementById('btn-eliminar-foto');
+
+  const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+  const maxSize = 5 * 1024 * 1024; // 5MB
+
+  fileInput.addEventListener('change', function() {
+    errorEl.style.display = 'none';
+    errorEl.textContent = '';
+
+    if (!this.files || !this.files[0]) return;
+
+    const file = this.files[0];
+
+    if (!allowedTypes.includes(file.type)) {
+      errorEl.textContent = 'Formato no permitido. Use JPG, JPEG, PNG, GIF o WEBP.';
+      errorEl.style.display = 'block';
+      this.value = '';
+      return;
+    }
+
+    if (file.size > maxSize) {
+      errorEl.textContent = 'La imagen excede 5MB. Use una imagen más pequeña.';
+      errorEl.style.display = 'block';
+      this.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      preview.src = e.target.result;
+      preview.style.display = 'block';
+      if (placeholder) placeholder.style.display = 'none';
+    };
+    reader.readAsDataURL(file);
+  });
+
+  // Eliminar foto de perfil
+  if (btnEliminar) {
+    btnEliminar.addEventListener('click', function() {
+      if (!confirm('¿Estás seguro de eliminar tu foto de perfil?')) return;
+
+      fetch("{% url 'autenticacion:eliminar_foto_perfil' %}", {
+        method: 'POST',
+        headers: {
+          'X-CSRFToken': '{{ csrf_token }}',
+          'Content-Type': 'application/json'
+        }
+      })
+      .then(r => r.json())
+      .then(data => {
+        if (data.ok) {
+          // Mostrar alerta de éxito
+          const alertDiv = document.createElement('div');
+          alertDiv.className = 'alert alert--success';
+          alertDiv.style.cssText = 'margin-bottom: 1.5rem;';
+          alertDiv.innerHTML = '<span class="alert-icon"><i class="fa-solid fa-circle-check"></i></span><div class="alert-content">Foto de perfil eliminada correctamente.</div><button class="alert-close">&times;</button>';
+
+          const header = document.querySelector('.profile-header');
+          header.parentNode.insertBefore(alertDiv, header.nextSibling);
+
+          // Recargar después de 0.2 segundos
+          setTimeout(function() {
+            location.reload();
+          }, 200);
+        }
+      });
+    });
+  }
+});
+</script>
+{% endblock %}

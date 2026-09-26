@@ -1,0 +1,107 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Formatos / Formularios - Configuración{% endblock %}
+
+{% block extra_css %}
+<style>
+  .page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 2rem;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+  .page-header h1 { font-size: 1.5rem; font-weight: 700; color: var(--color-text); margin: 0; }
+</style>
+{% endblock %}
+
+{% block app_content %}
+<div class="page-header">
+  <h1>Formatos / Formularios</h1>
+  {% if user.perfil.es_administrador %}
+  <a href="{% url 'documentos:formato_crear' %}" class="btn btn--primary btn--sm">
+    <i class="fa-solid fa-plus"></i> Nuevo Formato
+  </a>
+  {% endif %}
+</div>
+
+<div class="table-container">
+  <table class="table table--hover">
+    <thead>
+      <tr>
+        <th>Código</th>
+        <th>Nombre</th>
+        <th>Versión</th>
+        <th>Edición</th>
+        <th>Vigencia</th>
+        <th>Operaciones</th>
+        <th>Estado</th>
+        {% if user.perfil.es_administrador %}
+        <th>Acciones</th>
+        {% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for formato in formatos %}
+      <tr>
+        <td><strong>{{ formato.codigo }}</strong></td>
+        <td>{{ formato.nombre }}</td>
+        <td>{{ formato.version }}</td>
+        <td>{{ formato.edicion }}</td>
+        <td>{{ formato.fecha_vigencia|date:"d/m/Y"|default:"-" }}</td>
+        <td>
+          {% if formato.aplica_creacion %}<span class="badge badge--success" style="font-size:0.65rem;">Creación</span>{% endif %}
+          {% if formato.aplica_modificacion %}<span class="badge badge--success" style="font-size:0.65rem;">Modificación</span>{% endif %}
+          {% if formato.aplica_eliminacion %}<span class="badge badge--success" style="font-size:0.65rem;">Eliminación</span>{% endif %}
+        </td>
+        <td>
+          {% if formato.activo %}
+          <span class="badge badge--success">Activo</span>
+          {% else %}
+          <span class="badge badge--danger">Inactivo</span>
+          {% endif %}
+        </td>
+        {% if user.perfil.es_administrador %}
+        <td>
+          <div class="actions">
+            <a href="{% url 'documentos:formato_constructor' formato_id=formato.id %}" class="btn btn--ghost btn--sm" data-tooltip="Constructor" data-tooltip-position="top">
+              <i class="fa-solid fa-wand-magic-sparkles"></i>
+            </a>
+            <a href="{% url 'documentos:formato_preview' formato_id=formato.id %}" class="btn btn--ghost btn--sm" data-tooltip="Preview" data-tooltip-position="top">
+              <i class="fa-solid fa-eye"></i>
+            </a>
+            <a href="{% url 'documentos:formato_editar' formato_id=formato.id %}" class="btn btn--ghost btn--sm" data-tooltip="Editar" data-tooltip-position="top">
+              <i class="fa-solid fa-pen"></i>
+            </a>
+            {% if formato.activo %}
+            <form method="post" action="{% url 'documentos:formato_eliminar' formato_id=formato.id %}" style="display: inline;">
+              {% csrf_token %}
+              <button type="submit" class="btn btn--ghost btn--sm" onclick="return confirm('¿Desactivar este formato?')">
+                <i class="fa-solid fa-trash"></i>
+              </button>
+            </form>
+            {% else %}
+            <form method="post" action="{% url 'documentos:formato_reactivar' formato_id=formato.id %}" style="display: inline;">
+              {% csrf_token %}
+              <button type="submit" class="btn btn--ghost btn--sm" data-tooltip="Reactivar" data-tooltip-position="top">
+                <i class="fa-solid fa-rotate-right"></i>
+              </button>
+            </form>
+            {% endif %}
+          </div>
+        </td>
+        {% endif %}
+      </tr>
+      {% empty %}
+      <tr>
+        <td colspan="8" style="text-align: center; padding: 2rem; color: var(--color-muted);">
+          No hay formatos registrados.
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

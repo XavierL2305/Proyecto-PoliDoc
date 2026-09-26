@@ -1,0 +1,144 @@
+/* ==========================================================================
+   POLIDOC - COMPONENTE: SKELETON LOADING
+   ========================================================================== */
+
+/* === BASE SKELETON === */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-border) 25%,
+    var(--color-bg) 50%,
+    var(--color-border) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+  border-radius: var(--radius);
+}
+
+/* === SKELETON VARIANTS === */
+.skeleton-text {
+  height: 14px;
+  margin-bottom: 0.5rem;
+}
+
+.skeleton-text--sm {
+  height: 10px;
+}
+
+.skeleton-text--lg {
+  height: 18px;
+}
+
+.skeleton-title {
+  height: 24px;
+  width: 60%;
+  margin-bottom: 1rem;
+}
+
+.skeleton-circle {
+  border-radius: 50%;
+}
+
+.skeleton-rect {
+  border-radius: var(--radius);
+}
+
+/* === SKELETON SIZES === */
+.skeleton--sm {
+  width: 60px;
+  height: 60px;
+}
+
+.skeleton--md {
+  width: 100px;
+  height: 100px;
+}
+
+.skeleton--lg {
+  width: 150px;
+  height: 150px;
+}
+
+/* === SKELETON CARD === */
+.skeleton-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+}
+
+.skeleton-card-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.skeleton-card-body .skeleton-text {
+  width: 100%;
+}
+
+.skeleton-card-body .skeleton-text:nth-child(2) {
+  width: 80%;
+}
+
+.skeleton-card-body .skeleton-text:nth-child(3) {
+  width: 90%;
+}
+
+/* === SKELETON TABLE === */
+.skeleton-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.skeleton-table th,
+.skeleton-table td {
+  padding: 0.75rem 1rem;
+  text-align: left;
+}
+
+.skeleton-table th {
+  background: var(--color-bg);
+}
+
+/* === SKELETON AVATAR === */
+.skeleton-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+}
+
+.skeleton-avatar--sm {
+  width: 32px;
+  height: 32px;
+}
+
+.skeleton-avatar--lg {
+  width: 56px;
+  height: 56px;
+}
+
+/* === SKELETON BUTTON === */
+.skeleton-btn {
+  height: 40px;
+  width: 120px;
+  border-radius: var(--radius);
+}
+
+/* === ANIMATION === */
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/* === PAUSE ANIMATION (for accessibility) === */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+}

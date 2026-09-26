@@ -1,0 +1,129 @@
+/* ==========================================================================
+   POLIDOC - COMPONENTE: PAGINATION
+   ========================================================================== */
+
+/* === BASE PAGINATION === */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid var(--color-border);
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+/* === PAGINATION INFO === */
+.pagination-info {
+  font-size: 0.875rem;
+  color: var(--color-muted);
+}
+
+/* === PAGINATION NAV === */
+.pagination-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+/* === PAGINATION ITEM === */
+.pagination-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  height: 36px;
+  padding: 0 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all var(--transition);
+  text-decoration: none;
+}
+
+.pagination-item:hover {
+  background-color: var(--color-bg);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+/* === PAGINATION ACTIVE === */
+.pagination-item--active {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #FFFFFF;
+}
+
+.pagination-item--active:hover {
+  background-color: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+  color: #FFFFFF;
+}
+
+/* === PAGINATION DISABLED === */
+.pagination-item--disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* === PAGINATION ELLIPSIS === */
+.pagination-ellipsis {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  height: 36px;
+  color: var(--color-muted);
+  font-size: 0.875rem;
+}
+
+/* === PAGINATION ARROWS === */
+.pagination-item--arrow {
+  padding: 0;
+}
+
+.pagination-item--arrow i {
+  font-size: 0.875rem;
+}
+
+/* === PAGINATION SIZE === */
+.pagination-size {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.pagination-size label {
+  font-size: 0.875rem;
+  color: var(--color-muted);
+}
+
+.pagination-size select {
+  padding: 0.375rem 0.5rem;
+  font-size: 0.875rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+/* === RESPONSIVE === */
+@media (max-width: 639px) {
+  .pagination {
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .pagination-item {
+    min-width: 32px;
+    height: 32px;
+    font-size: 0.8125rem;
+  }
+}

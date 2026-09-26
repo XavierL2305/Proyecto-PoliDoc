@@ -1,0 +1,836 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}{{ titulo }} - POLIDOC{% endblock %}
+
+{% block extra_css %}
+<style>
+  .page-header { margin-bottom: 2rem; }
+  .page-header h1 { font-size: 1.5rem; font-weight: 700; color: var(--color-text); margin-bottom: 0.25rem; }
+  .page-header p { font-size: 0.875rem; color: var(--color-muted); margin: 0; }
+  .form-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); margin-bottom: 1.5rem; }
+  .form-card-header { padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--color-border); }
+  .form-card-header h3 { font-size: 1rem; font-weight: 600; color: var(--color-text); margin: 0; }
+  .form-card-body { padding: 1.5rem; }
+  .form-card-footer { padding: 1rem 1.5rem; border-top: 1px solid var(--color-border); display: flex; align-items: center; justify-content: flex-end; gap: 0.75rem; }
+  .form-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.5rem; }
+  .form-group-full { grid-column: 1 / -1; }
+  .form-card--disabled { opacity: 0.6; pointer-events: none; }
+  .form-card--disabled .form-card-body { background: var(--color-bg-alt); }
+  .procedimientos-alert { display: flex; align-items: center; gap: 0.75rem; padding: 1rem; background: var(--color-info-light); border-radius: var(--radius); color: var(--color-info-dark); }
+  .procedimientos-alert i { font-size: 1.25rem; }
+  .procedimientos-alert--warning { background: var(--color-warning-light); color: var(--color-warning-dark); }
+  .procedimientos-alert--error { background: var(--color-danger-light); color: var(--color-danger-dark); }
+  .formularios-alert { display: flex; align-items: center; gap: 0.75rem; padding: 1rem; background: var(--color-info-light); border-radius: var(--radius); color: var(--color-info-dark); }
+  .formularios-alert i { font-size: 1.25rem; }
+  .formularios-alert--warning { background: var(--color-warning-light); color: var(--color-warning-dark); }
+  .formularios-alert--error { background: var(--color-danger-light); color: var(--color-danger-dark); }
+  .depto-tags { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
+  .depto-tag { display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.375rem 0.75rem; font-size: 0.8125rem; font-weight: 500; background: var(--color-primary-light); color: var(--color-primary); border-radius: 50px; transition: all var(--transition); }
+  .depto-tag-remove { display: flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; background: none; border: none; cursor: pointer; color: inherit; font-size: 0.75rem; transition: background var(--transition); }
+  .depto-tag-remove:hover { background: rgba(0,0,0,0.1); }
+  [data-theme="dark"] .depto-tag { background: rgba(37, 99, 235, 0.2); color: #60A5FA; }
+  [data-theme="dark"] .depto-tag-remove:hover { background: rgba(255,255,255,0.15); }
+  .depto-tag--pendiente { border: 1.5px dashed var(--color-warning); background: var(--color-warning-light); color: var(--color-warning-dark); }
+  [data-theme="dark"] .depto-tag--pendiente { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border-color: rgba(245, 158, 11, 0.5); }
+  .depto-info { display: flex; align-items: center; gap: 0.5rem; padding: 0.75rem 1rem; background: var(--color-success-light); border-radius: var(--radius); color: var(--color-success-dark); margin-bottom: 1rem; font-size: 0.875rem; }
+  .depto-info i { font-size: 1rem; }
+  select[multiple] { min-height: 120px; width: 100%; }
+  
+  /* File input styling */
+  .file-upload-wrapper { position: relative; cursor: pointer; }
+  .file-upload-wrapper input[type="file"] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    overflow: hidden;
+    z-index: -1;
+  }
+  .file-upload-label {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    border: 2px dashed var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-bg);
+    cursor: pointer;
+    transition: all var(--transition);
+    font-family: 'Inter', sans-serif;
+  }
+  .file-upload-label:hover {
+    border-color: var(--color-primary);
+    background: var(--color-primary-light);
+  }
+  .file-upload-label i {
+    font-size: 1.5rem;
+    color: var(--color-muted);
+    margin-bottom: 0.5rem;
+  }
+  .file-upload-label span {
+    font-size: 0.875rem;
+    color: var(--color-muted);
+  }
+  .file-upload-label.has-file {
+    border-color: var(--color-success);
+    background: var(--color-success-light);
+  }
+  .file-upload-label.has-file i {
+    color: var(--color-success);
+  }
+  .file-upload-label.has-file span {
+    color: var(--color-success-dark);
+    font-weight: 500;
+  }
+  .file-upload-label.drag-over {
+    border-color: var(--color-primary);
+    background: var(--color-primary-light);
+    box-shadow: 0 0 0 3px rgba(0, 90, 156, 0.15);
+  }
+  .file-upload-hint {
+    font-size: 0.75rem;
+    color: var(--color-muted);
+    margin-top: 0.5rem;
+    text-align: center;
+  }
+  .code-builder {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin-bottom: 1rem;
+  }
+  .code-builder__segment {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    background: var(--color-bg);
+    border-right: 1px solid var(--color-border);
+    min-width: 120px;
+  }
+  .code-builder__segment:last-child {
+    border-right: none;
+  }
+  .code-builder__label {
+    font-size: 0.75rem;
+    color: var(--color-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .code-builder__value {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    color: var(--color-primary);
+  }
+  .code-builder__input {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    color: var(--color-primary);
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid var(--color-primary);
+    width: 3rem;
+    text-align: center;
+    font-size: 0.875rem;
+    padding: 0.25rem 0;
+  }
+  .code-builder__input:focus {
+    outline: none;
+    border-bottom-color: var(--color-success);
+  }
+  .code-builder__separator {
+    padding: 0 0.25rem;
+    color: var(--color-muted);
+    font-weight: 300;
+  }
+  @media (max-width: 768px) { .page-content { padding: 1rem; } .form-row { grid-template-columns: 1fr; } }
+</style>
+{% endblock %}
+
+{% block app_content %}
+      <div class="page-header">
+        <h1>{{ titulo }}</h1>
+      </div>
+
+      <form method="post" enctype="multipart/form-data" id="proceso-form">
+        {% csrf_token %}
+
+        {% if es_dinamico %}
+        <div class="code-builder">
+          {% if not sin_prefijo_depto %}
+          <div class="code-builder__segment">
+            <span class="code-builder__label">Depto</span>
+            <span class="code-builder__value">{{ auto_departamento_nombre|default:"Sin Depto" }}</span>
+          </div>
+          <span class="code-builder__separator">-</span>
+          {% endif %}
+          <div class="code-builder__segment">
+            <span class="code-builder__label">Tipo</span>
+            <span class="code-builder__value">{{ tipo_documento_codigo }}</span>
+          </div>
+          <span class="code-builder__separator">-</span>
+          <div class="code-builder__segment">
+            <span class="code-builder__label">Sec</span>
+            <input type="text" name="secuencia" class="code-builder__input"
+                   value="{{ codigo_preview|slice:"-3:" }}"
+                   maxlength="3" pattern="[0-9]{3}" required>
+          </div>
+        </div>
+        {% endif %}
+
+        {% if edicion %}
+        <div class="form-card" style="margin-bottom: 1rem;">
+          <div class="form-card-body" style="padding: 1rem 1.5rem;">
+            <div style="display: flex; align-items: center; gap: 0.75rem;">
+              <i class="fa-solid fa-info-circle" style="color: var(--color-primary);"></i>
+              <div>
+                <span style="font-size: 0.875rem; color: var(--color-muted);">
+                  Tipo de documento: <strong style="color: var(--color-text);">
+                    {% if tipo == 'proceso' %}Proceso
+                    {% elif tipo == 'procedimiento' %}Procedimiento
+                    {% else %}Formulario{% endif %}
+                  </strong>
+                  <span style="margin-left: 0.5rem; font-size: 0.75rem; color: var(--color-muted);">(No editable - usar Planilla de Cambios para cambiar tipo)</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+        <div class="form-card">
+          <div class="form-card-header"><h3>Información del Documento</h3></div>
+          <div class="form-card-body">
+            <div class="form-row">
+              {% for field in form %}
+                {% if field.name != 'procedimientos' and field.name != 'departamentos_afectados' and field.name != 'documentos_relacionados' and field.name != 'responsables' and field.name != 'participantes' %}
+                  {% if field.name == 'es_publico' %}
+              <div class="form-group form-group-full">
+                <label class="form-checkbox-wrapper">
+                  {{ field }}
+                  <span class="form-checkbox-label">{{ field.label }}</span>
+                  {% if field.help_text %}
+                  <span class="form-label-help"
+                     data-tooltip="{{ field.help_text }}" data-tooltip-position="right"
+                     tabindex="0" aria-label="{{ field.help_text }}"><i class="fa-solid fa-circle-info" aria-hidden="true"></i></span>
+                  {% endif %}
+                </label>
+                {% if field.errors %}
+                <span class="form-error">{{ field.errors.0 }}</span>
+                {% endif %}
+              </div>
+                  {% else %}
+              <div class="form-group {% if field.field.widget.input_type == 'textarea' or field.field.widget.input_type == 'file' %}form-group-full{% endif %}">
+                <label class="form-label">{{ field.label }}{% if field.help_text %}<span class="form-label-help" data-tooltip="{{ field.help_text }}" data-tooltip-position="right" tabindex="0" aria-label="{{ field.help_text }}"><i class="fa-solid fa-circle-info" aria-hidden="true"></i></span>{% endif %}</label>
+                {% if field.field.widget.input_type == 'file' %}
+                <div class="file-upload-wrapper">
+                  {{ field }}
+                  <label for="{{ field.id_for_label }}" class="file-upload-label" id="label-{{ field.id_for_label }}">
+                    <i class="fa-solid fa-cloud-arrow-up"></i>
+                    <span id="filename-{{ field.id_for_label }}">
+                      {% if field.value %}Archivo actual: {{ field.value }}{% else %}Seleccione un archivo{% endif %}
+                    </span>
+                    <small class="file-upload-hint">PDF, DOC, DOCX, XLS, XLSX — Máximo 10MB</small>
+                  </label>
+                </div>
+                {% else %}
+                {{ field }}
+                {% endif %}
+                {% if field.errors %}
+                <span class="form-error">{{ field.errors.0 }}</span>
+                {% endif %}
+              </div>
+                  {% endif %}
+                {% endif %}
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+
+        {% with doc_tipo=documento.tipo_id|default:tipo %}
+
+        {% if 'departamentos_afectados' in form.fields %}
+        <div class="form-card">
+          <div class="form-card-header"><h3>Departamentos Afectados</h3></div>
+          <div class="form-card-body">
+            <select id="depto-select" class="form-input form-select" onchange="addDepto(this)">
+              <option value="">Seleccione un departamento...</option>
+              {% for depto in form.departamentos_afectados.field.queryset %}
+              <option value="{{ depto.id }}" data-nombre="{{ depto }}">{{ depto }}</option>
+              {% endfor %}
+            </select>
+            <div id="depto-tags" class="depto-tags"></div>
+            <div id="depto-hidden"></div>
+            {% if form.departamentos_afectados.errors %}
+            <div class="form-error" style="margin-top: 0.5rem;">
+              <i class="fa-solid fa-circle-exclamation"></i> {{ form.departamentos_afectados.errors }}
+            </div>
+            {% endif %}
+          </div>
+        </div>
+        {% endif %}
+
+        {% if 'responsables' in form.fields %}
+        <div class="form-card">
+          <div class="form-card-header"><h3>Responsables (áreas)</h3></div>
+          <div class="form-card-body">
+            <select id="resp-select" class="form-input form-select" onchange="addResponsable(this)">
+              <option value="">Seleccione un área responsable...</option>
+              {% for depto in form.responsables.field.queryset %}
+              <option value="{{ depto.id }}" data-nombre="{{ depto }}">{{ depto }}</option>
+              {% endfor %}
+            </select>
+            <div id="resp-tags" class="depto-tags"></div>
+            <div id="resp-hidden"></div>
+          </div>
+        </div>
+        {% endif %}
+
+        {% if 'participantes' in form.fields %}
+        <div class="form-card">
+          <div class="form-card-header"><h3>Participantes</h3></div>
+          <div class="form-card-body">
+            <div style="display: flex; gap: 0.5rem;">
+              <input type="text" id="part-input" class="form-input"
+                     placeholder="Escriba un nombre y presione Agregar" onkeydown="if(event.key==='Enter'){event.preventDefault();addParticipante();}">
+              <button type="button" class="btn btn--primary btn--sm" onclick="addParticipante()">
+                <i class="fa-solid fa-plus"></i> Agregar
+              </button>
+            </div>
+            <div id="part-tags" class="depto-tags" style="margin-top: 0.75rem;"></div>
+            {{ form.participantes }}
+          </div>
+        </div>
+        {% endif %}
+
+        {% endwith %}
+
+        {% if 'documentos_relacionados' in form.fields %}
+        {% with doc_tipo=documento.tipo_id|default:tipo %}
+        <div class="form-card">
+          <div class="form-card-header"><h3>Documentos Relacionados</h3></div>
+          <div class="form-card-body">
+            {% if auto_departamento_nombre %}
+            <div class="depto-info">
+              <i class="fa-solid fa-building"></i>
+              <span>Departamento: <strong>{{ auto_departamento_nombre }}</strong></span>
+            </div>
+            {% endif %}
+            <input type="text" id="docrel-search" class="form-input"
+                   placeholder="Buscar por nombre o código..." oninput="searchDocRel(this)">
+            <select id="docrel-select" class="form-input form-select" onchange="addDocRel(this)" style="margin-top: 0.5rem;">
+              <option value="">Escriba para buscar...</option>
+            </select>
+            <div style="display: flex; gap: 0.5rem; margin-top: 0.75rem;">
+              <input type="text" id="docrel-codigo" class="form-input"
+                     placeholder="O escriba el código (ej. FS-PRE-012)" style="flex: 1;">
+              <button type="button" class="btn btn--primary btn--sm" onclick="addDocRelByCodigo()">
+                <i class="fa-solid fa-plus"></i> Agregar
+              </button>
+            </div>
+            <div id="docrel-tags" class="depto-tags"></div>
+            <div id="docrel-hidden"></div>
+            <input type="hidden" name="referencias_pendientes_json" id="referencias-pendientes-json" value="">
+            {% if form.documentos_relacionados.errors %}
+            <div class="form-error" style="margin-top: 0.5rem;">
+              <i class="fa-solid fa-circle-exclamation"></i> {{ form.documentos_relacionados.errors }}
+            </div>
+            {% endif %}
+          </div>
+        </div>
+        {% endwith %}
+        {% endif %}
+
+        {% if formato_dinamico %}
+        <div class="form-card">
+          <div class="form-card-header">
+            <h3><i class="fa-solid fa-file-circle-plus" style="margin-right:0.5rem;"></i> {{ formato_dinamico.codigo }} — {{ formato_dinamico.nombre }} <span style="font-weight:400;font-size:0.8125rem;color:var(--color-muted);">v{{ formato_dinamico.version }} E{{ formato_dinamico.edicion }}</span></h3>
+          </div>
+          <div class="form-card-body">
+            {% include 'documentos/_formato_dinamico.html' with formato=formato_dinamico respuestas=respuestas_formato read_only=False %}
+          </div>
+        </div>
+        {% endif %}
+
+        {% if edicion and tipo != 'proceso' %}
+        {% if not documento.archivo %}
+        <div class="alert alert--warning" style="margin-bottom: 1rem;">
+          <span class="alert-icon"><i class="fa-solid fa-triangle-exclamation"></i></span>
+          <div class="alert-content">
+            <strong>Archivo no adjunto:</strong> Este documento no tiene un archivo subido. Se recomienda adjuntar el documento para cumplir con el control de versiones ISO.
+          </div>
+        </div>
+        {% endif %}
+        {% endif %}
+
+        {% if edicion %}
+        <div class="form-card" style="margin-top: 1rem;">
+          <div class="form-card-header"><h3>Control de Versiones</h3></div>
+          <div class="form-card-body">
+            <div class="form-group">
+              <label class="form-label">Descripción de cambios *</label>
+              <textarea name="cambios_edicion" class="form-input form-textarea" rows="3" placeholder="Describa los cambios realizados en esta versión..." required></textarea>
+            </div>
+            <p style="font-size: 0.75rem; color: var(--color-muted);">
+              Se creará automáticamente la versión {{ proxima_version }} del documento.
+            </p>
+          </div>
+        </div>
+        {% endif %}
+
+        <div class="form-card">
+          <div class="form-card-footer">
+            <a href="{% url 'documentos:mis_documentos' %}" class="btn btn--ghost">Cancelar</a>
+            {% if edicion %}
+            <button type="submit" class="btn btn--primary">
+              <i class="fa-solid fa-save"></i> Guardar Cambios
+            </button>
+            {% else %}
+            <button type="submit" name="accion" value="borrador" class="btn btn--ghost" formnovalidate>
+              <i class="fa-solid fa-save"></i> Guardar Borrador
+            </button>
+            <button type="submit" name="accion" value="enviar" class="btn btn--primary">
+              <i class="fa-solid fa-paper-plane"></i> Enviar a Revisión
+            </button>
+            {% endif %}
+          </div>
+        </div>
+      </form>
+
+      <script>
+        // === Procedimientos (tags) ===
+        const selectedProcs = {};
+
+        function addProc(select) {
+          const id = select.value;
+          const nombre = select.options[select.selectedIndex].dataset.nombre;
+          if (!id || selectedProcs[id]) { select.value = ''; return; }
+          selectedProcs[id] = nombre;
+          renderProcs();
+          select.value = '';
+        }
+
+        function removeProc(id) {
+          delete selectedProcs[id];
+          renderProcs();
+        }
+
+        function renderProcs() {
+          const tags = document.getElementById('proc-tags');
+          const hidden = document.getElementById('proc-hidden');
+          if (!tags || !hidden) return;
+          tags.innerHTML = '';
+          hidden.innerHTML = '';
+          for (const [id, nombre] of Object.entries(selectedProcs)) {
+            tags.innerHTML += '<span class="depto-tag">' + nombre + '<button type="button" class="depto-tag-remove" onclick="removeProc(\'' + id + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
+            hidden.innerHTML += '<input type="hidden" name="procedimientos" value="' + id + '">';
+          }
+        }
+
+        // === Formularios (tags) ===
+        const selectedForms = {};
+
+        function addFormulario(select) {
+          const id = select.value;
+          const nombre = select.options[select.selectedIndex].dataset.nombre;
+          if (!id || selectedForms[id]) { select.value = ''; return; }
+          selectedForms[id] = nombre;
+          renderForms();
+          select.value = '';
+        }
+
+        function removeFormulario(id) {
+          delete selectedForms[id];
+          renderForms();
+        }
+
+        function renderForms() {
+          const tags = document.getElementById('form-tags');
+          const hidden = document.getElementById('form-hidden');
+          if (!tags || !hidden) return;
+          tags.innerHTML = '';
+          hidden.innerHTML = '';
+          for (const [id, nombre] of Object.entries(selectedForms)) {
+            tags.innerHTML += '<span class="depto-tag">' + nombre + '<button type="button" class="depto-tag-remove" onclick="removeFormulario(\'' + id + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
+            hidden.innerHTML += '<input type="hidden" name="formularios" value="' + id + '">';
+          }
+        }
+
+        // === Departamentos Afectados (tags) ===
+        const selectedDeptos = {};
+
+        function addDepto(select) {
+          const id = select.value;
+          const nombre = select.options[select.selectedIndex].dataset.nombre;
+          if (!id || selectedDeptos[id]) { select.value = ''; return; }
+          selectedDeptos[id] = nombre;
+          renderDeptos();
+          select.value = '';
+        }
+
+        function removeDepto(id) {
+          delete selectedDeptos[id];
+          renderDeptos();
+        }
+
+        function renderDeptos() {
+          const tags = document.getElementById('depto-tags');
+          const hidden = document.getElementById('depto-hidden');
+          if (!tags || !hidden) return;
+          tags.innerHTML = '';
+          hidden.innerHTML = '';
+          for (const [id, nombre] of Object.entries(selectedDeptos)) {
+            tags.innerHTML += '<span class="depto-tag">' + nombre + '<button type="button" class="depto-tag-remove" onclick="removeDepto(\'' + id + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
+            hidden.innerHTML += '<input type="hidden" name="departamentos_afectados" value="' + id + '">';
+          }
+        }
+
+        // === Documentos Relacionados (tags) ===
+        const selectedDocsRel = {};
+        const pendingRefs = [];
+
+        function addDocRel(select) {
+          const id = select.value;
+          const nombre = select.options[select.selectedIndex].dataset.nombre;
+          if (!id || selectedDocsRel[id]) { select.value = ''; return; }
+          selectedDocsRel[id] = nombre;
+          renderDocsRel();
+          select.value = '';
+        }
+
+        function removeDocRel(id) {
+          delete selectedDocsRel[id];
+          renderDocsRel();
+        }
+
+        function addDocRelByCodigo() {
+          const input = document.getElementById('docrel-codigo');
+          if (!input) return;
+          const codigo = input.value.trim().toUpperCase();
+          if (!codigo) return;
+          if (pendingRefs.includes(codigo) || Object.values(selectedDocsRel).some(function(v) { return v.includes(codigo); })) {
+            input.value = '';
+            return;
+          }
+          pendingRefs.push(codigo);
+          renderDocsRel();
+          input.value = '';
+        }
+
+        function removePendingRef(codigo) {
+          const idx = pendingRefs.indexOf(codigo);
+          if (idx !== -1) pendingRefs.splice(idx, 1);
+          renderDocsRel();
+        }
+
+        function renderDocsRel() {
+          const tags = document.getElementById('docrel-tags');
+          const hidden = document.getElementById('docrel-hidden');
+          const jsonInput = document.getElementById('referencias-pendientes-json');
+          if (!tags || !hidden) return;
+          tags.innerHTML = '';
+          hidden.innerHTML = '';
+          for (const [id, nombre] of Object.entries(selectedDocsRel)) {
+            tags.innerHTML += '<span class="depto-tag">' + nombre + '<button type="button" class="depto-tag-remove" onclick="removeDocRel(\'' + id + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
+            hidden.innerHTML += '<input type="hidden" name="documentos_relacionados" value="' + id + '">';
+          }
+          for (const codigo of pendingRefs) {
+            tags.innerHTML += '<span class="depto-tag depto-tag--pendiente" title="Documento aún no creado. Se enlazará automáticamente cuando sea aprobado.">' + codigo + ' <span class="badge badge--warning" style="font-size: 0.65rem; margin-left: 0.25rem;">Pendiente</span><button type="button" class="depto-tag-remove" onclick="removePendingRef(\'' + codigo + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
+          }
+          if (jsonInput) jsonInput.value = JSON.stringify(pendingRefs);
+        }
+
+        // === Búsqueda AJAX de documentos relacionados ===
+        let docrelTimeout = null;
+
+        function searchDocRel(input) {
+          clearTimeout(docrelTimeout);
+          const buscar = input.value.trim();
+          docrelTimeout = setTimeout(function() {
+            fetchDocRel(buscar);
+          }, 300);
+        }
+
+        function fetchDocRel(buscar) {
+          const docrelSelect = document.getElementById('docrel-select');
+          if (!docrelSelect) return;
+
+          let url = '/documentos/api/referenciables/';
+          const excludeId = '{{ documento.id|default:"" }}';
+          if (excludeId) url += '?exclude_id=' + excludeId;
+          if (buscar) url += (excludeId ? '&' : '?') + 'buscar=' + encodeURIComponent(buscar);
+
+          fetch(url)
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+              docrelSelect.innerHTML = '';
+              if (data.total === 0) {
+                docrelSelect.innerHTML = '<option value="">Sin resultados</option>';
+              } else {
+                docrelSelect.innerHTML = '<option value="">Seleccione un documento...</option>';
+                data.documentos.forEach(function(d) {
+                  var opt = document.createElement('option');
+                  opt.value = d.id;
+                  opt.textContent = d.codigo + ' - ' + d.nombre;
+                  opt.dataset.nombre = d.codigo + ' - ' + d.nombre;
+                  docrelSelect.appendChild(opt);
+                });
+              }
+            });
+        }
+
+        // === Cargar datos vía AJAX y pre-poblar ===
+        document.addEventListener('DOMContentLoaded', function() {
+          const autoDeptoId = '{{ auto_departamento_id|default:"" }}';
+
+          // Cargar procedimientos
+          const procSelect = document.getElementById('proc-select');
+          if (procSelect && autoDeptoId) {
+            fetch('/documentos/api/procedimientos/?departamento=' + autoDeptoId)
+              .then(function(r) { return r.json(); })
+              .then(function(data) {
+                if (data.total === 0) {
+                  procSelect.innerHTML = '<option value="">Sin procedimientos disponibles</option>';
+                  procSelect.disabled = true;
+                } else {
+                  data.procedimientos.forEach(function(p) {
+                    var opt = document.createElement('option');
+                    opt.value = p.id;
+                    opt.textContent = p.codigo + ' - ' + p.nombre;
+                    opt.dataset.nombre = p.codigo + ' - ' + p.nombre;
+                    procSelect.appendChild(opt);
+                  });
+                }
+              });
+          }
+
+          // Cargar formularios
+          const formSelect = document.getElementById('form-select');
+          if (formSelect && autoDeptoId) {
+            fetch('/documentos/api/formularios/?departamento=' + autoDeptoId)
+              .then(function(r) { return r.json(); })
+              .then(function(data) {
+                if (data.total === 0) {
+                  formSelect.innerHTML = '<option value="">Sin formularios disponibles</option>';
+                  formSelect.disabled = true;
+                } else {
+                  data.formularios.forEach(function(f) {
+                    var opt = document.createElement('option');
+                    opt.value = f.id;
+                    opt.textContent = f.codigo + ' - ' + f.nombre;
+                    opt.dataset.nombre = f.codigo + ' - ' + f.nombre;
+                    formSelect.appendChild(opt);
+                  });
+                }
+              });
+          }
+
+          // Pre-poblar departamentos en edición
+          var deptoSelect = document.getElementById('depto-select');
+          if (deptoSelect) {
+            {% for depto_id in departamentos_seleccionados %}
+            deptoSelect.value = '{{ depto_id }}';
+            addDepto(deptoSelect);
+            {% endfor %}
+          }
+
+          // Pre-poblar procedimientos en edición
+          if (procSelect) {
+            {% for proc_id in procedimientos_seleccionados %}
+            procSelect.value = '{{ proc_id }}';
+            addProc(procSelect);
+            {% endfor %}
+          }
+
+          // Pre-poblar formularios en edición
+          if (formSelect) {
+            {% for form_id in formularios_seleccionados %}
+            formSelect.value = '{{ form_id }}';
+            addFormulario(formSelect);
+            {% endfor %}
+          }
+
+          // Pre-poblar documentos relacionados en edición
+          {% for doc in documentos_relacionados_seleccionados %}
+          selectedDocsRel['{{ doc.id }}'] = '{{ doc }}';
+          {% endfor %}
+          renderDocsRel();
+        });
+
+        // === Responsables (tags) ===
+        const selectedResp = {};
+
+        function addResponsable(select) {
+          const id = select.value;
+          const nombre = select.options[select.selectedIndex].dataset.nombre;
+          if (!id || selectedResp[id]) { select.value = ''; return; }
+          selectedResp[id] = nombre;
+          renderResp();
+          select.value = '';
+        }
+
+        function removeResponsable(id) {
+          delete selectedResp[id];
+          renderResp();
+        }
+
+        function renderResp() {
+          const tags = document.getElementById('resp-tags');
+          const hidden = document.getElementById('resp-hidden');
+          if (!tags || !hidden) return;
+          tags.innerHTML = '';
+          hidden.innerHTML = '';
+          for (const [id, nombre] of Object.entries(selectedResp)) {
+            tags.innerHTML += '<span class="depto-tag">' + nombre + '<button type="button" class="depto-tag-remove" onclick="removeResponsable(\'' + id + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
+            hidden.innerHTML += '<input type="hidden" name="responsables" value="' + id + '">';
+          }
+        }
+
+        // === Participantes (tags libres) ===
+        const selectedPart = {};
+
+        function addParticipante() {
+          const input = document.getElementById('part-input');
+          if (!input) return;
+          const nombre = input.value.trim();
+          if (!nombre || selectedPart[nombre]) { input.value = ''; return; }
+          selectedPart[nombre] = nombre;
+          renderParticipantes();
+          input.value = '';
+          input.focus();
+        }
+
+        function removeParticipante(nombre) {
+          delete selectedPart[nombre];
+          renderParticipantes();
+        }
+
+        function renderParticipantes() {
+          const tags = document.getElementById('part-tags');
+          const hidden = document.getElementById('participantes');
+          if (!tags || !hidden) return;
+          tags.innerHTML = '';
+          const lista = Object.keys(selectedPart);
+          for (const nombre of lista) {
+            tags.innerHTML += '<span class="depto-tag">' + nombre + '<button type="button" class="depto-tag-remove" onclick="removeParticipante(\'' + nombre.replace(/'/g, "\\'") + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
+          }
+          hidden.value = JSON.stringify(lista);
+        }
+      </script>
+
+      <script>
+        // File input styling
+        document.addEventListener('DOMContentLoaded', function() {
+          document.querySelectorAll('input[type="file"]').forEach(function(input) {
+            var label = document.getElementById('label-' + input.id);
+            var filename = document.getElementById('filename-' + input.id);
+            
+            if (label && filename) {
+              input.addEventListener('change', function() {
+                if (input.files && input.files.length > 0) {
+                  filename.textContent = input.files[0].name;
+                  label.classList.add('has-file');
+                } else {
+                  filename.textContent = 'Seleccione un archivo';
+                  label.classList.remove('has-file');
+                }
+              });
+              
+              // Check initial state
+              if (input.files && input.files.length > 0) {
+                filename.textContent = input.files[0].name;
+                label.classList.add('has-file');
+              }
+            }
+          });
+
+          // === Drag and Drop para file uploads ===
+          document.querySelectorAll('.file-upload-wrapper').forEach(function(wrapper) {
+            var dropLabel = wrapper.querySelector('.file-upload-label');
+            var fileInput = wrapper.querySelector('input[type="file"]');
+            if (!dropLabel || !fileInput) return;
+
+            // Prevenir comportamiento default en toda la ventana
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(function(evt) {
+              window.addEventListener(evt, function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+              });
+            });
+
+            // Contador para evitar flicker al entrar/salir de elementos hijos
+            var dragCounter = 0;
+
+            dropLabel.addEventListener('dragenter', function(e) {
+              e.preventDefault();
+              dragCounter++;
+              dropLabel.classList.add('drag-over');
+            });
+
+            dropLabel.addEventListener('dragleave', function(e) {
+              e.preventDefault();
+              dragCounter--;
+              if (dragCounter === 0) {
+                dropLabel.classList.remove('drag-over');
+              }
+            });
+
+            dropLabel.addEventListener('drop', function(e) {
+              e.preventDefault();
+              dragCounter = 0;
+              dropLabel.classList.remove('drag-over');
+              
+              var files = e.dataTransfer.files;
+              if (files.length > 0) {
+                // Asignar archivos al input
+                fileInput.files = files;
+                // Disparar evento change para actualizar la UI
+                fileInput.dispatchEvent(new Event('change'));
+              }
+            });
+          });
+
+          // === Auto-completar secuencia con AJAX ===
+          const secuenciaInput = document.querySelector('.code-builder__input');
+          if (secuenciaInput) {
+            const deptoId = '{{ auto_departamento_id|default:"" }}';
+            const tipoCodigo = '{{ tipo_documento_codigo|default:"" }}';
+            
+            async function obtenerSiguienteSecuencia() {
+              try {
+                const response = await fetch(
+                  `/documentos/api/siguiente-secuencia/?departamento_id=${deptoId}&tipo_codigo=${tipoCodigo}`
+                );
+                const data = await response.json();
+                return data.secuencia;
+              } catch (error) {
+                console.error('Error obteniendo secuencia:', error);
+                return null;
+              }
+            }
+            
+            secuenciaInput.addEventListener('focus', async function() {
+              const siguiente = await obtenerSiguienteSecuencia();
+              if (siguiente) {
+                this.value = siguiente;
+                this.select();
+              }
+            });
+            
+            secuenciaInput.addEventListener('blur', function() {
+              if (!this.value) {
+                this.value = '001';
+              }
+            });
+          }
+        });
+      </script>
+{% endblock %}

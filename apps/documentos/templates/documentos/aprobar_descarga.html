@@ -1,0 +1,65 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Aprobar Descarga - POLIDOC{% endblock %}
+
+{% block extra_css %}
+<style>
+  .page-content { display: flex; justify-content: center; align-items: flex-start; }
+  .form-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); max-width: 600px; width: 100%; }
+  .form-card-header { padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--color-border); }
+  .form-card-header h3 { font-size: 1rem; font-weight: 600; color: var(--color-text); margin: 0; }
+  .form-card-body { padding: 1.5rem; }
+  .form-card-footer { padding: 1rem 1.5rem; border-top: 1px solid var(--color-border); display: flex; align-items: center; justify-content: flex-end; gap: 0.75rem; }
+  .detail-row { display: flex; justify-content: space-between; padding: 0.75rem 0; border-bottom: 1px solid var(--color-border); }
+  .detail-row:last-child { border-bottom: none; }
+  .detail-label { font-size: 0.875rem; color: var(--color-muted); font-weight: 500; }
+  .detail-value { font-size: 0.875rem; color: var(--color-text); font-weight: 500; }
+</style>
+{% endblock %}
+
+{% block app_content %}
+      <div class="form-card">
+        <div class="form-card-header"><h3>Aprobar Solicitud de Descarga</h3></div>
+        <div class="form-card-body">
+          <div class="detail-row">
+            <span class="detail-label">Documento</span>
+            <span class="detail-value">{{ documento.nombre }}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Código</span>
+            <span class="detail-value">{{ documento.codigo }}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Solicitado por</span>
+            <span class="detail-value">{{ solicitud.solicitado_por.get_full_name|default:solicitud.solicitado_por.username }}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Fecha de solicitud</span>
+            <span class="detail-value">{{ solicitud.fecha_solicitud|date:"d/m/Y H:i" }}</span>
+          </div>
+          {% if solicitud.motivo %}
+          <div style="margin-top: 1rem;">
+            <span class="detail-label">Motivo</span>
+            <p style="margin-top: 0.5rem; font-size: 0.875rem; color: var(--color-text);">{{ solicitud.motivo }}</p>
+          </div>
+          {% endif %}
+
+          <form method="post" style="margin-top: 1.5rem;">
+            {% csrf_token %}
+            <div class="form-group">
+              <label class="form-label">Observaciones (opcional)</label>
+              <textarea name="observaciones" class="form-input form-textarea" rows="3" placeholder="Agregue observaciones..."></textarea>
+            </div>
+            
+            <div style="display: flex; gap: 0.75rem; justify-content: flex-end;">
+              <button type="submit" name="accion" value="rechazar" class="btn btn--danger">Rechazar</button>
+              <button type="submit" name="accion" value="aprobar" class="btn btn--success">Aprobar</button>
+            </div>
+          </form>
+        </div>
+        <div class="form-card-footer">
+          <a href="{% url 'documentos:documentos_departamento' %}" class="btn btn--ghost">Cancelar</a>
+        </div>
+      </div>
+{% endblock %}

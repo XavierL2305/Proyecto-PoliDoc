@@ -1,0 +1,134 @@
+/* ==========================================================================
+   POLIDOC - COMPONENTE: ACCORDION
+   ========================================================================== */
+
+/* === BASE ACCORDION === */
+.accordion-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.accordion {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  overflow: hidden;
+  transition: box-shadow var(--transition);
+}
+
+.accordion:hover {
+  box-shadow: var(--shadow-sm);
+}
+
+.accordion.active {
+  box-shadow: var(--shadow);
+}
+
+/* === ACCORDION HEADER === */
+.accordion-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.875rem 1rem;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-family);
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text);
+  transition: background var(--transition);
+}
+
+.accordion-header:hover {
+  background: var(--color-bg);
+}
+
+.accordion-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.875rem;
+  flex-shrink: 0;
+}
+
+.accordion-icon--primary {
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+}
+.accordion-icon--success {
+  background: var(--color-success-light);
+  color: var(--color-success);
+}
+.accordion-icon--warning {
+  background: var(--color-warning-light);
+  color: var(--color-warning);
+}
+.accordion-icon--info {
+  background: var(--color-info-light);
+  color: var(--color-info);
+}
+.accordion-icon--danger {
+  background: var(--color-danger-light);
+  color: var(--color-danger);
+}
+
+.accordion-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.accordion-count {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.125rem 0.5rem;
+  border-radius: 50px;
+  background: var(--color-bg);
+  color: var(--color-muted);
+  flex-shrink: 0;
+}
+
+.accordion-chevron {
+  font-size: 0.75rem;
+  color: var(--color-muted);
+  transition: transform var(--transition);
+  flex-shrink: 0;
+}
+
+.accordion.active .accordion-chevron {
+  transform: rotate(180deg);
+}
+
+/* === ACCORDION CONTENT === */
+.accordion-content {
+  display: none;
+  padding: 0 1rem 1rem 1rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.accordion.active .accordion-content {
+  display: block;
+  animation: accordionFadeIn 0.2s ease;
+}
+
+@keyframes accordionFadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* === RESPONSIVE === */
+@media (max-width: 639px) {
+  .accordion-header {
+    padding: 0.75rem;
+    font-size: 0.8125rem;
+  }
+  .accordion-content {
+    padding: 0 0.75rem 0.75rem 0.75rem;
+  }
+}

@@ -1,0 +1,251 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Constructor: {{ formato.codigo }} - Configuración{% endblock %}
+
+{% block extra_css %}
+<style>
+  .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2rem; flex-wrap: wrap; gap: 1rem; }
+  .page-header h1 { font-size: 1.5rem; font-weight: 700; color: var(--color-text); margin: 0; }
+  .page-header-sub { font-size: 0.875rem; color: var(--color-muted); }
+  .formato-meta { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+  .formato-meta .badge { font-size: 0.75rem; }
+  .seccion-card {
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg); margin-bottom: 1.5rem;
+  }
+  .seccion-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 1rem 1.5rem; border-bottom: 1px solid var(--color-border);
+    background: var(--color-bg-alt);
+  }
+  .seccion-header h3 { font-size: 0.9375rem; font-weight: 600; margin: 0; color: var(--color-text); }
+  .seccion-header-actions { display: flex; gap: 0.5rem; }
+  .seccion-body { padding: 1rem 1.5rem; }
+  .campo-row {
+    display: grid; grid-template-columns: 2fr 1fr 1fr 80px 120px 80px;
+    align-items: center; gap: 0.75rem; padding: 0.75rem 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .campo-row:last-child { border-bottom: none; }
+  .campo-clave { font-family: 'JetBrains Mono', monospace; font-size: 0.8125rem; color: var(--color-primary); }
+  .campo-tipo { font-size: 0.75rem; color: var(--color-muted); }
+  .campo-label { font-size: 0.875rem; }
+  .campo-required { color: var(--color-danger); font-weight: 600; }
+  .campo-celda { font-family: 'JetBrains Mono', monospace; font-size: 0.8125rem; color: var(--color-muted); }
+  .campo-acciones { display: flex; gap: 0.375rem; }
+  .btn-icon { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: var(--radius); border: none; cursor: pointer; font-size: 0.8125rem; }
+  .form-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); margin-bottom: 1.5rem; }
+  .form-card-header { padding: 1rem 1.5rem; border-bottom: 1px solid var(--color-border); }
+  .form-card-header h3 { font-size: 0.9375rem; font-weight: 600; margin: 0; }
+  .form-card-body { padding: 1.5rem; }
+  .form-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; }
+  .form-group-full { grid-column: 1 / -1; }
+  .form-group { margin-bottom: 0.75rem; }
+  .form-label { display: block; font-size: 0.8125rem; font-weight: 500; color: var(--color-text); margin-bottom: 0.375rem; }
+  .help-text { font-size: 0.75rem; color: var(--color-muted); margin-top: 0.25rem; }
+  .empty-seccion { text-align: center; padding: 1rem; color: var(--color-muted); font-size: 0.875rem; }
+  .add-section-area { border: 2px dashed var(--color-border); border-radius: var(--radius-lg); padding: 1.5rem; text-align: center; margin-bottom: 1.5rem; }
+  @media (max-width: 768px) { .campo-row { grid-template-columns: 1fr; gap: 0.25rem; } }
+</style>
+{% endblock %}
+
+{% block app_content %}
+<div class="page-header">
+  <div>
+    <h1>Constructor: {{ formato.codigo }}</h1>
+    <span class="page-header-sub">{{ formato.nombre }} — v{{ formato.version }} E{{ formato.edicion }}</span>
+  </div>
+  <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+    <button type="button" class="btn btn--ghost btn--sm" onclick="abrirPublicar('version')">
+      <i class="fa-solid fa-code-branch"></i> Nueva versión
+    </button>
+    <button type="button" class="btn btn--ghost btn--sm" onclick="abrirPublicar('edicion')">
+      <i class="fa-solid fa-layer-group"></i> Nueva edición
+    </button>
+    <a href="{% url 'documentos:formato_editar' formato_id=formato.id %}" class="btn btn--ghost btn--sm">
+      <i class="fa-solid fa-pen"></i> Editar Info
+    </a>
+    <a href="{% url 'documentos:formato_preview' formato_id=formato.id %}" class="btn btn--ghost btn--sm">
+      <i class="fa-solid fa-eye"></i> Preview
+    </a>
+    <a href="{% url 'documentos:formatos_lista' %}" class="btn btn--ghost btn--sm">
+      <i class="fa-solid fa-arrow-left"></i> Volver
+    </a>
+  </div>
+</div>
+
+<div class="formato-meta">
+  {% if formato.activo %}<span class="badge badge--success">Activo</span>{% else %}<span class="badge badge--danger">Inactivo</span>{% endif %}
+  {% if formato.aplica_creacion %}<span class="badge badge--success">Creación</span>{% endif %}
+  {% if formato.aplica_modificacion %}<span class="badge badge--success">Modificación</span>{% endif %}
+  {% if formato.aplica_eliminacion %}<span class="badge badge--success">Eliminación</span>{% endif %}
+  {% if formato.fecha_vigencia %}<span class="badge" style="background:var(--color-info-light);color:var(--color-info);">Vigencia: {{ formato.fecha_vigencia|date:"d/m/Y" }}</span>{% endif %}
+  <form method="post" action="{% url 'documentos:formato_regenerar_preview' formato_id=formato.id %}" style="display:inline;">
+    {% csrf_token %}
+    <button type="submit" class="btn btn--ghost btn--sm"><i class="fa-solid fa-arrows-rotate"></i> Regenerar PDF</button>
+  </form>
+</div>
+
+{% for seccion in secciones %}
+<div class="seccion-card">
+  <div class="seccion-header">
+    <h3><i class="fa-solid fa-grip-vertical" style="margin-right:0.5rem;color:var(--color-muted);"></i> {{ seccion.titulo }} <span style="font-weight:400;font-size:0.8125rem;color:var(--color-muted);">({{ seccion.campos.count }} campo{{ seccion.campos.count|pluralize }})</span></h3>
+    <div class="seccion-header-actions">
+      <a href="{% url 'documentos:campo_crear' formato_id=formato.id seccion_id=seccion.id %}" class="btn btn--ghost btn--sm" data-tooltip="Agregar Campo" data-tooltip-position="right">
+        <i class="fa-solid fa-plus"></i>
+      </a>
+      <a href="{% url 'documentos:seccion_editar' formato_id=formato.id seccion_id=seccion.id %}" class="btn btn--ghost btn--sm" data-tooltip="Editar Sección" data-tooltip-position="right">
+        <i class="fa-solid fa-pen"></i>
+      </a>
+      <form method="post" action="{% url 'documentos:seccion_eliminar' formato_id=formato.id seccion_id=seccion.id %}" style="display:inline;">
+        {% csrf_token %}
+        <button type="submit" class="btn btn--ghost btn--sm" onclick="return confirm('¿Eliminar esta sección y todos sus campos?')">
+          <i class="fa-solid fa-trash"></i>
+        </button>
+      </form>
+    </div>
+  </div>
+  <div class="seccion-body">
+    {% if seccion.descripcion %}
+    <p style="font-size:0.8125rem;color:var(--color-muted);margin-bottom:1rem;">{{ seccion.descripcion }}</p>
+    {% endif %}
+    {% with campos=campos_por_seccion|dictsort:seccion.id|stringformat:"s" %}
+    {% endwith %}
+    {% for campo in seccion.campos.all %}
+    <div class="campo-row">
+      <div>
+        <span class="campo-label">{{ campo.etiqueta }}</span>
+        {% if campo.requerido %}<span class="campo-required">*</span>{% endif %}
+        {% if campo.ayuda %}<br><small style="color:var(--color-muted);font-size:0.75rem;">{{ campo.ayuda|truncatewords:10 }}</small>{% endif %}
+      </div>
+      <span class="campo-clave">{{ campo.clave }}</span>
+      <span class="campo-tipo">{{ campo.get_tipo_display }}</span>
+      {% if campo.origen != 'usuario' %}<span class="campo-tipo" style="color:var(--color-primary);font-weight:500;">{{ campo.get_origen_display }}</span>{% endif %}
+      <span class="campo-celda">{% if campo.celda_excel %}{{ campo.celda_excel }}{% else %}—{% endif %}</span>
+      <span style="font-size:0.75rem;color:var(--color-muted);">
+        {% if campo.ancho == 'full' %}Ancho completo{% else %}Mitad{% endif %}
+        · {% if campo.opciones %}{{ campo.opciones|length }} opciones{% endif %}
+      </span>
+      <div class="campo-acciones">
+        <a href="{% url 'documentos:campo_editar' formato_id=formato.id campo_id=campo.id %}" class="btn btn--ghost btn--sm">
+          <i class="fa-solid fa-pen"></i>
+        </a>
+        <form method="post" action="{% url 'documentos:campo_eliminar' formato_id=formato.id campo_id=campo.id %}" style="display:inline;">
+          {% csrf_token %}
+          <button type="submit" class="btn btn--ghost btn--sm" onclick="return confirm('¿Eliminar este campo?')">
+            <i class="fa-solid fa-trash"></i>
+          </button>
+        </form>
+      </div>
+    </div>
+    {% empty %}
+    <div class="empty-seccion">
+      <i class="fa-solid fa-circle-info" style="margin-right:0.5rem;"></i> Sin campos. <a href="{% url 'documentos:campo_crear' formato_id=formato.id seccion_id=seccion.id %}">Agregar el primero</a>.
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% empty %}
+<div style="text-align:center;padding:3rem;color:var(--color-muted);background:var(--color-surface);border-radius:var(--radius-lg);border:1px solid var(--color-border);margin-bottom:1.5rem;">
+  <i class="fa-solid fa-layer-group" style="font-size:2rem;margin-bottom:1rem;display:block;"></i>
+  Este formato no tiene secciones aún. Agrega la primera para construir el formulario.
+</div>
+{% endfor %}
+
+<!-- Agregar Sección -->
+<div class="form-card">
+  <div class="form-card-header">
+    <h3><i class="fa-solid fa-plus" style="margin-right:0.5rem;"></i> Agregar Sección</h3>
+  </div>
+  <form method="post" action="{% url 'documentos:seccion_crear' formato_id=formato.id %}">
+    {% csrf_token %}
+    <div class="form-card-body">
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Título *{% if seccion_form.titulo.help_text %}<span class="form-label-help" data-tooltip="{{ seccion_form.titulo.help_text }}" data-tooltip-position="right" tabindex="0" aria-label="{{ seccion_form.titulo.help_text }}"><i class="fa-solid fa-circle-info" aria-hidden="true"></i></span>{% endif %}</label>
+          {{ seccion_form.titulo }}
+          {% if seccion_form.titulo.errors %}<span class="form-error">{{ seccion_form.titulo.errors.0 }}</span>{% endif %}
+        </div>
+        <div class="form-group">
+          <label class="form-label">Orden{% if seccion_form.orden.help_text %}<span class="form-label-help" data-tooltip="{{ seccion_form.orden.help_text }}" data-tooltip-position="right" tabindex="0" aria-label="{{ seccion_form.orden.help_text }}"><i class="fa-solid fa-circle-info" aria-hidden="true"></i></span>{% endif %}</label>
+          {{ seccion_form.orden }}
+        </div>
+      </div>
+      <div class="form-group form-group-full">
+        <label class="form-label">Descripción{% if seccion_form.descripcion.help_text %}<span class="form-label-help" data-tooltip="{{ seccion_form.descripcion.help_text }}" data-tooltip-position="right" tabindex="0" aria-label="{{ seccion_form.descripcion.help_text }}"><i class="fa-solid fa-circle-info" aria-hidden="true"></i></span>{% endif %}</label>
+        {{ seccion_form.descripcion }}
+      </div>
+    </div>
+    <div style="padding:1rem 1.5rem;border-top:1px solid var(--color-border);text-align:right;">
+      <button type="submit" class="btn btn--primary btn--sm"><i class="fa-solid fa-plus"></i> Agregar Sección</button>
+    </div>
+  </form>
+</div>
+
+<div class="modal-overlay" id="modal-publicar">
+  <form class="modal modal--md" method="post" action="{% url 'documentos:formato_publicar' formato_id=formato.id %}" id="form-publicar">
+    {% csrf_token %}
+    <input type="hidden" name="tipo" id="publicar-tipo" value="version">
+    <div class="modal-header">
+      <h3 id="publicar-titulo">Publicar</h3>
+      <button type="button" class="modal-close" onclick="cerrarPublicar()" aria-label="Cerrar">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p id="publicar-desc" style="font-size:.875rem;color:var(--color-muted);"></p>
+      <div class="form-group">
+        <label class="form-label">Observaciones</label>
+        <textarea name="observaciones" class="form-input" rows="2"></textarea>
+      </div>
+      <div id="publicar-docs" style="display:none;margin-top:.5rem;">
+        <div style="display:flex;gap:.5rem;align-items:center;margin-bottom:.5rem;flex-wrap:wrap;">
+          <input type="text" id="publicar-buscar" class="form-input" placeholder="Buscar documento..." oninput="filtrarPublicarDocs()" style="flex:1;min-width:160px;">
+          <button type="button" class="btn btn--ghost btn--sm" onclick="seleccionarDocsFormato()">Los que usaron el formato</button>
+        </div>
+        <div style="max-height:260px;overflow:auto;border:1px solid var(--color-border);border-radius:var(--radius);">
+          {% for d in documentos %}
+          <label class="publicar-doc" data-texto="{{ d.codigo|lower }} {{ d.nombre|lower }}" style="display:flex;gap:.5rem;align-items:center;padding:.4rem .6rem;border-bottom:1px solid var(--color-border);">
+            <input type="checkbox" name="documentos" value="{{ d.id }}" {% if d.id in documentos_formato_ids %}data-usado="1"{% endif %}>
+            <span style="font-size:.8rem;"><strong>{{ d.codigo }}</strong> — {{ d.nombre }}{% if d.departamento__codigo %} <span style="color:var(--color-muted);">({{ d.departamento__codigo }})</span>{% endif %}</span>
+          </label>
+          {% empty %}
+          <p style="padding:.75rem;color:var(--color-muted);font-size:.8rem;margin:0;">No hay documentos.</p>
+          {% endfor %}
+        </div>
+        <p style="font-size:.75rem;color:var(--color-muted);margin-top:.4rem;">El aviso solo se envía al publicar una <strong>nueva edición</strong>.</p>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn--ghost btn--sm" onclick="cerrarPublicar()">Cancelar</button>
+      <button type="submit" class="btn btn--primary btn--sm">Publicar</button>
+    </div>
+  </form>
+</div>
+
+<script>
+function abrirPublicar(tipo) {
+  document.getElementById('publicar-tipo').value = tipo;
+  document.getElementById('publicar-titulo').textContent =
+    tipo === 'edicion' ? 'Publicar nueva edición' : 'Publicar nueva versión';
+  document.getElementById('publicar-desc').textContent = tipo === 'edicion'
+    ? 'La edición indica cambio de norma o estructura. Se avisará a los documentos seleccionados.'
+    : 'La versión indica un cambio de redacción (sin cambio de norma/estructura).';
+  document.getElementById('publicar-docs').style.display = tipo === 'edicion' ? '' : 'none';
+  document.getElementById('modal-publicar').classList.add('active');
+}
+function cerrarPublicar() {
+  document.getElementById('modal-publicar').classList.remove('active');
+}
+function filtrarPublicarDocs() {
+  var q = (document.getElementById('publicar-buscar').value || '').toLowerCase();
+  document.querySelectorAll('.publicar-doc').forEach(function(el) {
+    el.style.display = (!q || (el.dataset.texto || '').indexOf(q) !== -1) ? '' : 'none';
+  });
+}
+function seleccionarDocsFormato() {
+  document.querySelectorAll('.publicar-doc input[type=checkbox]').forEach(function(cb) {
+    if (cb.dataset.usado === '1') cb.checked = true;
+  });
+}
+</script>
+{% endblock %}

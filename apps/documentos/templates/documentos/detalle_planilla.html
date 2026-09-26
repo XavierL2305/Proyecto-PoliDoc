@@ -1,0 +1,225 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Planilla {{ planilla.codigo }} - POLIDOC{% endblock %}
+
+{% block extra_css %}
+<style>
+  .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2rem; }
+  .page-header h1 { font-size: 1.5rem; font-weight: 700; color: var(--color-text); margin: 0; }
+  .detail-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); margin-bottom: 1.5rem; }
+  .detail-header { padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--color-border); }
+  .detail-header h3 { font-size: 1rem; font-weight: 600; color: var(--color-text); margin: 0; }
+  .detail-body { padding: 1.5rem; }
+  .detail-row { display: flex; justify-content: space-between; padding: 0.75rem 0; border-bottom: 1px solid var(--color-border); }
+  .detail-row:last-child { border-bottom: none; }
+  .detail-label { font-size: 0.875rem; color: var(--color-muted); font-weight: 500; }
+  .detail-value { font-size: 0.875rem; color: var(--color-text); font-weight: 500; }
+  .aprobacion-item { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem; background: var(--color-bg); border-radius: var(--radius); margin-bottom: 0.5rem; }
+</style>
+{% endblock %}
+
+{% block app_content %}
+      <div class="page-header">
+        <div>
+          <h1>Planilla {{ planilla.codigo }}</h1>
+          <p style="font-size: 0.875rem; color: var(--color-muted);">{{ planilla.get_tipo_cambio_display }} - {{ planilla.documento.get_tipo_display }}</p>
+        </div>
+        <span class="badge badge--{{ planilla.estado }}">{{ planilla.get_estado_display }}</span>
+      </div>
+
+      {% if planilla.estado == 'borrador' and planilla.responsable == request.user %}
+      <div style="margin-bottom: 1rem; padding: 1rem; background: rgba(59, 130, 246, 0.1); border: 1px solid var(--color-primary); border-radius: var(--radius-md); display: flex; align-items: center; justify-content: space-between;">
+        <div>
+          <i class="fa-solid fa-info-circle" style="color: var(--color-primary); margin-right: 0.5rem;"></i>
+          <span style="font-weight: 500;">Esta planilla está como borrador. El documento no ha sido bloqueado aún.</span>
+        </div>
+        <a href="{% url 'documentos:enviar_planilla' planilla_uuid=planilla.uuid %}" 
+           class="btn btn--primary"
+           onclick="return confirm('¿Está seguro de enviar esta planilla a revisión? El documento cambiará a estado \"En Revisión\".')">
+          <i class="fa-solid fa-paper-plane"></i> Enviar a Revisión
+        </a>
+      </div>
+      {% endif %}
+
+      <div class="detail-card">
+        <div class="detail-header"><h3>Información de la Planilla</h3></div>
+        <div class="detail-body">
+          <div class="detail-row">
+            <span class="detail-label">Código</span>
+            <span class="detail-value">{{ planilla.codigo }}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Tipo de Cambio</span>
+            <span class="detail-value">{{ planilla.get_tipo_cambio_display }}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Documento</span>
+            <span class="detail-value">
+              {{ planilla.documento.get_tipo_display }}
+              {% if planilla.documento %}
+                <a href="{% url 'documentos:detalle' tipo=planilla.documento.tipo_id documento_id=planilla.documento.uuid %}" style="color: var(--color-primary); text-decoration: none;">
+                  {{ planilla.documento.codigo }}
+                </a>
+              {% else %}
+                Documento no disponible
+              {% endif %}
+            </span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Versión Destino</span>
+            <span class="detail-value">{{ planilla.version_destino }}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Responsable</span>
+            <span class="detail-value">{{ planilla.responsable.get_full_name|default:planilla.responsable.username }}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Fecha de Creación</span>
+            <span class="detail-value">{{ planilla.fecha_creacion|date:"d/m/Y H:i" }}</span>
+          </div>
+          {% if planilla.justificacion %}
+          <div style="margin-top: 1rem;">
+            <span class="detail-label">Justificación</span>
+            <p style="margin-top: 0.5rem; font-size: 0.875rem; color: var(--color-text);">{{ planilla.justificacion }}</p>
+          </div>
+          {% endif %}
+          {% if planilla.archivo_adjunto %}
+          <div style="margin-top: 1rem;">
+            <a href="{{ planilla.archivo_adjunto.url }}" class="btn btn--ghost btn--sm">
+              <i class="fa-solid fa-download"></i> Descargar Archivo Adjunto
+            </a>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+
+      {% if departamentos_afectados %}
+      <div class="detail-card">
+        <div class="detail-header"><h3>Departamentos Afectados</h3></div>
+        <div class="detail-body">
+          {% for depto in departamentos_afectados %}
+          <div class="detail-row">
+            <span class="detail-value">
+              <i class="fa-solid fa-building" style="color: var(--color-primary); margin-right: 0.5rem;"></i>
+              {{ depto.nombre }}
+            </span>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      {% if documentos_relacionados %}
+      <div class="detail-card">
+        <div class="detail-header"><h3>Documentos Relacionados</h3></div>
+        <div class="detail-body">
+          {% for doc_rel in documentos_relacionados %}
+          <div class="detail-row">
+            <span class="detail-value">
+              <a href="{% url 'documentos:detalle' tipo=doc_rel.tipo_id documento_id=doc_rel.uuid %}" style="color: var(--color-primary); text-decoration: none;">
+                <i class="fa-solid fa-link" style="margin-right: 0.5rem;"></i>{{ doc_rel.codigo }} - {{ doc_rel.nombre }}
+              </a>
+            </span>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      {% if planilla.responsables_propuestos.all %}
+      <div class="detail-card">
+        <div class="detail-header"><h3>Responsables Propuestos (áreas)</h3></div>
+        <div class="detail-body">
+          {% for depto in planilla.responsables_propuestos.all %}
+          <div class="detail-row">
+            <span class="detail-value">
+              <i class="fa-solid fa-user-tie" style="color: var(--color-primary); margin-right: 0.5rem;"></i>
+              {{ depto.nombre }}
+            </span>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      {% if planilla.participantes_propuestos %}
+      <div class="detail-card">
+        <div class="detail-header"><h3>Participantes Propuestos</h3></div>
+        <div class="detail-body">
+          {% for p in planilla.participantes_propuestos %}
+          <div class="detail-row">
+            <span class="detail-value">
+              <i class="fa-solid fa-tag" style="color: var(--color-primary); margin-right: 0.5rem;"></i>
+              {{ p }}
+            </span>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      {% if espera_msg %}
+      <div class="alert alert--warning" style="margin-bottom: 1rem;">
+        <span class="alert-icon"><i class="fa-solid fa-hourglass-half"></i></span>
+        <div class="alert-content">
+          <strong>{{ espera_msg }}</strong>
+          <p style="margin: 0.25rem 0 0; font-size: 0.875rem;">
+            La planilla permanecerá en revisión hasta completar la cadena de aprobación.
+          </p>
+        </div>
+      </div>
+      {% endif %}
+
+      <div class="detail-card">
+        <div class="detail-header"><h3>Aprobaciones</h3></div>
+        <div class="detail-body">
+          {% if aprobaciones %}
+          {% for aprobacion in aprobaciones %}
+          <div class="aprobacion-item">
+            <div>
+              <strong>
+                {% if aprobacion.aprobador %}{{ aprobacion.aprobador.get_full_name|default:aprobacion.aprobador.username }}{% else %}Sin asignar{% endif %}
+              </strong>
+              <p style="font-size: 0.75rem; color: var(--color-muted); margin: 0;">
+                {% if aprobacion.fecha_aprobacion %}{{ aprobacion.fecha_aprobacion|date:"d/m/Y H:i" }}{% else %}Pendiente{% endif %}
+              </p>
+            </div>
+            <span class="badge badge--{{ aprobacion.estado }}">{{ aprobacion.get_estado_display }}</span>
+          </div>
+          {% endfor %}
+          {% else %}
+          <p style="font-size: 0.875rem; color: var(--color-muted); text-align: center;">No hay aprobaciones registradas</p>
+          {% endif %}
+        </div>
+      </div>
+
+      {% if solicitud_cambio %}
+      <div class="detail-card" style="margin-top: 1.5rem;">
+        <div class="detail-header">
+          <h3>
+            <i class="fa-solid fa-file-circle-plus"></i>
+            {{ solicitud_cambio.formato.codigo }} — {{ solicitud_cambio.formato.nombre }}
+            <span style="font-size:0.75rem; color:var(--color-muted); margin-left:0.5rem;">v{{ solicitud_cambio.formato.version }} E{{ solicitud_cambio.formato.edicion }}</span>
+          </h3>
+        </div>
+        <div class="detail-body">
+          <div style="display:flex; gap:1rem; margin-bottom:1rem; flex-wrap:wrap; align-items:center;">
+            <span class="badge {% if solicitud_cambio.estado == 'aprobado' %}badge--success{% elif solicitud_cambio.estado == 'rechazado' %}badge--danger{% elif solicitud_cambio.estado == 'en_revision' %}badge--warning{% else %}badge--secondary{% endif %}">
+              {{ solicitud_cambio.get_estado_display }}
+            </span>
+            <span style="font-size:0.8125rem; color:var(--color-muted);">{{ solicitud_cambio.get_operacion_display }} · {{ solicitud_cambio.fecha_creacion|date:"d/m/Y H:i" }}</span>
+            {% if solicitud_permitida %}
+            <a href="{% url 'documentos:descargar_solicitud_xlsx' solicitud_uuid=solicitud_cambio.uuid %}" class="btn btn--outline btn--sm" title="Exportar XLSX">
+              <i class="fa-solid fa-file-excel"></i> XLSX
+            </a>
+            <a href="{% url 'documentos:descargar_solicitud_pdf' solicitud_uuid=solicitud_cambio.uuid %}" class="btn btn--outline btn--sm" title="Exportar PDF">
+              <i class="fa-solid fa-file-pdf"></i> PDF
+            </a>
+            {% endif %}
+          </div>
+          {% include 'documentos/_formato_dinamico.html' with formato=solicitud_cambio.formato respuestas=solicitud_cambio.respuestas read_only=True %}
+        </div>
+      </div>
+      {% endif %}
+{% endblock %}

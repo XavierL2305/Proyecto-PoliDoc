@@ -1,0 +1,180 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Roles y Permisos — Configuración{% endblock %}
+
+{% block app_content %}
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Matriz de Roles y Permisos</h1>
+    <p class="page-subtitle">Funcionalidades disponibles por rol en POLIDOC</p>
+  </div>
+  <a href="{% url 'documentos:configuracion' %}" class="btn btn--ghost">
+    <i class="fa-solid fa-arrow-left"></i> Volver
+  </a>
+</div>
+
+<div class="detail-card" style="margin-top: 1.5rem; overflow-x: auto;">
+  <table class="table" style="min-width: 700px;">
+    <thead>
+      <tr>
+        <th style="width: 35%;">Funcionalidad</th>
+        <th style="text-align: center;">Administrador</th>
+        <th style="text-align: center;">Jefe de Depto</th>
+        <th style="text-align: center;">Coordinador</th>
+        <th style="text-align: center;">Trabajador</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td colspan="5" style="font-weight: 700; background: var(--color-bg); font-size: 0.8rem; letter-spacing: 0.05em;">DOCUMENTOS</td></tr>
+      <tr>
+        <td>Crear documentos</td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+      </tr>
+      <tr>
+        <td>Editar propios</td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+      </tr>
+      <tr>
+        <td>Subir nuevas versiones</td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+      </tr>
+      <tr>
+        <td>Eliminar / Solicitar eliminación</td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-minus" style="color: var(--color-muted);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-minus" style="color: var(--color-muted);"></i></td>
+      </tr>
+      <tr>
+        <td>Inhabilitar documentos</td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-xmark" style="color: var(--color-danger);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-xmark" style="color: var(--color-danger);"></i></td>
+      </tr>
+
+      <tr><td colspan="5" style="font-weight: 700; background: var(--color-bg); font-size: 0.8rem; letter-spacing: 0.05em;">APROBACIONES</td></tr>
+      <tr>
+        <td>Aprobar creación de documentos</td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-xmark" style="color: var(--color-danger);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-xmark" style="color: var(--color-danger);"></i></td>
+      </tr>
+      <tr>
+        <td>Aprobar eliminación de versiones</td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-xmark" style="color: var(--color-danger);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-xmark" style="color: var(--color-danger);"></i></td>
+      </tr>
+      <tr>
+        <td>Aprobar descargas</td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-xmark" style="color: var(--color-danger);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-xmark" style="color: var(--color-danger);"></i></td>
+      </tr>
+
+      <tr><td colspan="5" style="font-weight: 700; background: var(--color-bg); font-size: 0.8rem; letter-spacing: 0.05em;">DISTRIBUCIÓN Y ACCESO</td></tr>
+      <tr>
+        <td>Distribuir documentos</td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-xmark" style="color: var(--color-danger);"></i></td>
+      </tr>
+      <tr>
+        <td>Solicitar acceso a documentos</td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+      </tr>
+      <tr>
+        <td>Ver documentos del departamento</td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+      </tr>
+      <tr>
+        <td>Descargar / Solicitar descarga</td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+      </tr>
+
+      <tr><td colspan="5" style="font-weight: 700; background: var(--color-bg); font-size: 0.8rem; letter-spacing: 0.05em;">VENCIMIENTO</td></tr>
+      <tr>
+        <td>Renovar vencimiento (propios)</td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+      </tr>
+      <tr>
+        <td>Renovar vencimiento (departamento)</td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-xmark" style="color: var(--color-danger);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-xmark" style="color: var(--color-danger);"></i></td>
+      </tr>
+
+      <tr><td colspan="5" style="font-weight: 700; background: var(--color-bg); font-size: 0.8rem; letter-spacing: 0.05em;">CONFIGURACIÓN</td></tr>
+      <tr>
+        <td>Gestionar tipos de documento</td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-minus" style="color: var(--color-muted);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-xmark" style="color: var(--color-danger);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-xmark" style="color: var(--color-danger);"></i></td>
+      </tr>
+      <tr>
+        <td>Gestionar departamentos</td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-xmark" style="color: var(--color-danger);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-xmark" style="color: var(--color-danger);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-xmark" style="color: var(--color-danger);"></i></td>
+      </tr>
+      <tr>
+        <td>Gestionar usuarios</td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-xmark" style="color: var(--color-danger);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-xmark" style="color: var(--color-danger);"></i></td>
+      </tr>
+      <tr>
+        <td>Ver logs de auditoría</td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-minus" style="color: var(--color-muted);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-xmark" style="color: var(--color-danger);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-xmark" style="color: var(--color-danger);"></i></td>
+      </tr>
+      <tr>
+        <td>Ver Ciclo de Vida</td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-check" style="color: var(--color-success);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-xmark" style="color: var(--color-danger);"></i></td>
+        <td style="text-align: center;"><i class="fa-solid fa-xmark" style="color: var(--color-danger);"></i></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div style="margin-top: 1rem; font-size: 0.75rem; color: var(--color-muted); display: flex; gap: 1.5rem;">
+  <span><i class="fa-solid fa-check" style="color: var(--color-success);"></i> Permitido</span>
+  <span><i class="fa-solid fa-minus" style="color: var(--color-muted);"></i> Solo lectura / parcial</span>
+  <span><i class="fa-solid fa-xmark" style="color: var(--color-danger);"></i> No permitido</span>
+</div>
+{% endblock %}

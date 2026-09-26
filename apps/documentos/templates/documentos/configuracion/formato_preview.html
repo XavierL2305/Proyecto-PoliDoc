@@ -1,0 +1,141 @@
+{% extends 'base_app.html' %}
+{% load static formato_extras %}
+
+{% block title %}Preview: {{ formato.codigo }} - Configuración{% endblock %}
+
+{% block extra_css %}
+<style>
+  .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2rem; flex-wrap: wrap; gap: 1rem; }
+  .page-header h1 { font-size: 1.5rem; font-weight: 700; color: var(--color-text); margin: 0; }
+  .preview-card {
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+  }
+  .preview-header { padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--color-border); background: var(--color-bg-alt); border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+  .preview-header h3 { font-size: 1rem; font-weight: 600; margin: 0; }
+  .preview-body { padding: 2rem; }
+  .seccion-preview { margin-bottom: 2rem; }
+  .seccion-preview h4 {
+    font-size: 0.9375rem; font-weight: 600; color: var(--color-text);
+    border-bottom: 2px solid var(--color-primary); padding-bottom: 0.5rem; margin-bottom: 1rem;
+  }
+  .campo-preview { margin-bottom: 0.75rem; }
+  .campo-preview label { display: flex; align-items: center; gap: 0.375rem; font-size: 0.8125rem; font-weight: 500; color: var(--color-text); margin-bottom: 0.25rem; }
+  .campo-preview .campo-ejemplo {
+    padding: 0.5rem 0.75rem; border: 1px dashed var(--color-border);
+    border-radius: var(--radius); background: var(--color-bg); color: var(--color-muted);
+    font-size: 0.875rem; min-height: 1.5rem;
+  }
+  .campo-preview .campo-ejemplo.tabla-ejemplo {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem;
+  }
+  .campo-preview .campo-ejemplo.tabla-ejemplo span {
+    padding: 0.25rem 0.5rem; border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm); font-size: 0.75rem; text-align: center;
+  }
+  .preview-pdf { text-align: center; padding: 2rem; }
+  .preview-pdf iframe { width: 100%; height: 70vh; border: 1px solid var(--color-border); border-radius: var(--radius); }
+  .preview-pdf a { display: inline-flex; align-items: center; gap: 0.5rem; margin-top: 1rem; }
+  .instructivo { margin-top: 2rem; padding: 1.5rem; background: var(--color-bg-alt); border-radius: var(--radius-lg); border: 1px solid var(--color-border); }
+  .instructivo h4 { font-size: 0.9375rem; font-weight: 600; margin-bottom: 1rem; }
+  .formato-tabla { border-collapse: collapse; width: 100%; margin: 0.75rem 0; }
+  .formato-tabla th { background: var(--color-bg-alt); font-size: 0.8125rem; font-weight: 600; color: var(--color-text); padding: 0.5rem 0.75rem; border: 1px solid var(--color-border); text-align: left; }
+  .formato-tabla td { font-size: 0.8125rem; padding: 0.5rem 0.75rem; border: 1px solid var(--color-border); color: var(--color-muted); }
+</style>
+{% endblock %}
+
+{% block app_content %}
+<div class="page-header">
+  <div>
+    <h1>Preview: {{ formato.codigo }}</h1>
+    <span style="font-size:0.875rem;color:var(--color-muted);">{{ formato.nombre }} — v{{ formato.version }} E{{ formato.edicion }}</span>
+  </div>
+  <div style="display: flex; gap: 0.5rem;">
+    <a href="{% url 'documentos:formato_constructor' formato_id=formato.id %}" class="btn btn--ghost btn--sm">
+      <i class="fa-solid fa-wand-magic-sparkles"></i> Constructor
+    </a>
+    <a href="{% url 'documentos:formatos_lista' %}" class="btn btn--ghost btn--sm">
+      <i class="fa-solid fa-arrow-left"></i> Volver
+    </a>
+  </div>
+</div>
+
+{% if formato.plantilla_pdf %}
+<div class="preview-card" style="margin-bottom:1.5rem;">
+  <div class="preview-header">
+    <h3><i class="fa-solid fa-file-pdf" style="color:var(--color-danger);margin-right:0.5rem;"></i> Vista Previa PDF</h3>
+  </div>
+  <div class="preview-pdf">
+    <iframe src="{{ formato.plantilla_pdf.url }}" title="Preview de {{ formato.codigo }}"></iframe>
+    <br>
+    <a href="{{ formato.plantilla_pdf.url }}" target="_blank" class="btn btn--ghost btn--sm">
+      <i class="fa-solid fa-arrow-up-right-from-square"></i> Abrir en nueva pestaña
+    </a>
+  </div>
+</div>
+{% else %}
+<div class="preview-card" style="margin-bottom:1.5rem;">
+  <div class="preview-header">
+    <h3><i class="fa-solid fa-file-pdf" style="color:var(--color-muted);margin-right:0.5rem;"></i> Sin PDF generado</h3>
+  </div>
+  <div class="preview-body" style="text-align:center;color:var(--color-muted);">
+    <p>No hay vista previa PDF disponible. Sube una plantilla Excel en el editor y haz clic en "Regenerar PDF".</p>
+    <a href="{% url 'documentos:formato_constructor' formato_id=formato.id %}" class="btn btn--primary btn--sm" style="margin-top:1rem;">
+      <i class="fa-solid fa-wand-magic-sparkles"></i> Ir al Constructor
+    </a>
+  </div>
+</div>
+{% endif %}
+
+<div class="preview-card">
+  <div class="preview-header">
+    <h3><i class="fa-solid fa-eye" style="margin-right:0.5rem;"></i> Vista de Estructura</h3>
+  </div>
+  <div class="preview-body">
+    {% for seccion in formato.get_secciones %}
+    <div class="seccion-preview">
+      <h4>{{ seccion.titulo }}</h4>
+      {% for campo in seccion.campos.all %}
+      <div class="campo-preview">
+        <label class="form-label">{{ campo.etiqueta }}{% if campo.requerido and campo.origen == 'usuario' %} <span style="color:var(--color-danger);">*</span>{% endif %}{% if campo.ayuda %}<span class="form-label-help" data-tooltip="{{ campo.ayuda }}" data-tooltip-position="right" tabindex="0" aria-label="{{ campo.ayuda }}"><i class="fa-solid fa-circle-info" aria-hidden="true"></i></span>{% endif %}</label>
+        {% if campo.origen != 'usuario' %}
+        <div class="campo-ejemplo" style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;">
+          <span style="font-style:italic;">Se completará automáticamente por el sistema</span>
+          <span class="badge badge--info badge--sm" title="{{ campo.get_origen_display }}"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> Auto</span>
+        </div>
+        {% elif campo.tipo == 'textarea' %}
+        <div class="campo-ejemplo" style="min-height:3rem;">{{ campo.ayuda|default:"Escriba aquí..." }}</div>
+        {% elif campo.tipo == 'select' %}
+        <div class="campo-ejemplo">
+          {% if campo.opciones %}{{ campo.opciones.0|opt_etiqueta|default:"Seleccione..." }}{% else %}Seleccione...{% endif %}
+        </div>
+        {% elif campo.tipo == 'checkbox_grupo' %}
+        <div class="campo-ejemplo">
+          {% for opt in campo.opciones %}<span style="margin-right:1rem;">☐ {{ opt|opt_etiqueta }}</span>{% endfor %}
+        </div>
+        {% elif campo.tipo == 'tabla' %}
+        <div class="campo-ejemplo tabla-ejemplo" style="display:block;">
+          <table class="formato-tabla" style="width:100%;margin:0;">
+            <thead><tr>{% for col in campo.config_tabla.columnas %}<th>{{ col.etiqueta }}</th>{% empty %}<th>Col 1</th><th>Col 2</th><th>Col 3</th>{% endfor %}</tr></thead>
+            <tbody><tr>{% for col in campo.config_tabla.columnas %}<td>...</td>{% empty %}<td>...</td><td>...</td><td>...</td>{% endfor %}</tr></tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="campo-ejemplo">{{ campo.ayuda|default:"Ejemplo..." }}</div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% empty %}
+    <p style="text-align:center;color:var(--color-muted);padding:2rem;">Este formato no tiene secciones configuradas.</p>
+    {% endfor %}
+  </div>
+</div>
+
+{% if formato.instructivo_html %}
+<div class="instructivo">
+  <h4><i class="fa-solid fa-circle-info" style="margin-right:0.5rem;"></i> Instructivo</h4>
+  {{ formato.instructivo_html|safe }}
+</div>
+{% endif %}
+{% endblock %}

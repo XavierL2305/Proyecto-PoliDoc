@@ -1,0 +1,158 @@
+/* ==========================================================================
+   POLIDOC - COMPONENTE: DROPDOWNS
+   ========================================================================== */
+
+/* === BASE DROPDOWN === */
+.dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+/* === DROPDOWN TOGGLE === */
+.dropdown-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.dropdown-toggle:hover {
+  border-color: var(--color-muted);
+}
+
+.dropdown-toggle i {
+  font-size: 0.75rem;
+  transition: transform var(--transition);
+}
+
+.dropdown.active .dropdown-toggle i {
+  transform: rotate(180deg);
+}
+
+/* === DROPDOWN MENU === */
+.dropdown-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 200px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  padding: 0.375rem;
+  z-index: 60;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-8px);
+  transition: all 0.15s ease;
+}
+
+.dropdown.active .dropdown-menu {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+/* === DROPDOWN MENU RIGHT === */
+.dropdown-menu--right {
+  left: auto;
+  right: 0;
+}
+
+/* === DROPDOWN ITEM === */
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  color: var(--color-text);
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.dropdown-item:hover {
+  background-color: var(--color-bg);
+  color: var(--color-primary);
+}
+
+.dropdown-item i {
+  width: 16px;
+  color: var(--color-muted);
+}
+
+.dropdown-item:hover i {
+  color: var(--color-primary);
+}
+
+/* === DROPDOWN ITEM DANGER === */
+.dropdown-item--danger {
+  color: var(--color-danger);
+}
+
+.dropdown-item--danger i {
+  color: var(--color-danger);
+}
+
+.dropdown-item--danger:hover {
+  background-color: var(--color-danger-light);
+  color: var(--color-danger);
+}
+
+[data-theme="dark"] .dropdown-item--danger:hover {
+  background-color: #7F1D1D;
+}
+
+/* === DROPDOWN DIVIDER === */
+.dropdown-divider {
+  height: 1px;
+  background: var(--color-border);
+  margin: 0.375rem 0;
+}
+
+/* === DROPDOWN HEADER === */
+.dropdown-header {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* === DROPDOWN CHECKBOX ITEMS === */
+.dropdown-item--checkbox {
+  padding: 0.625rem 0.75rem;
+}
+
+.dropdown-item--checkbox input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin-right: 0.5rem;
+  cursor: pointer;
+}
+
+/* === RESPONSIVE === */
+@media (max-width: 639px) {
+  .dropdown-menu {
+    position: fixed;
+    left: 1rem;
+    right: 1rem;
+    bottom: 1rem;
+    top: auto;
+    min-width: auto;
+    max-height: 50vh;
+    overflow-y: auto;
+    border-radius: var(--radius-lg);
+  }
+}

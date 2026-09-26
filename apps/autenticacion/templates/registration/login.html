@@ -1,0 +1,429 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Iniciar Sesión - POLIDOC{% endblock %}
+
+{% block extra_css %}
+<style>
+  /* === LOGIN LAYOUT === */
+  .login-container {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem 1rem;
+    background-color: var(--color-bg);
+    transition: background-color var(--transition);
+  }
+
+  /* === TOGGLE DARK MODE === */
+  .theme-toggle {
+    position: fixed;
+    top: 1.5rem;
+    right: 1.5rem;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 50%;
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all var(--transition);
+    box-shadow: var(--shadow);
+    z-index: 50;
+  }
+
+  .theme-toggle:hover {
+    border-color: var(--color-primary);
+    transform: scale(1.05);
+  }
+
+  .theme-toggle .icon-sun,
+  .theme-toggle .icon-moon {
+    font-size: 1.25rem;
+    color: var(--color-muted);
+    transition: color var(--transition);
+  }
+
+  [data-theme="dark"] .theme-toggle .icon-sun {
+    display: block;
+  }
+
+  [data-theme="dark"] .theme-toggle .icon-moon {
+    display: none;
+  }
+
+  .theme-toggle:hover .icon-sun,
+  .theme-toggle:hover .icon-moon {
+    color: var(--color-primary);
+  }
+
+  /* === LOGIN CARD === */
+  .login-card {
+    width: 100%;
+    max-width: 400px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    padding: 2.5rem 2rem;
+    transition: all var(--transition);
+  }
+
+  /* === LOGO === */
+  .login-logo {
+    text-align: center;
+    margin-bottom: 1.5rem;
+  }
+
+  .login-logo img {
+    width: 72px;
+    height: 72px;
+    margin: 0 auto 0.75rem;
+  }
+
+  [data-theme="dark"] .login-logo img rect:first-child {
+    fill: #1E3A5F;
+  }
+
+  [data-theme="dark"] .login-logo img circle {
+    fill: #059669;
+  }
+
+  .login-logo h1 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--color-text);
+    margin-bottom: 0.25rem;
+  }
+
+  .login-logo p {
+    font-size: 0.875rem;
+    color: var(--color-muted);
+    margin-bottom: 0;
+  }
+
+  /* === DIVIDER === */
+  .login-divider {
+    height: 1px;
+    background: var(--color-border);
+    margin: 1.5rem 0;
+  }
+
+  /* === FORM TITLE === */
+  .login-form-title {
+    font-size: 1rem;
+    font-weight: 500;
+    color: var(--color-text);
+    margin-bottom: 1.5rem;
+  }
+
+  /* === CHECKBOXES === */
+  .login-checkboxes {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+  }
+
+  /* === ERROR MESSAGE === */
+  .login-error {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    background: var(--color-danger-light);
+    color: var(--color-danger);
+    border-radius: var(--radius);
+    font-size: 0.875rem;
+    margin-bottom: 1.5rem;
+    animation: fadeIn 0.2s ease;
+  }
+
+  .login-error i {
+    font-size: 1rem;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* === FOOTER === */
+  .login-footer {
+    text-align: center;
+    margin-top: 2rem;
+    font-size: 0.75rem;
+    color: var(--color-muted);
+  }
+
+  /* === TERMS MODAL === */
+  .terminos-modal .modal-body {
+    max-height: 60vh;
+    overflow-y: auto;
+    padding: 1.5rem;
+    font-size: 0.8125rem;
+    line-height: 1.7;
+    color: var(--color-text);
+  }
+
+  .terminos-modal .modal-body h4 {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--color-text);
+    margin: 1.25rem 0 0.5rem 0;
+  }
+
+  .terminos-modal .modal-body h4:first-child {
+    margin-top: 0;
+  }
+
+  .terminos-modal .modal-body p {
+    margin-bottom: 0.75rem;
+    color: var(--color-muted);
+  }
+
+  .terminos-modal .modal-body ul {
+    margin: 0.5rem 0 0.75rem 1.25rem;
+    color: var(--color-muted);
+  }
+
+  .terminos-modal .modal-body li {
+    margin-bottom: 0.375rem;
+  }
+
+  .terminos-modal .modal-footer {
+    gap: 0.5rem;
+  }
+
+  /* === RESPONSIVE === */
+  @media (max-width: 480px) {
+    .login-card {
+      padding: 2rem 1.5rem;
+    }
+
+    .theme-toggle {
+      top: 1rem;
+      right: 1rem;
+    }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="login-container">
+  <!-- Toggle Dark Mode -->
+  <button type="button" class="theme-toggle" onclick="toggleTheme()" aria-label="Cambiar tema">
+    <i class="fa-solid fa-sun icon-sun"></i>
+    <i class="fa-solid fa-moon icon-moon"></i>
+  </button>
+
+  <!-- Login Card -->
+  <div class="login-card">
+    <!-- Logo -->
+    <div class="login-logo">
+      <img src="{% static 'imagenes/logoPolidoc.svg' %}" alt="POLIDOC Logo">
+      <h1>POLIDOC</h1>
+      <p>Gestión Documental</p>
+    </div>
+
+    <div class="login-divider"></div>
+
+    <!-- Error Message -->
+    {% if error %}
+    <div class="login-error" id="login-error">
+      <i class="fa-solid fa-circle-exclamation"></i>
+      <span>{{ error }}</span>
+    </div>
+    {% endif %}
+
+    <!-- Login Form -->
+    <form id="login-form" method="POST" action="{% url 'autenticacion:login' %}">
+      {% csrf_token %}
+      <div class="login-form-title">Iniciar Sesión</div>
+
+      <!-- Usuario -->
+      <div class="form-group floating">
+        <div class="form-input-icon">
+          <input type="text" id="usuario" name="usuario" class="form-input" placeholder=" " required autofocus>
+          <label for="usuario" class="form-label">Usuario</label>
+          <i class="fa-solid fa-user icon"></i>
+        </div>
+      </div>
+
+      <!-- Password -->
+      <div class="form-group floating">
+        <div class="form-input-icon">
+          <input type="password" id="password" name="password" class="form-input" placeholder=" " required>
+          <label for="password" class="form-label">Contraseña</label>
+          <i class="fa-solid fa-lock icon"></i>
+        </div>
+      </div>
+
+      <!-- Checkboxes -->
+      <div class="login-checkboxes">
+        <!-- Recordar sesión -->
+        <label class="form-checkbox-wrapper">
+          <input type="checkbox" name="remember" class="form-checkbox">
+          <span class="form-checkbox-label">Recordar sesión</span>
+        </label>
+
+        <!-- Términos y Condiciones -->
+        {% if not terminos_aceptados %}
+        <label class="form-checkbox-wrapper">
+          <input type="checkbox" name="terms" id="terms" class="form-checkbox">
+          <span class="form-checkbox-label">
+            Acepto los <a href="#" onclick="openTerminosModal(); return false;">Términos y Condiciones de Uso</a>
+          </span>
+        </label>
+        {% else %}
+        <input type="hidden" name="terms" value="on">
+        <span class="form-checkbox-label" style="color: var(--color-success);">
+          <i class="fa-solid fa-circle-check"></i> Términos y Condiciones aceptados
+        </span>
+        {% endif %}
+      </div>
+
+      <!-- Submit Button -->
+      <button type="submit" class="btn btn--primary btn--full btn--lg" id="submit-btn">
+        <span>Iniciar Sesión</span>
+      </button>
+    </form>
+  </div>
+
+  <!-- Footer -->
+  <div class="login-footer">
+    © 2026 Polidoc - Policlínica Táchira
+  </div>
+</div>
+
+<!-- ==================== MODAL TÉRMINOS Y CONDICIONES ==================== -->
+<div class="modal-overlay terminos-modal" id="terminos-modal">
+  <div class="modal modal--lg">
+    <div class="modal-header">
+      <h3><i class="fa-solid fa-file-contract"></i> Términos y Condiciones de Uso — POLIDOC</h3>
+      <button class="modal-close" onclick="closeTerminosModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <h4>1. Objeto del Sistema</h4>
+      <p>POLIDOC es un Sistema de Gestión Documental diseñado para la Policlínica Táchira, C.A., orientado al control, distribución y archivado de información documentada bajo las normas ISO 9001:2015, ISO 15489 y ISO 27001. El sistema gestiona Procesos, Procedimientos, Formularios y demás tipos de información documentada institucional.</p>
+
+      <h4>2. Alcance y Uso</h4>
+      <p>El sistema está destinado exclusivamente al personal autorizado de la Policlínica Táchira. Los usuarios accederán para:</p>
+      <ul>
+        <li>Crear, editar, aprobar y consultar documentos de gestión ISO.</li>
+        <li>Gestionar flujos de trabajo de aprobación y control de versiones.</li>
+        <li>Descargar plantillas y documentos debidamente autorizados.</li>
+        <li>Mantener la trazabilidad de acciones conforme a ISO 15489.</li>
+      </ul>
+
+      <h4>3. Responsabilidades del Usuario</h4>
+      <p>Al utilizar POLIDOC, el usuario se compromete a:</p>
+      <ul>
+        <li>Utilizar el sistema únicamente para fines institucionales y dentro del marco de sus funciones asignadas.</li>
+        <li>Mantener la confidencialidad de sus credenciales de acceso y no compartirlas con terceros.</li>
+        <li>No intentar acceder a información fuera de su ámbito de permisos sin la debida autorización.</li>
+        <li>Reportar al administrador cualquier incidente de seguridad o uso indebido del sistema.</li>
+        <li>Cerrar sesión al acceder desde equipos compartidos.</li>
+      </ul>
+
+      <h4>4. Control de Acceso y Roles</h4>
+      <p>El sistema opera bajo un modelo de control de acceso basado en roles (RBAC):</p>
+      <ul>
+        <li><strong>Trabajador:</strong> CRUD en documentos propios con aprobación del Jefe de Departamento para creación, edición e inhabilitación. Descarga con aprobación.</li>
+        <li><strong>Coordinador:</strong> CRUD en documentos propios y asignados con aprobación del Jefe de Departamento para creación, edición e inhabilitación. Gestión con permisos granulares.</li>
+        <li><strong>Jefe de Departamento:</strong> CRUD directo en documentos de su departamento. Aprobación de creaciones, ediciones, inhabilitaciones y descargas.</li>
+        <li><strong>Administrador:</strong> Control total del sistema. Aprobación directa sin restricciones. Gestión de usuarios y configuración.</li>
+      </ul>
+
+      <h4>5. Propiedad Intelectual</h4>
+      <p>Todos los documentos, plantillas, procesos, procedimientos y formularios creados dentro de POLIDOC son propiedad exclusiva de la Policlínica Táchira, C.A. Queda prohibida la reproducción, distribución o uso externo de la información contenida en el sistema sin autorización expresa de la institución.</p>
+
+      <h4>6. Clasificación de la Información</h4>
+      <p>Conforme a ISO 27001, los documentos se clasifican en categorías de seguridad:</p>
+      <ul>
+        <li><strong>Público:</strong> Información de libre acceso.</li>
+        <li><strong>Interno:</strong> Uso exclusivo del personal de la institución.</li>
+        <li><strong>Confidencial:</strong> Acceso restringido a personal autorizado.</li>
+        <li><strong>Restringido:</strong> Información de alta sensibilidad con acceso máximo.</li>
+      </ul>
+
+      <h4>7. Retención y Conservación</h4>
+      <p>Los documentos se conservan conforme a los períodos establecidos en la política de retención de registros de la institución (ISO 15489). Los documentos obsoletos se mantienen en archivo histórico y no se eliminan físicamente del sistema.</p>
+
+      <h4>8. Auditoría y Trazabilidad</h4>
+      <p>El sistema registra de forma inmutable todas las acciones realizadas sobre los documentos, incluyendo creaciones, ediciones, descargas, aprobaciones y transferencias. Estos registros incluyen marca de tiempo, dirección IP y hash de integridad SHA-256 conforme a ISO 27001.</p>
+
+      <h4>9. Limitación de Responsabilidad</h4>
+      <p>La Policlínica Táchira no se hace responsable por:</p>
+      <ul>
+        <li>Interrupciones temporales del servicio por mantenimiento o causas técnicas.</li>
+        <li>Pérdida de información derivada de uso indebido del sistema por parte del usuario.</li>
+        <li>Daños derivados de la no observancia de las presentes condiciones.</li>
+      </ul>
+
+      <h4>10. Modificaciones</h4>
+      <p>La Policlínica Táchira se reserva el derecho de modificar estos Términos y Condiciones en cualquier momento. Los usuarios serán notificados de cambios sustanciales a través del sistema. El uso continuado de POLIDOC después de las modificaciones constituye aceptación de las mismas.</p>
+
+      <h4>11. Legislación Aplicable</h4>
+      <p>Estos Términos y Condiciones se rigen por las leyes de la República Bolivariana de Venezuela. Cualquier controversia será sometida a los tribunales competentes de la ciudad de San Cristóbal, Estado Táchira.</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn--ghost" onclick="closeTerminosModal()">Cerrar</button>
+      <button class="btn btn--primary" onclick="acceptTerminos()">
+        <i class="fa-solid fa-check"></i> Acepto los Términos
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // === Términos y Condiciones Modal ===
+  function openTerminosModal() {
+    document.getElementById('terminos-modal').classList.add('active');
+  }
+
+  function closeTerminosModal() {
+    document.getElementById('terminos-modal').classList.remove('active');
+  }
+
+  function acceptTerminos() {
+    var terms = document.getElementById('terms');
+    if (terms) {
+      terms.checked = true;
+    }
+    closeTerminosModal();
+  }
+
+  // Cerrar modal al hacer click fuera
+  document.getElementById('terminos-modal').addEventListener('click', function(e) {
+    if (e.target === this) closeTerminosModal();
+  });
+
+  // === Validación del formulario ===
+  document.getElementById('login-form').addEventListener('submit', function(e) {
+    var terms = document.getElementById('terms');
+    if (terms && !terms.checked) {
+      e.preventDefault();
+
+      var errorDiv = document.getElementById('login-error');
+      if (!errorDiv) {
+        var div = document.createElement('div');
+        div.className = 'login-error';
+        div.id = 'login-error';
+        div.innerHTML = '<i class="fa-solid fa-circle-exclamation"></i><span>Debes aceptar los Términos y Condiciones para continuar</span>';
+        terms.closest('.login-checkboxes').insertAdjacentElement('beforebegin', div);
+      } else {
+        errorDiv.style.display = 'flex';
+        errorDiv.querySelector('span').textContent = 'Debes aceptar los Términos y Condiciones para continuar';
+      }
+
+      terms.focus();
+      return false;
+    }
+  });
+</script>
+{% endblock %}

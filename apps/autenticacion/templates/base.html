@@ -1,0 +1,69 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="POLIDOC - Sistema de Gestión Documental - Policlínica Táchira">
+  <title>{% block title %}POLIDOC{% endblock %}</title>
+
+  <script>
+  (function () {
+    try {
+      var saved = localStorage.getItem('theme');
+      var theme = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-theme', theme);
+    } catch (e) {
+      document.documentElement.setAttribute('data-theme', 'light');
+    }
+  })();
+  </script>
+
+  <!-- Google Fonts - Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Font Awesome 6 -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+  <!-- CSS Propio -->
+  <link rel="stylesheet" href="{% static 'css/style.css' %}">
+  <link rel="stylesheet" href="{% static 'css/utilities/responsive.css' %}">
+  <link rel="stylesheet" href="{% static 'css/utilities/display.css' %}">
+  <!-- Components -->
+  <link rel="stylesheet" href="{% static 'css/components/inputs.css' %}">
+  <link rel="stylesheet" href="{% static 'css/components/buttons.css' %}">
+  <link rel="stylesheet" href="{% static 'css/components/skeleton.css' %}">
+  <link rel="stylesheet" href="{% static 'css/components/cards.css' %}">
+  <link rel="stylesheet" href="{% static 'css/components/tables.css' %}">
+  <link rel="stylesheet" href="{% static 'css/components/badges.css' %}">
+  <link rel="stylesheet" href="{% static 'css/components/alerts.css' %}">
+  <link rel="stylesheet" href="{% static 'css/components/modals.css' %}">
+  <link rel="stylesheet" href="{% static 'css/components/navbar.css' %}">
+  <link rel="stylesheet" href="{% static 'css/components/sidebar.css' %}">
+  <link rel="stylesheet" href="{% static 'css/components/pagination.css' %}">
+  <link rel="stylesheet" href="{% static 'css/components/dropdowns.css' %}">
+  <link rel="stylesheet" href="{% static 'css/components/tabs.css' %}">
+  <link rel="stylesheet" href="{% static 'css/components/tooltips.css' %}">
+  <link rel="stylesheet" href="{% static 'css/components/toasts.css' %}">
+  <link rel="stylesheet" href="{% static 'css/components/notifications.css' %}">
+  <link rel="stylesheet" href="{% static 'css/components/accordion.css' %}">
+
+  {% block extra_css %}{% endblock %}
+</head>
+  <body>
+    {% block content %}{% endblock %}
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Theme JS -->
+    <script src="{% static 'js/theme.js' %}"></script>
+    
+    <!-- Notifications JS -->
+    <script src="{% static 'js/notifications.js' %}"></script>
+    
+    {% block extra_js %}{% endblock %}
+  </body>
+</html>
