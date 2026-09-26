@@ -130,8 +130,11 @@ def puede_ver_documento(usuario, documento, requerir_aprobada=False):
         solicitud__documento=documento, aprobador=usuario
     ).exists():
         return True
-    q_acceso = Q(jefe_destino=usuario)
-    q_acceso |= Q(solicitante=usuario, estado='aprobada') if requerir_aprobada else Q(solicitante=usuario)
+    if requerir_aprobada:
+        q_acceso = Q(jefe_destino=usuario, estado='aprobada')
+        q_acceso |= Q(solicitante=usuario, estado='aprobada')
+    else:
+        q_acceso = Q(jefe_destino=usuario) | Q(solicitante=usuario)
     if SolicitudAccesoDocumento.objects.filter(documento=documento).filter(q_acceso).exists():
         return True
 

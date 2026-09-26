@@ -3081,3 +3081,61 @@ class ControlAccesoDepartamentoTest(BaseDocumentosTest):
         self.assertTrue(_puede_ver_solicitud(self.user_jefe_ti, solicitud))
         self.assertFalse(_puede_ver_solicitud(self.user_jefe_th, solicitud))
         self.assertTrue(_puede_ver_solicitud(self.user_admin, solicitud))
+
+    # --- detalle por HTTP: solicitud pendiente sí abre la página de detalle ---
+    def test_detalle_http_solicitud_pendiente_permitido(self):
+        SolicitudDescarga.objects.create(
+            documento=self.doc_activo, solicitado_por=self.user_trabajador_otro,
+            estado='pendiente', motivo='x',
+        )
+        self.client.login(username='trab02', password='testpass123')  # TH
+        url = f'/documentos/{self.doc_activo.tipo_id}/{self.doc_activo.uuid}/'
+        self.assertEqual(self.client.get(url).status_code, 200)
+
+    # --- ver_archivo: jefe_destino con solicitud de acceso pendiente no ve ---
+    def test_ver_archivo_acceso_pendiente_jefe_destino_denegado(self):
+        from documentos.permissions import puede_ver_documento
+        # jefe_ti (otro depto, sin otra vía de acceso) figura como jefe_destino
+        # de una solicitud PENDIENTE sobre doc_th (TH).
+        SolicitudAccesoDocumento.objects.create(
+            documento=self.doc_th, solicitante=self.user_trabajador_otro,
+            jefe_destino=self.user_jefe_ti, departamento_destino=self.depto_th,
+            estado='pendiente',
+        )
+        # Pendiente: la cláusula jefe_destino da el detalle pero NO el contenido.
+        self.assertTrue(puede_ver_documento(self.user_jefe_ti, self.doc_th))
+        self.assertFalse(puede_ver_documento(
+            self.user_jefe_ti, self.doc_th, requerir_aprobada=True))
+        # A nivel HTTP: el visor de contenido se deniega (302).
+        self.client.login(username='jefe_ti', password='testpass123')
+        url = f'/documentos/{self.doc_th.tipo_id}/{self.doc_th.uuid}/ver-archivo/'
+        self.assertEqual(self.client.get(url).status_code, 302)
+
+    # --- auditoria_reporte_pdf: un jefe no-admin solo reporta sus propios logs -
+    def test_reporte_pdf_jefe_fuerza_su_propio_usuario(self):
+        self.client.login(username='jefe_ti', password='testpass123')
+        url = '/documentos/configuracion/auditoria/reporte-pdf/?usuario=trab02'
+        with patch('auditoria.services.obtener_logs', return_value=[]) as mock_logs:
+            resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 200)
+        # Aunque pidió los logs de trab02, se fuerza a su propio username.
+        self.assertEqual(mock_logs.call_args.kwargs.get('usuario'), 'jefe_ti')
+
+    def test_reporte_pdf_trabajador_denegado(self):
+        self.client.login(username='trab01', password='testpass123')
+        url = '/documentos/configuracion/auditoria/reporte-pdf/'
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 302)
+
+    # --- transferir_propiedad (API): nuevo propietario de otro depto → 400 ----
+    def test_transferir_propiedad_cross_dept_400(self):
+        self.client.login(username='jefe_ti', password='testpass123')
+        url = (f'/documentos/api/{self.doc_activo.tipo_id}'
+               f'/{self.doc_activo.uuid}/transferir/')
+        resp = self.client.post(
+            url, data=json.dumps({'nuevo_propietario_id': self.user_trabajador_otro.id}),
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.doc_activo.refresh_from_db()
+        self.assertEqual(self.doc_activo.propietario, self.user_jefe_ti)
