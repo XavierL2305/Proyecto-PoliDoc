@@ -166,20 +166,12 @@ def verificar_vencimientos(self):
         doc.estado = 'obsoleto'
         update_fields = ['estado']
         if doc.periodo_retencion:
-            from datetime import date
+            from .models import _sumar_meses
             doc.fecha_retencion = hoy
-            meses = doc.periodo_retencion.meses
-            anios = meses // 12
-            meses_restantes = meses % 12
-            try:
-                fecha_destr = hoy.replace(year=hoy.year + anios)
-                fecha_destr = fecha_destr.replace(month=fecha_destr.month + meses_restantes)
-            except ValueError:
-                from calendar import monthrange
-                fecha_destr = hoy.replace(year=hoy.year + anios)
-                ultimo_dia = monthrange(fecha_destr.year, fecha_destr.month)[1]
-                fecha_destr = fecha_destr.replace(day=ultimo_dia, month=fecha_destr.month + meses_restantes - 12)
-            doc.fecha_destruccion = fecha_destr
+            # _sumar_meses ajusta el día al último válido del mes (ej. 31-ene +
+            # 1 mes = 28/29-feb), evitando la aritmética manual de meses/años
+            # que fallaba en esos bordes.
+            doc.fecha_destruccion = _sumar_meses(hoy, doc.periodo_retencion.meses)
             update_fields.extend(['fecha_retencion', 'fecha_destruccion'])
         doc.save(update_fields=update_fields)
         vencidos += 1

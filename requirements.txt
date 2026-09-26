@@ -8,7 +8,6 @@ pypdf
 pdfplumber
 openpyxl
 pandas
-python-magic
 djangorestframework-simplejwt
 cryptography
 celery>=5.3.6

@@ -3282,3 +3282,37 @@ class SanitizadorHtmlTest(TestCase):
         self.assertNotIn('<script', f.instructivo_html)
         self.assertNotIn('onerror', f.instructivo_html)
         self.assertIn('<p>ok</p>', f.instructivo_html)
+
+
+class RobustezFase5Test(TestCase):
+    def test_sumar_meses_ajusta_fin_de_mes(self):
+        from datetime import date
+        from documentos.models import _sumar_meses
+        # 31-ene + 1 mes → 28-feb (año no bisiesto)
+        self.assertEqual(_sumar_meses(date(2025, 1, 31), 1), date(2025, 2, 28))
+        # 31-ene + 1 mes → 29-feb (bisiesto)
+        self.assertEqual(_sumar_meses(date(2024, 1, 31), 1), date(2024, 2, 29))
+        # Cruce de año: 30-nov + 3 meses → 28/29-feb
+        self.assertEqual(_sumar_meses(date(2024, 11, 30), 3), date(2025, 2, 28))
+        # Multi-año: 15-mar + 24 meses → 15-mar dos años después
+        self.assertEqual(_sumar_meses(date(2025, 3, 15), 24), date(2027, 3, 15))
+        # Día seguro que existe en el mes destino
+        self.assertEqual(_sumar_meses(date(2025, 1, 10), 2), date(2025, 3, 10))
+
+    def test_mensaje_error_ia_no_filtra_detalle(self):
+        from documentos.ai import _mensaje_error
+        secreto = 'API_KEY_SECRETA_AIza123 filtro-interno'
+        exc = RuntimeError(secreto)
+        msg = _mensaje_error(exc)
+        self.assertNotIn(secreto, msg)
+        self.assertNotIn('AIza123', msg)
+        self.assertTrue(msg)  # mensaje genérico no vacío
+
+    def test_mensaje_error_ia_transitorio(self):
+        from documentos.ai import _mensaje_error
+
+        class Transitorio(Exception):
+            code = 429
+
+        msg = _mensaje_error(Transitorio('saturado'))
+        self.assertIn('saturado', msg.lower())

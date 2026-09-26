@@ -2,6 +2,7 @@ import json
 from django.http import JsonResponse
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
+from django.db import transaction
 from django.db.models import Q, Count, Value, CharField
 from django.utils import timezone
 from .models import Documento, Departamento, SolicitudAccesoDocumento, SolicitudAprobacionDocumento, PlanillaCambios, AprobacionPlanilla, VersionDocumento, AsignacionDocumento, TipoDocumento
@@ -509,6 +510,7 @@ def solicitudes_aprobacion_pendientes(request):
 
 
 @login_required(login_url='/login/')
+@transaction.atomic
 def aprobar_creacion_documento(request, tipo, documento_id):
     if request.method != 'POST':
         return JsonResponse({'success': False, 'mensaje': 'Método no permitido'}, status=405)
@@ -545,6 +547,7 @@ def aprobar_creacion_documento(request, tipo, documento_id):
 
 
 @login_required(login_url='/login/')
+@transaction.atomic
 def rechazar_creacion_documento(request, tipo, documento_id):
     if request.method != 'POST':
         return JsonResponse({'success': False, 'mensaje': 'Método no permitido'}, status=405)
@@ -607,6 +610,7 @@ def planillas_pendientes(request):
 
 
 @login_required(login_url='/login/')
+@transaction.atomic
 def aprobar_planilla(request, planilla_uuid):
     if request.method != 'POST':
         return JsonResponse({'success': False, 'mensaje': 'Método no permitido'}, status=405)
@@ -680,6 +684,7 @@ def aprobar_planilla(request, planilla_uuid):
 
 
 @login_required(login_url='/login/')
+@transaction.atomic
 def rechazar_planilla(request, planilla_uuid):
     if request.method != 'POST':
         return JsonResponse({'success': False, 'mensaje': 'Método no permitido'}, status=405)

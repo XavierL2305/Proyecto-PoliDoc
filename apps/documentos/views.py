@@ -2069,6 +2069,7 @@ def detalle_planilla(request, planilla_uuid):
 
 
 @login_required(login_url='/login/')
+@transaction.atomic
 def aprobar_planilla(request, planilla_uuid):
     planilla = get_object_or_404(PlanillaCambios, uuid=planilla_uuid)
     perfil = request.user.perfil
@@ -2081,9 +2082,12 @@ def aprobar_planilla(request, planilla_uuid):
             return redirect('documentos:detalle_planilla', planilla_uuid=planilla.uuid)
         accion = request.POST.get('accion')
         observaciones = request.POST.get('observaciones', '')
-        aprobacion = AprobacionPlanilla.objects.get(
+        aprobacion = AprobacionPlanilla.objects.filter(
             planilla=planilla, aprobador=request.user, estado='pendiente'
-        )
+        ).first()
+        if not aprobacion:
+            messages.error(request, 'No tienes una aprobación pendiente para esta planilla.')
+            return redirect('documentos:detalle_planilla', planilla_uuid=planilla.uuid)
         if accion == 'aprobar':
             es_final = aprobacion.es_final
             aprobacion.estado = 'aprobada'
@@ -2206,6 +2210,7 @@ def aprobar_planilla(request, planilla_uuid):
 
 
 @login_required(login_url='/login/')
+@transaction.atomic
 def enviar_planilla(request, planilla_uuid):
     """Envía una planilla de borrador a en_revision"""
     planilla = get_object_or_404(PlanillaCambios, uuid=planilla_uuid)

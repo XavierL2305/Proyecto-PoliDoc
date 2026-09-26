@@ -172,14 +172,17 @@ def limite_alcanzado(usuario):
 
 
 def registrar_uso(usuario):
-    """Incrementa el contador diario de resúmenes del usuario."""
+    """Incrementa el contador diario de resúmenes del usuario (atómico)."""
     from django.utils import timezone
+    from django.db.models import F
     from .models import ResumenIAUso
     uso, _ = ResumenIAUso.objects.get_or_create(
         usuario=usuario, fecha=timezone.localdate(),
     )
-    uso.contador += 1
-    uso.save(update_fields=['contador'])
+    # Incremento atómico en BD para evitar pérdidas bajo concurrencia
+    # (read-modify-write no es seguro entre peticiones simultáneas).
+    ResumenIAUso.objects.filter(pk=uso.pk).update(contador=F('contador') + 1)
+    uso.refresh_from_db()
     return uso.contador
 
 
@@ -218,11 +221,17 @@ def _es_transitorio(exc):
 
 
 def _mensaje_error(exc):
-    """Mensaje de error claro para el usuario."""
+    """Mensaje de error genérico para el usuario.
+
+    El detalle crudo de la excepción (que puede incluir información interna del
+    SDK o de la clave) se registra en los logs, nunca se devuelve al cliente.
+    """
     if _es_transitorio(exc):
         return ('El servicio de IA está saturado en este momento. '
                 'Inténtalo de nuevo en unos minutos.')
-    return f'Error al llamar a Gemini: {exc}'
+    logger.error("Error no transitorio al llamar a Gemini: %s", exc)
+    return ('No se pudo completar la operación con el servicio de IA. '
+            'Si el problema persiste, contacta al administrador.')
 
 
 def estado_configuracion():

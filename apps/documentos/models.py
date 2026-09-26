@@ -1009,17 +1009,7 @@ class SolicitudAprobacionDocumento(models.Model):
             if doc.periodo_retencion:
                 hoy = tz.now().date()
                 doc.fecha_retencion = hoy
-                meses = doc.periodo_retencion.meses
-                anios = meses // 12
-                meses_restantes = meses % 12
-                fecha_destr = hoy.replace(year=hoy.year + anios)
-                try:
-                    fecha_destr = fecha_destr.replace(month=fecha_destr.month + meses_restantes)
-                except ValueError:
-                    from calendar import monthrange
-                    ultimo_dia = monthrange(fecha_destr.year, fecha_destr.month)[1]
-                    fecha_destr = fecha_destr.replace(day=ultimo_dia, month=fecha_destr.month + meses_restantes - 12)
-                doc.fecha_destruccion = fecha_destr
+                doc.fecha_destruccion = _sumar_meses(hoy, doc.periodo_retencion.meses)
             doc.save(update_fields=['estado', 'fecha_retencion', 'fecha_destruccion'])
         elif self.accion_solicitud == 'eliminar_version':
             self.aplicar_eliminacion_version(doc, self.version_a_eliminar)

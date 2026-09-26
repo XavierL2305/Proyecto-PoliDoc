@@ -154,9 +154,9 @@ def solicitud_acceso_guardada(sender, instance, created, **kwargs):
             coleccion = db['solicitudes_acceso']
             registro = {
                 'solicitud_id': instance.id,
-                'documento_tipo': instance.documento.tipo_id,
-                'documento_id': instance.documento.id,
-                'solicitado_por': instance.solicitado_por.username if instance.solicitado_por_id else None,
+                'documento_tipo': instance.documento.tipo_id if instance.documento_id else None,
+                'documento_id': instance.documento.id if instance.documento_id else None,
+                'solicitado_por': instance.solicitante.username if instance.solicitante_id else None,
                 'estado': instance.estado,
                 'motivo': instance.motivo,
                 'created': instance.fecha_solicitud.isoformat() if instance.fecha_solicitud else None,
