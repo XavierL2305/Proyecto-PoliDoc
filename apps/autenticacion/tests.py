@@ -792,6 +792,31 @@ class LoginViewSeguridadTest(BaseDocumentosTest):
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(cache.get('login_fail::127.0.0.1::trab01', 0), 0)
 
+    def test_throttle_usa_ip_real_tras_proxy(self):
+        """Tras un proxy de confianza el contador se indexa por la IP real del
+        cliente (X-Forwarded-For), no por REMOTE_ADDR (que sería el proxy)."""
+        from django.test import override_settings
+        with override_settings(AUDIT_TRUSTED_PROXIES=['127.0.0.1']):
+            with patch('autenticacion.views.authenticate', return_value=None):
+                self.client.post(
+                    '/login/', {'usuario': 'trab01', 'password': 'mala'},
+                    HTTP_X_FORWARDED_FOR='1.2.3.4',
+                )
+        self.assertGreater(cache.get('login_fail::1.2.3.4::trab01', 0), 0)
+        self.assertEqual(cache.get('login_fail::127.0.0.1::trab01', 0), 0)
+
+    def test_throttle_ignora_xff_si_no_hay_proxy_confianza(self):
+        """Sin proxy de confianza, un X-Forwarded-For falsificado NO cambia la clave."""
+        from django.test import override_settings
+        with override_settings(AUDIT_TRUSTED_PROXIES=[]):
+            with patch('autenticacion.views.authenticate', return_value=None):
+                self.client.post(
+                    '/login/', {'usuario': 'trab01', 'password': 'mala'},
+                    HTTP_X_FORWARDED_FOR='9.9.9.9',
+                )
+        self.assertGreater(cache.get('login_fail::127.0.0.1::trab01', 0), 0)
+        self.assertEqual(cache.get('login_fail::9.9.9.9::trab01', 0), 0)
+
     def test_login_break_glass_modelbackend_avisa(self):
         user = self.user_trabajador
         user.backend = 'django.contrib.auth.backends.ModelBackend'

@@ -16,6 +16,7 @@ from documentos.models import (
     VersionDocumento, AsignacionDocumento, Departamento
 )
 from auditoria.services import obtener_logs
+from auditoria.middleware import resolver_ip_cliente
 
 logger = logging.getLogger('django_auth_ldap')
 
@@ -25,9 +26,12 @@ LOGIN_BLOQUEO_SEGUNDOS = 300
 MENSAJE_CREDENCIALES = 'Usuario o contraseña incorrectos.'
 
 
-def _login_throttle_key(request, username):
-    ip = request.META.get('REMOTE_ADDR', 'sin-ip')
-    return f'login_fail::{ip}::{(username or "").lower()}'
+def _login_throttle_key(ip, username):
+    # La IP la resuelve resolver_ip_cliente (X-Forwarded-For tras proxy de
+    # confianza), NO REMOTE_ADDR crudo: detrás de un hosting/CDN/balanceador
+    # REMOTE_ADDR es el proxy para todos y el throttle colapsaría a "por usuario",
+    # permitiendo account-lockout DoS y una atribución por IP incorrecta.
+    return f'login_fail::{ip or "sin-ip"}::{(username or "").lower()}'
 
 
 def login_view(request):
@@ -54,12 +58,13 @@ def login_view(request):
         if not username or not password:
             error = 'Debes ingresar usuario y contraseña.'
         else:
-            throttle_key = _login_throttle_key(request, username)
+            ip_cliente = resolver_ip_cliente(request) or 'sin-ip'
+            throttle_key = _login_throttle_key(ip_cliente, username)
             intentos = cache.get(throttle_key, 0)
             if intentos >= LOGIN_MAX_INTENTOS:
                 logger.warning(
                     f"Login bloqueado por exceso de intentos: {username} "
-                    f"desde {request.META.get('REMOTE_ADDR')}"
+                    f"desde {ip_cliente}"
                 )
                 error = (
                     'Demasiados intentos fallidos. '
@@ -77,7 +82,7 @@ def login_view(request):
                     # Se registra con prominencia para auditoría.
                     logger.warning(
                         f"LOGIN BREAK-GLASS vía ModelBackend (sin LDAP): "
-                        f"{username} desde {request.META.get('REMOTE_ADDR')}"
+                        f"{username} desde {ip_cliente}"
                     )
                 # Verificar perfil
                 try:
