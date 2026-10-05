@@ -187,9 +187,7 @@
                 <span class="badge badge--secondary">{{ doc.departamento.codigo }}</span>
                 {% endif %}
                 <span class="plantilla-version" style="font-size:0.7rem;color:var(--color-muted);">v{{ doc.version_actual }}</span>
-                {% if doc.es_publico %}
-                <span class="badge badge--success" style="font-size:0.65rem;">Público</span>
-                {% endif %}
+                <span class="badge badge--{{ doc.clasificacion_color }}" style="font-size:0.65rem;">{{ doc.get_clasificacion_display }}</span>
                 {% if doc.fecha_vencimiento %}
                   {% if doc.fecha_vencimiento <= hoy %}
                   <span class="badge badge--danger" style="font-size:0.65rem;">Vencido</span>

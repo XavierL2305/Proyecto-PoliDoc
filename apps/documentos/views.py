@@ -26,6 +26,8 @@ from .forms import (
     validar_respuestas, validar_respuestas_guardadas,
 )
 from .icons import ICONOS_DISPONIBLES
+from .services.planillas import aplicar_planilla_al_documento
+from auditoria.services import registrar_aprobacion_planilla, registrar_rechazo_planilla
 from . import ai
 
 logger = logging.getLogger(__name__)
@@ -40,13 +42,18 @@ def get_documento(tipo, documento_id):
 
 
 def determinar_evaluador(usuario, departamento):
-    """Determina el Evaluador (jefe del depto de origen).
+    """Determina el Evaluador.
 
-    Sin fallback a admin: si no hay jefe disponible, retorna None y la
-    cadena queda en espera hasta que se asigne un jefe.
-    Si el solicitante ES el jefe de su depto → evaluador = jefe de GG
-    (evita autoevaluación). Si tampoco hay jefe de GG → None.
+    - Si el solicitante es jefe (de cualquier departamento) → evalúa un jefe
+      par (`_evaluador_par`), evitando la autoevaluación.
+    - Si no es jefe → jefe del departamento de origen.
+    - Sin jefe de departamento → jefe de GG.
+    - Si no hay ninguno → None (la cadena queda en espera).
     """
+    perfil = getattr(usuario, 'perfil', None)
+    if getattr(perfil, 'es_jefe', False):
+        return _evaluador_par(usuario)
+
     gg_jefe = None
     try:
         gg_jefe = Departamento.objects.get(codigo='GG').jefe
@@ -58,6 +65,28 @@ def determinar_evaluador(usuario, departamento):
 
     if gg_jefe and gg_jefe != usuario:
         return gg_jefe
+
+    return None
+
+
+def _evaluador_par(usuario):
+    """Jefe par que evalúa cuando el solicitante es jefe.
+
+    1) Jefe del departamento designado (`APROBACION_EVALUADOR_DEPTO_GG`,
+       default `SGC`).
+    2) Primer departamento activo con jefe (orden por código), distinto al
+       solicitante.
+    """
+    codigo = getattr(settings, 'APROBACION_EVALUADOR_DEPTO_GG', 'SGC')
+    designado = Departamento.objects.filter(codigo=codigo, activo=True).first()
+    if designado and designado.jefe and designado.jefe != usuario:
+        return designado.jefe
+
+    candidato = Departamento.objects.filter(
+        activo=True, jefe__isnull=False,
+    ).exclude(jefe=usuario).order_by('codigo').first()
+    if candidato:
+        return candidato.jefe
 
     return None
 
@@ -285,7 +314,7 @@ def _procesar_referencias(doc, request, perfil):
         destino = Documento.objects.filter(codigo=ref_codigo).first()
         if destino:
             mismo_depto = destino.departamento_id == perfil.departamento_id
-            es_accesible = mismo_depto or destino.es_publico
+            es_accesible = mismo_depto or destino.clasificacion == 'publico'
             if es_accesible and destino.estado == 'activo':
                 doc.documentos_relacionados.add(destino)
             elif not destino.activo if hasattr(destino, 'activo') else destino.estado != 'activo':
@@ -305,34 +334,75 @@ def _procesar_referencias(doc, request, perfil):
             )
 
 
+def _selector_relacionados(documento=None):
+    """Config del selector compartido para "Documentos Relacionados" (crear/editar)."""
+    initial = []
+    if documento is not None:
+        for d in documento.documentos_relacionados.all():
+            initial.append({
+                'id': d.id, 'uuid': str(d.uuid), 'codigo': d.codigo,
+                'nombre': d.nombre, 'estado': d.estado, 'tipo': d.tipo_id,
+            })
+        for ref in documento.referencias_salientes.filter(documento_destino__isnull=True):
+            initial.append({'codigo': ref.codigo_destino, 'pendiente': True})
+    return {
+        'id': 'selector-relacionados',
+        'search_url': '/documentos/api/referenciables/',
+        'exclude_id': documento.id if documento is not None else '',
+        'placeholder': 'Buscar por nombre o código...',
+        'payload_mode': 'inputs',
+        'hidden_name': 'documentos_relacionados',
+        'json_name': 'referencias_pendientes_json',
+        'permite_pendiente': True,
+        'initial_items': initial,
+    }
+
+
 def _procesar_asociados_planilla(planilla, request, permitido, documento, usuario):
     """Crea los DocumentoAsociadoPlanilla del POST validando el acceso.
 
-    Solo se asocian documentos que el usuario puede ver: públicos, de su
-    propio departamento, de un departamento afectado por la planilla, o que
-    ya estén relacionados con el documento base (para no perderlos).
+    Acepta el JSON ``documentos_asociados_json`` con items
+    ``{uuid, codigo, nombre, estado, tipo, pendiente}``: los existentes se
+    asocian; los ``pendiente`` (código aún inexistente) se guardan en
+    ``planilla.referencias_pendientes``. Solo se asocian documentos que el
+    usuario puede ver: públicos, propios, de un departamento afectado por la
+    planilla (o cualquiera si ``afecta_todos``) o ya relacionados con el base.
     """
     if not permitido:
         return
     departamento_usuario = getattr(getattr(usuario, 'perfil', None), 'departamento_id', None)
-    asociables = Documento.objects.filter(estado__in=['borrador', 'activo']).filter(
-        Q(es_publico=True)
+    filtro_asociables = (
+        Q(clasificacion='publico')
         | Q(departamento_id=departamento_usuario)
-        | Q(departamento_id__in=planilla.departamentos_afectados.values_list('id', flat=True))
         | Q(id__in=documento.documentos_relacionados.values_list('id', flat=True))
     )
-    try:
-        documentos_asociados = json.loads(
-            request.POST.get('documentos_asociados_json', '[]')
+    if planilla.afecta_todos:
+        filtro_asociables |= Q(estado='activo')
+    else:
+        filtro_asociables |= Q(
+            departamento_id__in=planilla.departamentos_afectados.values_list('id', flat=True)
         )
+    asociables = Documento.objects.filter(estado__in=['borrador', 'activo']).filter(filtro_asociables)
+    try:
+        items = json.loads(request.POST.get('documentos_asociados_json', '[]'))
     except (json.JSONDecodeError, TypeError):
         return
-    for doc_data in documentos_asociados:
-        doc_asoc = asociables.filter(uuid=doc_data.get('uuid')).first()
+    pendientes = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if item.get('pendiente'):
+            codigo = str(item.get('codigo', '')).strip().upper()
+            if codigo:
+                pendientes.append(codigo)
+            continue
+        doc_asoc = asociables.filter(uuid=item.get('uuid')).first()
         if doc_asoc:
-            DocumentoAsociadoPlanilla.objects.create(
+            DocumentoAsociadoPlanilla.objects.get_or_create(
                 planilla=planilla, documento=doc_asoc
             )
+    planilla.referencias_pendientes = pendientes
+    planilla.save(update_fields=['referencias_pendientes'])
 
 
 @login_required(login_url='/login/')
@@ -343,19 +413,19 @@ def formularios(request):
     if user.perfil.es_administrador:
         pass
     elif user.perfil.es_jefe:
-        docs = docs.filter(Q(propietario=user) | Q(departamento=dept) | Q(es_publico=True))
+        docs = docs.filter(Q(propietario=user) | Q(departamento=dept) | Q(clasificacion='publico'))
     else:
-        docs = docs.filter(Q(departamento=dept) | Q(es_publico=True))
+        docs = docs.filter(Q(departamento=dept) | Q(clasificacion='publico'))
 
-    from .permissions import puede_descargar
+    from .permissions import descarga_autorizada, puede_descargar
 
     solicitudes = SolicitudDescarga.objects.filter(
         solicitado_por=user
     ).values_list('documento__uuid', 'estado')
-    docs_aprobadas = {uuid for uuid, e in solicitudes if e == 'aprobada'}
     docs_pendientes = {uuid for uuid, e in solicitudes if e == 'pendiente'}
 
     docs = list(docs)
+    docs_aprobadas = {doc.uuid for doc in docs if descarga_autorizada(doc, user)}
     docs_descargables = {
         doc.uuid for doc in docs
         if puede_descargar(user, doc) or doc.uuid in docs_aprobadas
@@ -404,6 +474,21 @@ def mis_documentos(request):
     perfil = user.perfil
     buscar = request.GET.get('buscar', '').strip()
     estado_filter = request.GET.get('estado', '')
+    clasificacion_filter = request.GET.get('clasificacion', '')
+
+    from .permissions import q_documentos_visibles
+
+    # Documentos visibles que casan por sus propios campos: permiten encontrar
+    # documentos propios/asignados por sus relacionados (M2M) o por referencias
+    # pendientes guardadas en ReferenciaDocumento.codigo_destino.
+    target_ids = []
+    if buscar:
+        target_ids = list(
+            Documento.objects.filter(
+                q_documentos_visibles(user),
+                Q(nombre__icontains=buscar) | Q(codigo__icontains=buscar),
+            ).values_list('id', flat=True)
+        )
 
     tipos_documento = []
     for tipo in TipoDocumento.objects.filter(activo=True).exclude(key='').order_by('codigo'):
@@ -418,9 +503,15 @@ def mis_documentos(request):
             if ids_asignados:
                 docs = docs | Documento.objects.filter(id__in=ids_asignados)
         if buscar:
-            docs = docs.filter(Q(nombre__icontains=buscar) | Q(codigo__icontains=buscar))
+            docs = docs.filter(
+                Q(nombre__icontains=buscar) | Q(codigo__icontains=buscar)
+                | Q(documentos_relacionados__in=target_ids)
+                | Q(referencias_salientes__codigo_destino__icontains=buscar)
+            ).distinct()
         if estado_filter:
             docs = docs.filter(estado=estado_filter)
+        if clasificacion_filter:
+            docs = docs.filter(clasificacion=clasificacion_filter)
         if docs.exists():
             paginator = Paginator(docs, 12)
             page = request.GET.get(f'page_{tipo_key}', 1)
@@ -437,8 +528,27 @@ def mis_documentos(request):
         'tipos_documento': tipos_documento,
         'buscar': buscar,
         'estado_filter': estado_filter,
+        'clasificacion_filter': clasificacion_filter,
+        'clasificacion_choices': Documento.CLASIFICACION_CHOICES,
         'hoy': date.today(),
         'dias7': date.today() + timedelta(days=7),
+    })
+
+
+@login_required(login_url='/login/')
+def buscar(request):
+    """Resultados de búsqueda (navbar). Usa los mismos visibles que el dropdown."""
+    from django.core.paginator import Paginator
+
+    from .services.busqueda import buscar_documentos_visibles
+
+    q = request.GET.get('q', '').strip()
+    resultados = None
+    if len(q) >= 2:
+        queryset, _ = buscar_documentos_visibles(request.user, q)
+        resultados = Paginator(queryset, 20).get_page(request.GET.get('page'))
+    return render(request, 'documentos/resultados_busqueda.html', {
+        'q': q, 'resultados': resultados,
     })
 
 
@@ -485,40 +595,148 @@ def bandeja_aprobaciones(request):
     })
 
 
-@login_required(login_url='/login/')
-def documentos_departamento(request):
-    perfil = request.user.perfil
-    if not perfil.es_jefe:
-        messages.error(request, 'No tienes permisos para acceder a esta sección.')
-        return redirect('documentos:mis_documentos')
-    departamento = perfil.departamento
-    if not departamento:
-        messages.error(request, 'No tienes un departamento asignado.')
-        return redirect('documentos:mis_documentos')
+def _grupos_documentos(departamentos, clasificacion='', vigencia='', usuario=None):
+    """Agrupa documentos por departamento (propio | afectado) y por tipo, con
+    consultas fijas (sin N+1). Reutilizado por jefe y admin.
 
-    tipos_con_documentos = []
-    for tipo in TipoDocumento.objects.filter(activo=True).exclude(key='').order_by('codigo'):
-        docs = Documento.objects.filter(
-            Q(departamento=departamento) | Q(departamentos_afectados=departamento),
-            tipo=tipo.key
-        ).distinct()
-        if docs.exists():
-            tipos_con_documentos.append({
+    `departamentos`: lista ordenada de Departamento.
+    `clasificacion`: filtro opcional por clasificación de seguridad.
+    `vigencia`: filtro opcional ('vencido'|'vence_pronto'|'vigente'|'sin_vigencia').
+    `usuario`: si se pasa, solo se incluyen documentos visibles para él.
+    """
+    from .permissions import q_documentos_visibles
+
+    tipos = list(
+        TipoDocumento.objects.filter(activo=True).exclude(key='').order_by('codigo')
+    )
+    agrupado = {d.id: {} for d in departamentos}
+    generales_por_tipo = {}
+
+    docs = Documento.objects.filter(tipo__activo=True).exclude(tipo__isnull=True)
+    if usuario is not None:
+        docs = docs.filter(q_documentos_visibles(usuario))
+    if clasificacion:
+        docs = docs.filter(clasificacion=clasificacion)
+    if vigencia:
+        hoy = date.today()
+        if vigencia == 'vencido':
+            docs = docs.filter(fecha_vencimiento__isnull=False, fecha_vencimiento__lte=hoy)
+        elif vigencia == 'vence_pronto':
+            docs = docs.filter(
+                fecha_vencimiento__gt=hoy, fecha_vencimiento__lte=hoy + timedelta(days=7),
+            )
+        elif vigencia == 'vigente':
+            docs = docs.filter(fecha_vencimiento__gt=hoy + timedelta(days=7))
+        elif vigencia == 'sin_vigencia':
+            docs = docs.filter(fecha_vencimiento__isnull=True)
+    docs = (
+        docs.select_related('tipo')
+        .prefetch_related('departamentos_afectados')
+        .order_by('fecha_vencimiento' if vigencia else '-fecha_modificacion')
+    )
+    for doc in docs:
+        if doc.afecta_todos:
+            generales_por_tipo.setdefault(doc.tipo_id, []).append(doc)
+            continue
+        afecta = set()
+        if doc.departamento_id in agrupado:
+            afecta.add(doc.departamento_id)
+        for dep in doc.departamentos_afectados.all():
+            if dep.id in agrupado:
+                afecta.add(dep.id)
+        for dep_id in afecta:
+            agrupado[dep_id].setdefault(doc.tipo_id, []).append(doc)
+
+    def _tipos_de(por_tipo):
+        return [
+            {
                 'key': tipo.key,
                 'nombre': tipo.nombre,
                 'icono': tipo.icono or 'file',
                 'color': tipo.color or 'primary',
-                'documentos': docs,
-            })
+                'documentos': por_tipo[tipo.key],
+            }
+            for tipo in tipos if tipo.key in por_tipo
+        ]
 
-    solicitudes_pendientes = SolicitudDescarga.objects.filter(
-        estado='pendiente',
-        documento__departamento=departamento,
+    generales = _tipos_de(generales_por_tipo)
+
+    grupos = []
+    for dep in departamentos:
+        tipos_documento = _tipos_de(agrupado[dep.id])
+        if tipos_documento:
+            grupos.append({'departamento': dep, 'tipos_documento': tipos_documento})
+    return generales, grupos
+
+
+def _conteos_vigencia(departamentos, clasificacion, usuario):
+    """Conteos de estado de vigencia para el panel del jefe/admin."""
+    from .permissions import q_documentos_visibles
+
+    hoy = date.today()
+    dep_ids = [d.id for d in departamentos]
+    base = Documento.objects.filter(tipo__activo=True).exclude(tipo__isnull=True)
+    base = base.filter(q_documentos_visibles(usuario))
+    if clasificacion:
+        base = base.filter(clasificacion=clasificacion)
+    base = base.filter(
+        Q(afecta_todos=True)
+        | Q(departamento_id__in=dep_ids)
+        | Q(departamentos_afectados__id__in=dep_ids)
+    ).distinct()
+    return {
+        'vencidos': base.filter(
+            fecha_vencimiento__isnull=False, fecha_vencimiento__lte=hoy,
+        ).count(),
+        'vence_pronto': base.filter(
+            fecha_vencimiento__gt=hoy, fecha_vencimiento__lte=hoy + timedelta(days=7),
+        ).count(),
+        'vigentes': base.filter(fecha_vencimiento__gt=hoy + timedelta(days=7)).count(),
+        'sin_vigencia': base.filter(fecha_vencimiento__isnull=True).count(),
+    }
+
+
+@login_required(login_url='/login/')
+def documentos_departamento(request):
+    perfil = request.user.perfil
+    es_admin = perfil.es_administrador
+    if not (perfil.es_jefe or es_admin):
+        messages.error(request, 'No tienes permisos para acceder a esta sección.')
+        return redirect('documentos:mis_documentos')
+
+    departamento = perfil.departamento
+    clasificacion_filter = request.GET.get('clasificacion', '')
+    vigencia_filter = request.GET.get('vigencia', '')
+    if es_admin:
+        departamentos = list(
+            Departamento.objects.filter(activo=True).order_by('codigo')
+        )
+        solicitudes_pendientes = SolicitudDescarga.objects.filter(estado='pendiente')
+    else:
+        if not departamento:
+            messages.error(request, 'No tienes un departamento asignado.')
+            return redirect('documentos:mis_documentos')
+        departamentos = [departamento]
+        solicitudes_pendientes = SolicitudDescarga.objects.filter(
+            estado='pendiente',
+            documento__departamento=departamento,
+        )
+
+    generales, grupos = _grupos_documentos(
+        departamentos, clasificacion_filter, vigencia_filter, usuario=request.user,
     )
-
+    conteos_vigencia = _conteos_vigencia(
+        departamentos, clasificacion_filter, request.user,
+    )
     return render(request, 'documentos/documentos_departamento.html', {
-        'tipos_documento': tipos_con_documentos,
+        'generales': generales,
+        'grupos': grupos,
         'departamento': departamento,
+        'es_admin': es_admin,
+        'clasificacion_filter': clasificacion_filter,
+        'clasificacion_choices': Documento.CLASIFICACION_CHOICES,
+        'vigencia_filter': vigencia_filter,
+        'conteos_vigencia': conteos_vigencia,
         'solicitudes_pendientes': solicitudes_pendientes,
         'hoy': date.today(),
         'dias7': date.today() + timedelta(days=7),
@@ -677,6 +895,7 @@ def crear_documento(request, tipo):
         'codigo_preview': codigo_preview,
         'sin_prefijo_depto': sin_prefijo_depto,
         'es_dinamico': True,
+        'selector_relacionados': _selector_relacionados(),
         'formato_dinamico': formato_dinamico,
         'respuestas_formato': respuestas_formato,
     })
@@ -866,6 +1085,7 @@ def editar_borrador(request, tipo, documento_id):
         'tipo_documento_codigo': tipo_codigo,
         'codigo_preview': codigo_preview,
         'es_dinamico': True,
+        'selector_relacionados': _selector_relacionados(documento),
         'formato_dinamico': formato_dinamico,
         'respuestas_formato': respuestas_formato,
     })
@@ -910,18 +1130,26 @@ def detalle_documento(request, tipo, documento_id):
         messages.error(request, 'No tienes permisos para ver este documento.')
         return redirect('documentos:mis_documentos')
 
+    _reconciliar_resumen_ia(documento)
+
     versiones = VersionDocumento.objects.filter(documento=documento)
-    from .permissions import puede_descargar
-    tiene_descarga_aprobada = SolicitudDescarga.objects.filter(
-        documento=documento, solicitado_por=request.user, estado='aprobada'
-    ).exists()
+    from .permissions import descarga_autorizada, puede_descargar
+    tiene_descarga_aprobada = descarga_autorizada(documento, request.user)
 
     convirtiendo = False
-    if documento.tipo_archivo in ('doc', 'docx', 'xls', 'xlsx', 'vsdx') and not documento.archivo_pdf:
-        from .tasks import convertir_documento_a_pdf
-        convertir_documento_a_pdf.delay(str(documento.uuid))
-        convirtiendo = True
-        messages.info(request, 'Convirtiendo documento... Actualiza en unos segundos.')
+    from .services.documentos_pdf import FORMATOS_CONVERTIBLES, pdf_disponible
+    pdf_listo = pdf_disponible(documento)
+    if documento.tipo_archivo in FORMATOS_CONVERTIBLES and not pdf_listo:
+        # Conversión en línea: si el PDF falta o su ruta es fantasma (borrado
+        # del disco), se regenera ahora y la vista sirve el PDF ya listo.
+        from .services.documentos_pdf import asegurar_pdf
+        pdf_listo = asegurar_pdf(documento)
+        if not pdf_listo and documento.archivo:
+            messages.error(
+                request,
+                'No se pudo generar la vista previa en PDF. '
+                'Vuelve a recargar para reintentar.',
+            )
 
     solicitud_aprobacion = SolicitudAprobacionDocumento.objects.filter(
         documento=documento, estado='pendiente', aprobador=request.user,
@@ -967,16 +1195,35 @@ def detalle_documento(request, tipo, documento_id):
     from .permissions import puede_inhabilitar
     puede_inhab, _ = puede_inhabilitar(request.user, documento)
 
-    historial_estados = SolicitudAprobacionDocumento.objects.filter(
-        documento=documento
-    ).order_by('-fecha_solicitud')
+    from django.db.models.functions import Coalesce
+    historial_estados = (
+        SolicitudAprobacionDocumento.objects.filter(documento=documento)
+        .annotate(fecha_accion=Coalesce('fecha_respuesta', 'fecha_solicitud'))
+        .order_by('-fecha_accion', '-id')
+    )
+
+    # Cadena de aprobación actual (última): evaluador primero, luego autorizador.
+    aprobaciones_actuales = list(
+        SolicitudAprobacionDocumento.objects.filter(documento=documento)
+        .order_by('-id')[:2]
+    )[::-1]
 
     renovaciones = RenovacionVencimiento.objects.filter(documento=documento)
     es_propietario = documento.propietario == request.user
 
-    solicitudes_cambio = SolicitudCambio.objects.filter(
-        documento=documento
-    ).select_related('formato', 'solicitante', 'departamento').order_by('-fecha_creacion')
+    solicitudes_cambio = list(
+        SolicitudCambio.objects.filter(documento=documento)
+        .select_related('formato', 'solicitante', 'departamento')
+        .order_by('-fecha_creacion')
+    )
+    solicitudes_por_operacion = []
+    for op_key, op_label in SolicitudCambio.OPERACION_CHOICES:
+        items = [sc for sc in solicitudes_cambio if sc.operacion == op_key]
+        if items:
+            solicitudes_por_operacion.append({
+                'key': op_key, 'label': op_label,
+                'solicitudes': items, 'count': len(items),
+            })
 
     from .permissions import es_jefe_de_departamento, puede_transferir as _puede_transferir
     es_jefe_depto = es_jefe_de_departamento(request.user, documento)
@@ -1033,6 +1280,7 @@ def detalle_documento(request, tipo, documento_id):
         'puede_aprobar': puede_aprobar,
         'descargas_pendientes_aprobar': descargas_pendientes_aprobar,
         'convirtiendo': convirtiendo,
+        'pdf_listo': pdf_listo,
         'documentos_relacionados': documentos_relacionados,
         'referencias_pendientes': referencias_pendientes,
         'documentos_llamado_por': documentos_llamado_por,
@@ -1040,12 +1288,13 @@ def detalle_documento(request, tipo, documento_id):
         'responsables': responsables,
         'distribuciones': distribuciones,
         'historial_estados': historial_estados,
+        'aprobaciones_actuales': aprobaciones_actuales,
         'renovaciones': renovaciones,
         'es_propietario': es_propietario,
         'solicitud_pendiente': solicitud_pendiente,
         'hoy': hoy,
         'dias7': dias7,
-        'solicitudes_cambio': solicitudes_cambio,
+        'solicitudes_por_operacion': solicitudes_por_operacion,
         'sc_permisos': solicitudes_permitidas,
         'ia_habilitada': ai.esta_habilitado(),
         'ia_usos_hoy': ai.consumo_hoy(request.user),
@@ -1111,6 +1360,8 @@ def eliminar_documento(request, tipo, documento_id):
                         estado='aprobado',
                     )
                     _autollenar_envio(sol_cambio, request.user)
+                    from .services.planillas import encolar_generacion_planilla
+                    encolar_generacion_planilla(sol_cambio)
                 messages.success(request, 'Documento marcado como obsoleto.')
                 return redirect('documentos:mis_documentos')
             else:
@@ -1201,30 +1452,45 @@ def destruir_documento(request, tipo, documento_id):
     })
 
 
+def _aprobadores_descarga(documento):
+    """Aprobadores ``[(usuario, rol)]`` de una descarga según clasificación.
+
+    Normal: jefe del departamento (o admin si no hay jefe). ``restringido``:
+    jefe + autorizador (admin); ISO 9001:7.5.3 (doble control).
+    """
+    from autenticacion.models import PerfilUsuario
+
+    depto = getattr(documento, 'departamento', None)
+    jefe = depto.jefe if depto and depto.jefe else None
+    admin_perfil = PerfilUsuario.objects.filter(
+        rol='administrador', usuario__is_active=True
+    ).select_related('usuario').first()
+    admin = admin_perfil.usuario if admin_perfil else None
+
+    aprobadores = []
+    if documento.clasificacion == 'restringido':
+        if jefe:
+            aprobadores.append((jefe, 'jefe'))
+        if admin and (not jefe or admin.id != jefe.id):
+            aprobadores.append((admin, 'autorizador'))
+    else:
+        if jefe:
+            aprobadores.append((jefe, 'jefe'))
+        elif admin:
+            aprobadores.append((admin, 'autorizador'))
+    return aprobadores
+
+
 @login_required(login_url='/login/')
 def solicitar_descarga(request, tipo, documento_id):
     documento = get_documento(tipo, documento_id)
     if not documento:
         raise Http404
 
-    # Resolver aprobador: jefe del depto → admin → None
-    aprobador = None
-    aprobador_tipo = None
-    depto = getattr(documento, 'departamento', None)
-    if depto and depto.jefe:
-        aprobador = depto.jefe
-        aprobador_tipo = 'jefe'
-    else:
-        from autenticacion.models import PerfilUsuario
-        admin_perfil = PerfilUsuario.objects.filter(
-            rol='administrador', usuario__is_active=True
-        ).select_related('usuario').first()
-        if admin_perfil:
-            aprobador = admin_perfil.usuario
-            aprobador_tipo = 'admin'
+    aprobadores = _aprobadores_descarga(documento)
 
     if request.method == 'POST':
-        if not aprobador:
+        if not aprobadores:
             messages.error(
                 request,
                 'No se puede realizar la solicitud en este momento. '
@@ -1233,9 +1499,12 @@ def solicitar_descarga(request, tipo, documento_id):
             return render(request, 'documentos/solicitar_descarga.html', {
                 'form': SolicitudDescargaForm(),
                 'documento': documento, 'tipo': tipo,
-                'aprobador': None, 'aprobador_tipo': None,
+                'aprobadores': [], 'aprobador': None, 'aprobador_tipo': None,
             })
-        from .permissions import puede_descargar as _puede_descargar
+        from .permissions import (
+            descarga_autorizada as _autorizada,
+            puede_descargar as _puede_descargar,
+        )
         if _puede_descargar(request.user, documento):
             messages.warning(request, 'Ya tienes permiso para descargar este documento.')
             return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
@@ -1245,10 +1514,7 @@ def solicitar_descarga(request, tipo, documento_id):
         if existe_pendiente:
             messages.warning(request, 'Ya tienes una solicitud pendiente para este documento.')
             return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
-        existe_aprobada = SolicitudDescarga.objects.filter(
-            documento=documento, solicitado_por=request.user, estado='aprobada'
-        ).exists()
-        if existe_aprobada:
+        if _autorizada(documento, request.user):
             messages.warning(request, 'Ya tienes una descarga aprobada. Usa el botón "Descargar".')
             return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
         form = SolicitudDescargaForm(request.POST)
@@ -1257,26 +1523,32 @@ def solicitar_descarga(request, tipo, documento_id):
             solicitud.documento = documento
             solicitud.solicitado_por = request.user
             solicitud.save()
-            AprobacionDescarga.objects.create(
-                solicitud=solicitud, aprobador=aprobador
-            )
             from autenticacion.models import Notificacion
-            Notificacion.objects.create(
-                usuario=aprobador,
-                titulo='Nueva solicitud de descarga',
-                mensaje=f'{request.user.get_full_name() or request.user.username} solicita descargar "{documento.nombre}" ({documento.codigo})',
-                tipo='solicitud_descarga',
-                url_accion=f'/documentos/solicitud/{solicitud.id}/aprobar/',
-                departamento=documento.departamento,
-                documento=documento
-            )
+            for aprobador, rol in aprobadores:
+                AprobacionDescarga.objects.create(
+                    solicitud=solicitud, aprobador=aprobador, rol_aprobador=rol,
+                )
+                Notificacion.objects.create(
+                    usuario=aprobador,
+                    titulo='Nueva solicitud de descarga',
+                    mensaje=(
+                        f'{request.user.get_full_name() or request.user.username} '
+                        f'solicita descargar "{documento.nombre}" ({documento.codigo})'
+                    ),
+                    tipo='solicitud_descarga',
+                    url_accion=f'/documentos/solicitud/{solicitud.id}/aprobar/',
+                    departamento=documento.departamento,
+                    documento=documento,
+                )
             messages.success(request, 'Solicitud de descarga enviada correctamente.')
             return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
     else:
         form = SolicitudDescargaForm()
     return render(request, 'documentos/solicitar_descarga.html', {
         'form': form, 'documento': documento, 'tipo': tipo,
-        'aprobador': aprobador, 'aprobador_tipo': aprobador_tipo,
+        'aprobadores': aprobadores,
+        'aprobador': aprobadores[0][0] if aprobadores else None,
+        'aprobador_tipo': aprobadores[0][1] if aprobadores else None,
     })
 
 
@@ -1285,19 +1557,76 @@ def descargar_archivo(request, tipo, documento_id):
     documento = get_documento(tipo, documento_id)
     if not documento:
         raise Http404
-    from .permissions import puede_descargar
-    if not puede_descargar(request.user, documento):
-        solicitud_aprobada = SolicitudDescarga.objects.filter(
-            documento=documento, solicitado_por=request.user, estado='aprobada'
-        ).exists()
-        if not solicitud_aprobada:
+    from .permissions import (
+        descarga_autorizada, puede_descargar, tiene_distribucion,
+    )
+
+    autorizacion = None
+    if puede_descargar(request.user, documento):
+        if documento.clasificacion == 'publico':
+            origen = 'publico'
+        elif getattr(getattr(request.user, 'perfil', None), 'es_administrador', False):
+            origen = 'admin'
+        elif (documento.clasificacion == 'interno'
+              and documento.propietario_id == request.user.id):
+            origen = 'propietario'
+        elif tiene_distribucion(documento, request.user):
+            origen = 'distribucion'
+        else:
+            origen = 'jefe'
+    else:
+        autorizacion = SolicitudDescarga.objects.filter(
+            documento=documento, solicitado_por=request.user, estado='aprobada',
+            version_aprobada=documento.version_actual,
+            fecha_expiracion__gt=timezone.now(),
+        ).order_by('-fecha_resolucion').first()
+        if not autorizacion:
             messages.error(request, 'No tienes permiso para descargar este documento.')
             return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
-    if not documento.archivo:
-        messages.error(request, 'Este documento no tiene archivo adjunto.')
+        origen = 'solicitud'
+
+    from .services.documentos_pdf import archivo_existe
+    if not documento.archivo or not archivo_existe(documento.archivo):
+        messages.error(
+            request,
+            'El archivo de este documento no está disponible en el almacenamiento.',
+        )
         return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
-    from auditoria.services import registrar_descarga
+
+    # Copia controlada: la descarga directa del propietario de un `interno`
+    # queda registrada como distribución (ISO 9001:7.5.3).
+    if origen == 'propietario' and not tiene_distribucion(documento, request.user):
+        try:
+            dist = DistribucionDocumento.objects.create(
+                documento=documento, usuario=request.user, metodo='sistema',
+                distribuido_por=request.user,
+                observaciones='Descarga directa del propietario (interno)',
+            )
+            from auditoria.middleware import get_client_ip
+            from auditoria.services import registrar_distribucion
+            registrar_distribucion(
+                usuario=request.user,
+                recurso_tipo=documento.tipo_id or '',
+                recurso_id=str(documento.uuid),
+                destinatario=request.user.username,
+                metodo='sistema',
+                codigo=documento.codigo,
+                distribucion_id=dist.id,
+                correlacion=f'descarga-directa-{documento.uuid}',
+                ip_address=get_client_ip(),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "No se pudo registrar la distribución de %s: %s",
+                documento.codigo, exc,
+            )
+
     from auditoria.middleware import get_client_ip
+    from auditoria.services import registrar_descarga
+    correlacion = (
+        f'descarga-{autorizacion.id}' if autorizacion
+        else f'descarga-directa-{documento.uuid}'
+    )
     try:
         registrar_descarga(
             usuario=request.user,
@@ -1305,6 +1634,12 @@ def descargar_archivo(request, tipo, documento_id):
             recurso_id=str(documento.uuid),
             version=documento.version_actual,
             codigo=documento.codigo,
+            detalles={
+                'clasificacion': documento.clasificacion,
+                'origen': origen,
+                'solicitud_id': autorizacion.id if autorizacion else None,
+            },
+            correlation_id=correlacion,
             ip_address=get_client_ip(),
             fail_closed=settings.AUDIT_FAIL_CLOSED,
         )
@@ -1340,9 +1675,33 @@ def ver_archivo(request, tipo, documento_id):
     if not puede_ver_documento(request.user, documento, requerir_aprobada=True):
         messages.error(request, 'No tienes permisos para ver este documento.')
         return redirect('documentos:mis_documentos')
-    archivo = documento.archivo_pdf or documento.archivo
-    if not archivo:
-        messages.error(request, 'Este documento no tiene archivo adjunto.')
+    from .services.documentos_pdf import (
+        FORMATOS_CONVERTIBLES, archivo_existe, asegurar_pdf,
+        limpiar_pdf_inexistente, pdf_disponible,
+    )
+    # `archivo_pdf` guarda una ruta en BD, no garantiza que el fichero exista:
+    # si el PDF se borró del disco se limpia el puntero y se regenera en línea.
+    limpiar_pdf_inexistente(documento)
+    archivo = documento.archivo_pdf if pdf_disponible(documento) else None
+    if archivo is None and documento.tipo_archivo in FORMATOS_CONVERTIBLES:
+        # No se pudo (re)generar el PDF: el visor no puede mostrar un office,
+        # así que se devuelve al detalle con el aviso en lugar de servir bytes
+        # que pdf.js no entiende (y sin romper con un 500).
+        if not asegurar_pdf(documento):
+            messages.error(
+                request,
+                'No se pudo generar la vista previa en PDF. '
+                'Vuelve a recargar para reintentar.',
+            )
+            return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
+        archivo = documento.archivo_pdf
+    if archivo is None:
+        archivo = documento.archivo
+    if not archivo or not archivo_existe(archivo):
+        messages.error(
+            request,
+            'El archivo de este documento no está disponible en el almacenamiento.',
+        )
         return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
     from auditoria.services import registrar_consulta
     from auditoria.middleware import get_client_ip
@@ -1378,7 +1737,38 @@ def ver_archivo(request, tipo, documento_id):
     return response
 
 
-def _estado_resumen_ia(documento, usuario=None):
+def _reconciliar_resumen_ia(documento):
+    """Marca como listo/error un resumen colgado en pendiente/procesando.
+
+    Evita que la UI sondee indefinidamente cuando el worker de Celery no procesó
+    la tarea (o murió a mitad). Si ya hay un resumen guardado se da por 'listo';
+    si no, se marca 'error' para que el usuario pueda reintentar.
+    """
+    if documento.resumen_ia_estado not in ('pendiente', 'procesando'):
+        return
+    from datetime import timedelta
+
+    from django.utils import timezone
+    minutos = getattr(settings, 'IA_RESUMEN_TIMEOUT_MIN', 5)
+    inicio = documento.resumen_ia_solicitado
+    if inicio and (timezone.now() - inicio < timedelta(minutes=minutos)):
+        return
+    # Sin `resumen_ia_solicitado` (pendientes previos al campo) se consideran
+    # colgados; con marca de tiempo, solo si superan el umbral.
+    if documento.resumen_ia:
+        documento.resumen_ia_estado = 'listo'
+        documento.resumen_ia_error = ''
+    else:
+        documento.resumen_ia_estado = 'error'
+        documento.resumen_ia_error = (
+            'La generación del resumen tardó demasiado o el servicio de tareas '
+            'no respondió. Vuelve a intentarlo.'
+        )
+    documento.save(update_fields=['resumen_ia_estado', 'resumen_ia_error'])
+
+
+def _estado_resumen_ia(documento, usuario=None, incluir_resumen=True):
+    _reconciliar_resumen_ia(documento)
     data = {
         'estado': documento.resumen_ia_estado,
         'actualizado': documento.resumen_ia_actualizado,
@@ -1388,7 +1778,7 @@ def _estado_resumen_ia(documento, usuario=None):
         'resumen': None,
         'texto': '',
     }
-    if documento.resumen_ia:
+    if incluir_resumen and documento.resumen_ia:
         data['resumen'] = documento.resumen_ia
         data['texto'] = documento.resumen_ia_texto
     if usuario is not None:
@@ -1415,6 +1805,22 @@ def _auditar_resumen_ia(usuario, documento):
         )
     except Exception as exc:
         logger.error("Auditoría resumen IA: %s", exc)
+
+
+@login_required(login_url='/login/')
+def estado_conversion(request, tipo, documento_id):
+    """Indica si la conversión a PDF del documento ya está lista (para polling)."""
+    documento = get_documento(tipo, documento_id)
+    from .permissions import puede_ver_documento
+    if not puede_ver_documento(request.user, documento):
+        return JsonResponse({'error': 'No autorizado'}, status=403)
+    from .services.documentos_pdf import pdf_disponible
+    return JsonResponse({
+        # El campo puede estar seteado con una ruta cuyo fichero ya no existe
+        # (PDF borrado del disco): hay que mirar también el almacenamiento.
+        'listo': pdf_disponible(documento),
+        'estado': documento.estado,
+    })
 
 
 @login_required(login_url='/login/')
@@ -1449,7 +1855,10 @@ def resumen_ia(request, tipo, documento_id):
 
             documento.resumen_ia_estado = 'pendiente'
             documento.resumen_ia_error = ''
-            documento.save(update_fields=['resumen_ia_estado', 'resumen_ia_error'])
+            documento.resumen_ia_solicitado = timezone.now()
+            documento.save(update_fields=[
+                'resumen_ia_estado', 'resumen_ia_error', 'resumen_ia_solicitado',
+            ])
             if not es_admin:
                 ai.registrar_uso(request.user)
             from .tasks import generar_resumen_ia
@@ -1481,7 +1890,51 @@ def resumen_ia(request, tipo, documento_id):
         documento.refresh_from_db()
         return JsonResponse(_estado_resumen_ia(documento, request.user))
 
-    return JsonResponse(_estado_resumen_ia(documento, request.user))
+    return JsonResponse(_estado_resumen_ia(
+        documento, request.user,
+        incluir_resumen=not request.GET.get('solo_estado'),
+    ))
+
+
+def _finalizar_descarga(solicitud, aprobador):
+    """Fija vigencia/versión, crea la distribución y audita la autorización."""
+    from auditoria.middleware import get_client_ip
+    from auditoria.services import registrar_distribucion
+
+    documento = solicitud.documento
+    dias = getattr(settings, 'DESCARGA_VIGENCIA_DIAS', 30)
+    solicitud.estado = 'aprobada'
+    solicitud.version_aprobada = documento.version_actual
+    solicitud.fecha_expiracion = timezone.now() + timedelta(days=dias)
+    solicitud.fecha_resolucion = timezone.now()
+    solicitud.save(update_fields=[
+        'estado', 'version_aprobada', 'fecha_expiracion', 'fecha_resolucion',
+    ])
+    try:
+        dist = DistribucionDocumento.objects.create(
+            documento=documento,
+            usuario=solicitud.solicitado_por,
+            metodo='sistema',
+            distribuido_por=aprobador,
+            observaciones=f'Autorizado por solicitud #{solicitud.id}',
+        )
+        registrar_distribucion(
+            usuario=aprobador,
+            recurso_tipo=documento.tipo_id or '',
+            recurso_id=str(documento.uuid),
+            destinatario=solicitud.solicitado_por.username,
+            metodo='sistema',
+            codigo=documento.codigo,
+            distribucion_id=dist.id,
+            correlacion=f'descarga-{solicitud.id}',
+            correlation_id=f'descarga-{solicitud.id}',
+            ip_address=get_client_ip(),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "No se pudo registrar la distribución de la solicitud #%s: %s",
+            solicitud.id, exc,
+        )
 
 
 @login_required(login_url='/login/')
@@ -1497,25 +1950,40 @@ def aprobar_descarga(request, solicitud_id):
     if request.method == 'POST':
         accion = request.POST.get('accion')
         observaciones = request.POST.get('observaciones', '')
+        aprobacion.observaciones = observaciones
+        aprobacion.fecha_aprobacion = timezone.now()
         if accion == 'aprobar':
             aprobacion.estado = 'aprobada'
-            solicitud.estado = 'aprobada'
+            aprobacion.save()
+            pendientes = solicitud.aprobaciones.exclude(estado='aprobada').exists()
+            if pendientes:
+                # Doble control (restringido): falta el autorizador.
+                messages.success(
+                    request, 'Evaluación registrada. Pendiente de autorización final.',
+                )
+                return redirect('documentos:documentos_departamento')
+            _finalizar_descarga(solicitud, request.user)
             messages.success(request, 'Descarga aprobada.')
             tipo_notif = 'aprobacion_descarga'
             titulo_notif = 'Descarga aprobada'
-            mensaje_notif = f'La solicitud de descarga de "{documento.nombre}" ({documento.codigo}) ha sido aprobada.'
+            mensaje_notif = (
+                f'La solicitud de descarga de "{documento.nombre}" '
+                f'({documento.codigo}) ha sido aprobada.'
+            )
         else:
             aprobacion.estado = 'rechazada'
+            aprobacion.save()
             solicitud.estado = 'rechazada'
+            solicitud.observaciones = observaciones
+            solicitud.fecha_resolucion = timezone.now()
+            solicitud.save(update_fields=['estado', 'observaciones', 'fecha_resolucion'])
             messages.warning(request, 'Descarga rechazada.')
             tipo_notif = 'rechazo_descarga'
             titulo_notif = 'Descarga rechazada'
-            mensaje_notif = f'La solicitud de descarga de "{documento.nombre}" ({documento.codigo}) ha sido rechazada.'
-        aprobacion.observaciones = observaciones
-        aprobacion.fecha_aprobacion = timezone.now()
-        aprobacion.save()
-        solicitud.fecha_resolucion = timezone.now()
-        solicitud.save()
+            mensaje_notif = (
+                f'La solicitud de descarga de "{documento.nombre}" '
+                f'({documento.codigo}) ha sido rechazada.'
+            )
         from autenticacion.models import Notificacion
         Notificacion.objects.create(
             usuario=solicitud.solicitado_por,
@@ -1524,7 +1992,7 @@ def aprobar_descarga(request, solicitud_id):
             tipo=tipo_notif,
             url_accion=f'/documentos/{documento.tipo_id}/{documento.uuid}/',
             departamento=documento.departamento,
-            documento=documento
+            documento=documento,
         )
         return redirect('documentos:documentos_departamento')
     return render(request, 'documentos/aprobar_descarga.html', {
@@ -1783,6 +2251,106 @@ def establecer_vigencia(request, tipo, documento_id):
 
 
 @login_required(login_url='/login/')
+def quitar_vigencia(request, tipo, documento_id):
+    """Quita el período de vigencia (motivo obligatorio + trazabilidad ISO)."""
+    if request.method != 'POST':
+        return redirect('documentos:detalle', tipo=tipo, documento_id=documento_id)
+    documento = get_documento(tipo, documento_id)
+    if not documento:
+        messages.error(request, 'Documento no encontrado.')
+        return redirect('documentos:mis_documentos')
+    if documento.estado != 'activo':
+        messages.error(request, 'Solo se puede modificar la vigencia de documentos aprobados.')
+        return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
+    user = request.user
+    perfil = user.perfil
+    es_propietario = documento.propietario == user
+    es_jefe_o_admin = perfil.es_administrador or (
+        perfil.es_jefe and documento.departamento == perfil.departamento
+    )
+    if not es_propietario and not es_jefe_o_admin:
+        messages.error(request, 'No tienes permisos para modificar la vigencia de este documento.')
+        return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
+    tipo_obj = getattr(documento, 'tipo', None)
+    if tipo_obj and tipo_obj.requiere_vigencia:
+        messages.error(
+            request,
+            'Este tipo de documento exige vigencia; cámbiala en lugar de quitarla.',
+        )
+        return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
+    motivo = (request.POST.get('motivo') or '').strip()
+    if not motivo:
+        messages.error(request, 'Debes indicar el motivo para quitar la vigencia.')
+        return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
+
+    periodo_anterior = documento.periodo_vigencia.nombre if documento.periodo_vigencia else ''
+    vencimiento_anterior = documento.fecha_vencimiento
+    from django.utils import timezone as tz
+    linea = (
+        f"v{documento.revision} - {tz.now().strftime('%Y-%m-%d %H:%M')} - "
+        f"vigencia eliminada por {user.get_full_name() or user.username}: {motivo}\n"
+    )
+    documento.periodo_vigencia = None
+    documento.fecha_vencimiento = None
+    documento.proxima_revision = None
+    documento.aviso_vencimiento_enviado = False
+    documento.historial_cambios = (documento.historial_cambios + linea).strip()
+    documento.save(update_fields=[
+        'periodo_vigencia', 'fecha_vencimiento', 'proxima_revision',
+        'aviso_vencimiento_enviado', 'historial_cambios',
+    ])
+
+    from autenticacion.models import Notificacion
+    if documento.propietario != user:
+        Notificacion.objects.create(
+            usuario=documento.propietario,
+            titulo='Vigencia del documento eliminada',
+            mensaje=(
+                f'{user.get_full_name() or user.username} quitó la vigencia de '
+                f'"{documento.nombre}" ({documento.codigo}): {motivo}'
+            ),
+            tipo='cambio_vigencia',
+            url_accion=f'/documentos/{tipo}/{documento.uuid}/',
+        )
+    if documento.departamento and documento.departamento.jefe and documento.departamento.jefe != user:
+        Notificacion.objects.create(
+            usuario=documento.departamento.jefe,
+            titulo='Documento del departamento sin vigencia',
+            mensaje=(
+                f'{user.get_full_name() or user.username} quitó la vigencia de '
+                f'"{documento.nombre}" ({documento.codigo}): {motivo}'
+            ),
+            tipo='cambio_vigencia',
+            url_accion=f'/documentos/{tipo}/{documento.uuid}/',
+        )
+    try:
+        from auditoria.middleware import get_client_ip
+        from auditoria.services import registrar_log_iso
+        registrar_log_iso(
+            usuario=user,
+            accion_tipo='eliminacion_vigencia',
+            accion_categoria='vencimiento',
+            recurso_tipo=tipo,
+            recurso_id=str(documento.uuid),
+            recurso_codigo=documento.codigo,
+            recurso_nombre=documento.nombre,
+            detalles={
+                'periodo_anterior': periodo_anterior,
+                'vencimiento_anterior': str(vencimiento_anterior) if vencimiento_anterior else None,
+                'motivo': motivo,
+            },
+            resultado_exitoso=True,
+            resultado_mensaje=f'Vigencia eliminada ({periodo_anterior})',
+            ip_address=get_client_ip(),
+            user_agent=request.META.get('HTTP_USER_AGENT'),
+        )
+    except Exception as exc:
+        logger.error("Auditoría eliminación de vigencia: %s", exc)
+    messages.success(request, 'Período de vigencia eliminado.')
+    return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
+
+
+@login_required(login_url='/login/')
 def asignar_documento(request, tipo, documento_id):
     perfil = request.user.perfil
     from .permissions import es_jefe_de_departamento
@@ -1815,8 +2383,10 @@ def asignar_documento(request, tipo, documento_id):
             return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
     else:
         form = AsignacionDocumentoForm(departamento=documento.departamento)
+    hay_asignables = form.fields['coordinador'].queryset.exists()
     return render(request, 'documentos/asignar_documento.html', {
         'form': form, 'documento': documento, 'tipo': tipo,
+        'hay_asignables': hay_asignables,
     })
 
 
@@ -1836,31 +2406,45 @@ def gestionar_asignaciones(request):
 
 @login_required(login_url='/login/')
 def transferir_propiedad(request, tipo, documento_id):
-    perfil = request.user.perfil
     documento = get_documento(tipo, documento_id)
     from .permissions import puede_transferir
-    puede, tipo_transferencia = puede_transferir(request.user, documento)
+    puede, _ = puede_transferir(request.user, documento)
     if not puede:
         messages.error(request, 'No tienes permisos para transferir este documento.')
         return redirect('documentos:mis_documentos')
+
+    depto_doc = getattr(documento, 'departamento', None)
+    miembros_transferibles = []
+    if depto_doc:
+        miembros_transferibles = (
+            depto_doc.miembros.select_related('usuario')
+            .exclude(usuario=documento.propietario)
+            .order_by('usuario__first_name', 'usuario__last_name', 'usuario__username')
+        )
+
     if request.method == 'POST':
         nuevo_propietario_id = request.POST.get('nuevo_propietario')
         if nuevo_propietario_id:
             nuevo_propietario = get_object_or_404(User, id=nuevo_propietario_id)
+            if nuevo_propietario.id == documento.propietario_id:
+                messages.error(request, 'El nuevo propietario debe ser distinto al actual.')
+                return redirect('documentos:transferir_propiedad', tipo=tipo, documento_id=documento.uuid)
             nuevo_perfil = getattr(nuevo_propietario, 'perfil', None)
-            depto_doc = getattr(documento, 'departamento', None)
             if not nuevo_perfil or nuevo_perfil.departamento != depto_doc:
                 messages.error(request, 'El nuevo propietario debe pertenecer al mismo departamento del documento.')
                 return redirect('documentos:transferir_propiedad', tipo=tipo, documento_id=documento.uuid)
-            if tipo_transferencia == "requiere_aprobacion":
-                messages.warning(request, f'Solicitud de transferencia enviada para aprobación.')
-            else:
-                documento.propietario = nuevo_propietario
-                documento.save()
-                messages.success(request, f'Propiedad transferida a {nuevo_propietario.username}.')
+            from .services.transferencia import transferir_propiedad_documento
+            from auditoria.middleware import resolver_ip_cliente
+            transferir_propiedad_documento(
+                documento, nuevo_propietario, request.user,
+                ip_address=resolver_ip_cliente(request),
+            )
+            messages.success(request, f'Propiedad transferida a {nuevo_propietario.username}.')
             return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
     return render(request, 'documentos/transferir_propiedad.html', {
-        'documento': documento, 'tipo': tipo, 'tipo_transferencia': tipo_transferencia,
+        'documento': documento, 'tipo': tipo,
+        'miembros_transferibles': miembros_transferibles,
+        'hay_transferibles': bool(depto_doc) and miembros_transferibles.exists(),
     })
 
 
@@ -1926,6 +2510,7 @@ def crear_planilla(request):
                 planilla.documento = documento
                 planilla.version_destino = calcular_proxima_version(documento)
                 planilla.version_actual_snapshot = documento.version_actual
+                planilla.clasificacion_actual_snapshot = documento.clasificacion
                 archivo = request.FILES.get('archivo_propuesto')
                 if archivo:
                     planilla.archivo_propuesto = archivo
@@ -1991,6 +2576,7 @@ def crear_planilla(request):
                 'nombre_propuesto': documento.nombre,
                 'descripcion_propuesta': documento.descripcion,
                 'participantes_propuestos': documento.participantes,
+                'clasificacion_propuesta': documento.clasificacion,
             }
         form = PlanillaCambiosForm(initial=initial_data, tipo_documento=tipo_doc, documento=documento)
 
@@ -2029,6 +2615,18 @@ def crear_planilla(request):
         'responsables_seleccionados': responsables_seleccionados,
         'departamentos_disponibles': departamentos_disponibles,
         'documentos_asociados_iniciales': documentos_asociados_iniciales,
+        'selector_asociados': {
+            'id': 'selector-asociados',
+            'search_url': '/documentos/api/referenciables/',
+            'exclude_id': documento.id if documento else '',
+            'placeholder': 'Buscar por nombre o código...',
+            'payload_mode': 'json',
+            'json_name': 'documentos_asociados_json',
+            'permite_pendiente': True,
+            'initial_items': documentos_asociados_iniciales,
+            'extra_dept_selector': '#depto-hidden input[name="departamentos_afectados"]',
+            'afecta_todos_id': 'id_afecta_todos',
+        },
         'formato_dinamico': formato_dinamico,
         'respuestas_formato': respuestas_formato,
     })
@@ -2101,30 +2699,13 @@ def aprobar_planilla(request, planilla_uuid):
                 if planilla.solicitud_cambio:
                     planilla.solicitud_cambio.estado = 'aprobado'
                     planilla.solicitud_cambio.save(update_fields=['estado'])
-                doc = planilla.documento
+                doc, cambios = aplicar_planilla_al_documento(
+                    planilla, usuario=request.user,
+                )
                 if doc:
-                    if planilla.nombre_propuesto:
-                        doc.nombre = planilla.nombre_propuesto
-                    if planilla.descripcion_propuesta is not None:
-                        doc.descripcion = planilla.descripcion_propuesta
-                    if planilla.archivo_propuesto:
-                        doc.archivo = planilla.archivo_propuesto
-                    if planilla.participantes_propuestos:
-                        doc.participantes = planilla.participantes_propuestos
-                    nueva_version = doc.proxima_version()
-                    doc.version_actual = nueva_version
-                    doc.estado = 'activo'
-                    doc.fecha_vigencia = timezone.now()
-                    doc.save()
-                    doc.responsables.set(planilla.responsables_propuestos.all())
-                    doc.departamentos_afectados.set(planilla.departamentos_afectados.all())
-                    asociados = [da.documento for da in planilla.documentos_asociados.all() if da.documento_id]
-                    doc.documentos_relacionados.set(asociados)
-                    VersionDocumento.objects.create(
-                        documento=doc, numero_version=nueva_version,
-                        archivo=planilla.archivo_propuesto if planilla.archivo_propuesto else doc.archivo,
-                        cambios=f'Planilla de Cambios {planilla.codigo}: {planilla.justificacion}',
-                        creado_por=planilla.responsable
+                    registrar_aprobacion_planilla(
+                        usuario=request.user, planilla=planilla, documento=doc,
+                        cambios=cambios, observaciones=observaciones,
                     )
                 from autenticacion.models import Notificacion
                 Notificacion.objects.create(
@@ -2175,6 +2756,10 @@ def aprobar_planilla(request, planilla_uuid):
             if doc:
                 doc.estado = 'activo'
                 doc.save(update_fields=['estado'])
+            registrar_rechazo_planilla(
+                usuario=request.user, planilla=planilla, documento=doc,
+                observaciones=observaciones,
+            )
             from autenticacion.models import Notificacion
             Notificacion.objects.create(
                 usuario=planilla.responsable,
@@ -2196,7 +2781,8 @@ def aprobar_planilla(request, planilla_uuid):
     documento = planilla.documento if planilla.documento_id else None
     archivo_preview = None
     es_pdf = False
-    if documento and documento.archivo_pdf:
+    from .services.documentos_pdf import pdf_disponible as _pdf_listo
+    if documento and _pdf_listo(documento):
         archivo_preview = documento.archivo_pdf
         es_pdf = True
     elif planilla.archivo_propuesto_pdf:
@@ -2345,7 +2931,15 @@ def roles_permisos(request):
     if not (request.user.perfil.es_administrador or request.user.perfil.es_jefe):
         messages.error(request, 'No tienes permisos para acceder a configuración.')
         return redirect('documentos:mis_documentos')
-    return render(request, 'documentos/configuracion/roles_permisos.html')
+    codigo_evaluador = getattr(settings, 'APROBACION_EVALUADOR_DEPTO_GG', 'SGC')
+    evaluador_depto = Departamento.objects.filter(codigo=codigo_evaluador, activo=True).first()
+    gg_depto = Departamento.objects.filter(codigo='GG').first()
+    return render(request, 'documentos/configuracion/roles_permisos.html', {
+        'evaluador_depto': evaluador_depto,
+        'evaluador_jefe': evaluador_depto.jefe if evaluador_depto else None,
+        'gg_depto': gg_depto,
+        'gg_jefe': gg_depto.jefe if gg_depto else None,
+    })
 
 
 @login_required(login_url='/login/')
@@ -3182,6 +3776,21 @@ def distribuir_documento(request, tipo, documento_id):
                     documento=documento, usuario=usuario, metodo=metodo,
                     distribuido_por=request.user, observaciones=observaciones
                 )
+                try:
+                    from auditoria.middleware import get_client_ip
+                    from auditoria.services import registrar_distribucion
+                    registrar_distribucion(
+                        usuario=request.user,
+                        recurso_tipo=documento.tipo_id or '',
+                        recurso_id=str(documento.uuid),
+                        destinatario=usuario.username,
+                        metodo=metodo,
+                        codigo=documento.codigo,
+                        distribucion_id=dist.id,
+                        ip_address=get_client_ip(),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("Auditoría de distribución falló: %s", exc)
                 Notificacion.objects.create(
                     usuario=usuario, titulo='Documento Distribuido',
                     mensaje=f'Se le ha distribuido el documento "{documento.nombre}" ({documento.codigo}).',
@@ -3642,6 +4251,14 @@ def descargar_solicitud_xlsx(request, solicitud_uuid):
     if not _puede_ver_solicitud(request.user, solicitud):
         messages.error(request, 'No tienes permisos para descargar esta solicitud.')
         return redirect('documentos:mis_documentos')
+    if solicitud.planilla_xlsx:
+        try:
+            return FileResponse(
+                solicitud.planilla_xlsx.open('rb'), as_attachment=True,
+                filename=os.path.basename(solicitud.planilla_xlsx.name),
+            )
+        except Exception as e:
+            logger.warning(f"Planilla XLSX guardada no disponible para {solicitud.codigo}: {e}")
     if not solicitud.formato or not solicitud.formato.plantilla_xlsx:
         messages.error(request, 'No hay plantilla Excel disponible para exportar.')
         return redirect('documentos:mis_documentos')
@@ -3666,6 +4283,14 @@ def descargar_solicitud_pdf(request, solicitud_uuid):
     if not _puede_ver_solicitud(request.user, solicitud):
         messages.error(request, 'No tienes permisos para descargar esta solicitud.')
         return redirect('documentos:mis_documentos')
+    if solicitud.planilla_pdf:
+        try:
+            return FileResponse(
+                solicitud.planilla_pdf.open('rb'), as_attachment=True,
+                filename=os.path.basename(solicitud.planilla_pdf.name),
+            )
+        except Exception as e:
+            logger.warning(f"Planilla PDF guardada no disponible para {solicitud.codigo}: {e}")
     if not solicitud.formato or not solicitud.formato.plantilla_xlsx:
         messages.error(request, 'No hay plantilla Excel disponible para exportar.')
         return redirect('documentos:mis_documentos')

@@ -61,6 +61,13 @@
     return `<span class="badge badge--${colors[estado] || 'primary'}">${labels[estado] || estado}</span>`;
   }
 
+  // ── Badge de clasificación ──
+  function clasificacionBadge(s) {
+    const label = s.clasificacion_display || s.clasificacion || '';
+    const color = s.clasificacion_color || 'secondary';
+    return `<span class="badge badge--${color}" style="font-size:0.65rem;">${escapeHtml(label)}</span>`;
+  }
+
   // ── Fetch sugerencias ──
   const fetchSugerencias = debounce(async (q) => {
     if (q.length < MIN_CHARS) {
@@ -130,6 +137,13 @@
       name.innerHTML = highlightMatch(s.nombre, query);
       nameWrap.appendChild(name);
 
+      if (s.relacionado_con) {
+        const rel = document.createElement('span');
+        rel.className = 'result-relacionado';
+        rel.textContent = '\u21b3 relacionado: ' + s.relacionado_con;
+        nameWrap.appendChild(rel);
+      }
+
       if (s.propietario) {
         const owner = document.createElement('span');
         owner.className = 'result-owner';
@@ -159,6 +173,14 @@
       item.appendChild(code);
       item.appendChild(nameWrap);
       item.appendChild(badge);
+
+      if (s.clasificacion) {
+        const clasif = document.createElement('span');
+        clasif.className = 'result-badge';
+        clasif.innerHTML = clasificacionBadge(s);
+        item.appendChild(clasif);
+      }
+
       item.appendChild(tipo);
       navbarResults.appendChild(item);
     });
@@ -243,7 +265,7 @@
           navigateToItem(sugerencias[selectedIndex]);
         } else {
           hideResults();
-          redirectToMisDocumentos();
+          redirectToResultados();
         }
         break;
 
@@ -322,11 +344,11 @@
     });
   }
 
-  // ── Enter en navbar sin selección → buscar en mis_documentos ──
-  function redirectToMisDocumentos() {
+  // ── Enter en navbar sin selección → página de resultados ──
+  function redirectToResultados() {
     const q = navbarInput.value.trim();
     if (q.length < MIN_CHARS) return;
-    window.location.href = `/documentos/mis-documentos/?buscar=${encodeURIComponent(q)}`;
+    window.location.href = `/documentos/buscar/?q=${encodeURIComponent(q)}`;
   }
 
   // ── Cerrar dropdown al hacer scroll ──

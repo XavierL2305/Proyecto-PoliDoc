@@ -355,6 +355,12 @@ def _generar_descripcion_accion(accion_tipo, recurso_tipo):
         'transferencia': f'Transferencia de {recurso_tipo}',
         'cambio_version': f'Cambio de versión de {recurso_tipo}',
         'reasignacion': f'Reasignación de {recurso_tipo}',
+        'aprobacion_planilla': 'Aprobación de planilla de cambios',
+        'rechazo_planilla': 'Rechazo de planilla de cambios',
+        'distribucion': f'Distribución de {recurso_tipo}',
+        'revocacion_distribucion': f'Revocación de distribución de {recurso_tipo}',
+        'cambio_vigencia': f'Cambio de vigencia de {recurso_tipo}',
+        'eliminacion_vigencia': f'Eliminación de vigencia de {recurso_tipo}',
     }
     return descripciones.get(accion_tipo, f'Acción {accion_tipo} en {recurso_tipo}')
 
@@ -419,12 +425,12 @@ def registrar_edicion_documento(usuario, recurso_tipo, recurso_id,
                                 codigo=None, nombre=None,
                                 estado_anterior=None, estado_posterior=None,
                                 version_anterior=None, version_nueva=None,
-                                cambios=None, ip_address=None,
-                                correlation_id=None):
+                                cambios=None, valores_anteriores=None,
+                                ip_address=None, correlation_id=None):
     """Registra edición de un documento"""
     detalles = {
         'campos_modificados': list(cambios.keys()) if cambios else [],
-        'valores_anteriores': {},
+        'valores_anteriores': valores_anteriores or {},
         'valores_nuevos': cambios
     }
 
@@ -467,6 +473,64 @@ def registrar_eliminacion_documento(usuario, recurso_tipo, recurso_id,
         resultado_mensaje=f'{recurso_tipo.title()} marcado como obsoleto',
         correlation_id=correlation_id,
         ip_address=ip_address
+    )
+
+
+def registrar_aprobacion_planilla(usuario, planilla, documento=None,
+                                  cambios=None, observaciones=None,
+                                  ip_address=None, correlation_id=None):
+    """Registra la aprobación final de una planilla de cambios (ISO).
+
+    ``cambios`` describe la clasificación aplicada
+    (``clasificacion_anterior`` / ``clasificacion_nueva``); se guarda junto al
+    código de la planilla para trazabilidad completa.
+    """
+    cambios = cambios or {}
+    return registrar_log_iso(
+        usuario=usuario,
+        accion_tipo='aprobacion_planilla',
+        accion_categoria='documento',
+        recurso_tipo=getattr(documento, 'tipo_id', None) if documento else None,
+        recurso_id=getattr(documento, 'id', None) if documento else None,
+        recurso_codigo=getattr(documento, 'codigo', None) if documento else None,
+        recurso_nombre=getattr(documento, 'nombre', None) if documento else None,
+        recurso_version=getattr(documento, 'version_actual', None) if documento else None,
+        estado_posterior=getattr(documento, 'estado', None) if documento else None,
+        detalles={
+            'planilla_id': planilla.id,
+            'planilla_codigo': planilla.codigo,
+            'clasificacion_anterior': cambios.get('clasificacion_anterior'),
+            'clasificacion_nueva': cambios.get('clasificacion_nueva'),
+            'observaciones': observaciones,
+        },
+        resultado_exitoso=True,
+        resultado_mensaje=f'Planilla {planilla.codigo} aprobada y cambios aplicados',
+        correlation_id=correlation_id,
+        ip_address=ip_address,
+    )
+
+
+def registrar_rechazo_planilla(usuario, planilla, documento=None,
+                               observaciones=None, ip_address=None,
+                               correlation_id=None):
+    """Registra el rechazo de una planilla de cambios (ISO)."""
+    return registrar_log_iso(
+        usuario=usuario,
+        accion_tipo='rechazo_planilla',
+        accion_categoria='documento',
+        recurso_tipo=getattr(documento, 'tipo_id', None) if documento else None,
+        recurso_id=getattr(documento, 'id', None) if documento else None,
+        recurso_codigo=getattr(documento, 'codigo', None) if documento else None,
+        recurso_nombre=getattr(documento, 'nombre', None) if documento else None,
+        detalles={
+            'planilla_id': planilla.id,
+            'planilla_codigo': planilla.codigo,
+            'observaciones': observaciones,
+        },
+        resultado_exitoso=False,
+        resultado_mensaje=f'Planilla {planilla.codigo} rechazada',
+        correlation_id=correlation_id,
+        ip_address=ip_address,
     )
 
 
@@ -517,9 +581,16 @@ def registrar_aprobacion_descarga(usuario, recurso_tipo, recurso_id,
 
 
 def registrar_descarga(usuario, recurso_tipo, recurso_id,
-                       version=None, codigo=None,
+                       version=None, codigo=None, detalles=None,
                        ip_address=None, correlation_id=None, fail_closed=False):
-    """Registra descarga efectiva de un documento"""
+    """Registra descarga efectiva de un documento.
+
+    ``detalles`` permite añadir contexto de la autorización (clasificación,
+    solicitud, origen) para el no repudio.
+    """
+    detalle = {'version_descargada': version}
+    if detalles:
+        detalle.update(detalles)
     return registrar_log_iso(
         usuario=usuario,
         accion_tipo='descarga',
@@ -528,12 +599,39 @@ def registrar_descarga(usuario, recurso_tipo, recurso_id,
         recurso_id=recurso_id,
         recurso_codigo=codigo,
         recurso_version=version,
-        detalles={'version_descargada': version},
+        detalles=detalle,
         resultado_exitoso=True,
         resultado_mensaje='Documento descargado correctamente',
         correlation_id=correlation_id,
         ip_address=ip_address,
         fail_closed=fail_closed,
+    )
+
+
+def registrar_distribucion(usuario, recurso_tipo, recurso_id,
+                           destinatario=None, metodo=None, codigo=None,
+                           distribucion_id=None, correlacion=None,
+                           ip_address=None, correlation_id=None):
+    """Registra la creación de una copia controlada (distribución) en el log
+    encadenado, además del espejo en la colección ``distribuciones_documento``.
+    """
+    return registrar_log_iso(
+        usuario=usuario,
+        accion_tipo='distribucion',
+        accion_categoria='documento',
+        recurso_tipo=recurso_tipo,
+        recurso_id=recurso_id,
+        recurso_codigo=codigo,
+        detalles={
+            'distribucion_id': distribucion_id,
+            'destinatario': destinatario,
+            'metodo': metodo,
+            'correlacion': correlacion,
+        },
+        resultado_exitoso=True,
+        resultado_mensaje=f'Documento distribuido a {destinatario}',
+        correlation_id=correlation_id,
+        ip_address=ip_address,
     )
 
 

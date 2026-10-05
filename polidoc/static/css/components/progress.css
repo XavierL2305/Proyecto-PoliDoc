@@ -1,0 +1,114 @@
+/* ==========================================================================
+   POLIDOC - COMPONENTE: PROGRESS LOADER
+   Barra de progreso con etapas para operaciones largas (conversión, IA).
+   ========================================================================== */
+
+.progress-loader {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  width: 50%;
+  max-width: 50%;
+  min-width: 220px;
+  margin: 0 auto;
+  padding: 1.25rem;
+}
+
+.progress-loader__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.progress-loader__label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.progress-loader__label i {
+  color: var(--color-primary);
+}
+
+.progress-loader__pct {
+  font-size: 0.8125rem;
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.progress-loader__track {
+  position: relative;
+  height: 8px;
+  width: 100%;
+  background: var(--color-bg-secondary, rgba(0, 0, 0, 0.08));
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress-loader__fill {
+  position: relative;
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: var(--color-primary);
+  transition: width 0.3s ease;
+}
+
+.progress-loader__fill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.25) 25%,
+    transparent 25%,
+    transparent 50%,
+    rgba(255, 255, 255, 0.25) 50%,
+    rgba(255, 255, 255, 0.25) 75%,
+    transparent 75%,
+    transparent
+  );
+  background-size: 1rem 1rem;
+  animation: progressStripes 1s linear infinite;
+}
+
+@keyframes progressStripes {
+  from { background-position: 1rem 0; }
+  to   { background-position: 0 0; }
+}
+
+.progress-loader--success .progress-loader__fill {
+  background: var(--color-success, #22c55e);
+}
+
+.progress-loader--success .progress-loader__label i {
+  color: var(--color-success, #22c55e);
+}
+
+.progress-loader--error .progress-loader__fill {
+  background: var(--color-danger, #ef4444);
+  transition: width 0.3s ease;
+}
+
+.progress-loader--error .progress-loader__label {
+  color: var(--color-danger, #ef4444);
+}
+
+.progress-loader--error .progress-loader__label i {
+  color: var(--color-danger, #ef4444);
+}
+
+@media (max-width: 639px) {
+  .progress-loader {
+    width: 90%;
+    max-width: 90%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress-loader__fill::after { animation: none; }
+}

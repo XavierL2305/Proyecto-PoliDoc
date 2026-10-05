@@ -154,6 +154,12 @@
     <option value="activo" {% if estado_filter == 'activo' %}selected{% endif %}>Activo</option>
     <option value="obsoleto" {% if estado_filter == 'obsoleto' %}selected{% endif %}>Obsoleto</option>
   </select>
+  <select name="clasificacion" onchange="this.form.submit()" aria-label="Clasificación">
+    <option value="">Todas las clasificaciones</option>
+    {% for valor, etiqueta in clasificacion_choices %}
+    <option value="{{ valor }}" {% if clasificacion_filter == valor %}selected{% endif %}>{{ etiqueta }}</option>
+    {% endfor %}
+  </select>
   <button type="submit" class="btn btn--primary btn--sm"><i class="fa-solid fa-search"></i> Buscar</button>
 </form>
 
@@ -168,6 +174,7 @@
       <i class="fa-solid fa-chevron-down accordion-chevron"></i>
     </button>
     <div class="accordion-content">
+      <div class="accordion-body">
       {% if tipo.documentos %}
       <div class="card-grid" style="margin-top: 0.75rem;">
         {% for doc in tipo.documentos %}
@@ -184,6 +191,7 @@
             </div>
             <div class="doc-meta">
               <span class="badge badge--{{ doc.estado }}">{{ doc.get_estado_display }}</span>
+              <span class="badge badge--{{ doc.clasificacion_color }}" style="font-size: 0.65rem;">{{ doc.get_clasificacion_display }}</span>
               <span>v{{ doc.version_actual }}</span>
               <span>{{ doc.fecha_modificacion|date:"d/m/Y" }}</span>
               {% if doc.fecha_vencimiento %}
@@ -225,7 +233,7 @@
       {% if tipo.documentos.has_other_pages %}
       <nav class="pagination">
         {% if tipo.documentos.has_previous %}
-        <a href="?page_{{ tipo.key }}={{ tipo.documentos.previous_page_number }}&buscar={{ buscar }}&estado={{ estado_filter }}">&laquo; Anterior</a>
+        <a href="?page_{{ tipo.key }}={{ tipo.documentos.previous_page_number }}&buscar={{ buscar }}&estado={{ estado_filter }}&clasificacion={{ clasificacion_filter }}">&laquo; Anterior</a>
         {% else %}
         <span class="disabled">&laquo; Anterior</span>
         {% endif %}
@@ -233,11 +241,11 @@
         {% if tipo.documentos.number == num %}
         <span class="current">{{ num }}</span>
         {% elif num > tipo.documentos.number|add:'-3' and num < tipo.documentos.number|add:'3' %}
-        <a href="?page_{{ tipo.key }}={{ num }}&buscar={{ buscar }}&estado={{ estado_filter }}">{{ num }}</a>
+        <a href="?page_{{ tipo.key }}={{ num }}&buscar={{ buscar }}&estado={{ estado_filter }}&clasificacion={{ clasificacion_filter }}">{{ num }}</a>
         {% endif %}
         {% endfor %}
         {% if tipo.documentos.has_next %}
-        <a href="?page_{{ tipo.key }}={{ tipo.documentos.next_page_number }}&buscar={{ buscar }}&estado={{ estado_filter }}">Siguiente &raquo;</a>
+        <a href="?page_{{ tipo.key }}={{ tipo.documentos.next_page_number }}&buscar={{ buscar }}&estado={{ estado_filter }}&clasificacion={{ clasificacion_filter }}">Siguiente &raquo;</a>
         {% else %}
         <span class="disabled">Siguiente &raquo;</span>
         {% endif %}
@@ -250,6 +258,7 @@
         <p>No hay {{ tipo.nombre|lower }} en esta página</p>
       </div>
       {% endif %}
+      </div>
     </div>
   </div>
   {% endfor %}
@@ -263,11 +272,3 @@
 {% endif %}
 {% endblock %}
 
-{% block extra_js %}
-<script>
-function toggleAccordion(btn) {
-  const accordion = btn.closest('.accordion');
-  accordion.classList.toggle('active');
-}
-</script>
-{% endblock %}

@@ -29,7 +29,7 @@
       <a href="{% url 'documentos:seleccionar_tipo' %}" class="sidebar-item sidebar-item--primary {% if request.resolver_match.url_name == 'seleccionar_tipo' %}active{% endif %}">
         <i class="fa-solid fa-plus-circle"></i><span>Nuevo Documento</span>
       </a>
-      {% if user.perfil.es_jefe %}
+      {% if user.perfil.es_jefe or user.perfil.es_administrador %}
       <a href="{% url 'documentos:documentos_departamento' %}" class="sidebar-item {% if request.resolver_match.url_name == 'documentos_departamento' %}active{% endif %}">
         <i class="fa-solid fa-building"></i><span>Departamento</span>
       </a>
@@ -110,4 +110,5 @@
 </div>
 <script src="{% static 'js/search.js' %}"></script>
 <script src="{% static 'js/sidebar.js' %}"></script>
+<script src="{% static 'js/accordion.js' %}"></script>
 {% endblock %}

@@ -18,6 +18,10 @@ CACHES = {
     }
 }
 
+# El QA/reparación adaptativa consulta Celery y LibreOffice; se activa solo en
+# los tests que lo prueban con override_settings.
+PDF_QA_ADAPTATIVO = False
+
 # Use in-memory logging
 LOGGING = {
     'version': 1,

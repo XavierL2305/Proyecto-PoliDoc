@@ -149,6 +149,13 @@ class TipoDocumento(models.Model):
         related_name='tipos_retencion',
         verbose_name='Período de Retención por Defecto'
     )
+    requiere_vigencia = models.BooleanField(
+        default=False, verbose_name='Vigencia obligatoria',
+        help_text=(
+            'Si está activo, al crear/editar este tipo se exige un período de '
+            'vigencia y no se permite dejar el documento sin vigencia.'
+        ),
+    )
 
     # Secciones opcionales del formulario (configurable por el admin)
     usa_departamentos_afectados = models.BooleanField(
@@ -233,10 +240,22 @@ class Documento(models.Model):
     version_actual = models.CharField(max_length=20, default='1')
 
     # Seguridad
-    es_publico = models.BooleanField(
-        default=False,
-        verbose_name='Documento público',
-        help_text='Si está marcado, este documento es visible para todos los departamentos'
+    CLASIFICACION_CHOICES = [
+        ('publico', 'Público'),
+        ('interno', 'Interno'),
+        ('confidencial', 'Confidencial'),
+        ('restringido', 'Restringido'),
+    ]
+
+    clasificacion = models.CharField(
+        max_length=20,
+        choices=CLASIFICACION_CHOICES,
+        default='interno',
+        verbose_name='Clasificación',
+        help_text=(
+            'Clasificación de seguridad del documento. Sólo '
+            '"Público" hace el documento visible para otros departamentos.'
+        )
     )
     fecha_retencion = models.DateField(null=True, blank=True, verbose_name='Fecha de Retención')
     fecha_destruccion = models.DateField(null=True, blank=True, verbose_name='Fecha de Destrucción')
@@ -283,6 +302,12 @@ class Documento(models.Model):
     # Multi-departamento
     departamentos_afectados = models.ManyToManyField(
         Departamento, blank=True, related_name='documentos_afectados'
+    )
+    afecta_todos = models.BooleanField(
+        default=False,
+        verbose_name='Afecta a todos los departamentos',
+        help_text='Si está marcado, el documento aplica a todas las áreas '
+                  '(incluye automáticamente los departamentos futuros).'
     )
 
     # Participantes y Responsables
@@ -343,6 +368,10 @@ class Documento(models.Model):
         max_length=20, blank=True, default='', verbose_name='Versión del documento resumida'
     )
     resumen_ia_error = models.TextField(blank=True, default='', verbose_name='Error del resumen IA')
+    resumen_ia_solicitado = models.DateTimeField(
+        null=True, blank=True, verbose_name='IA solicitada',
+        help_text='Cuándo se encoló la generación; permite detectar resúmenes colgados.',
+    )
 
     # Timestamps
     fecha_creacion = models.DateTimeField(auto_now_add=True)
@@ -444,6 +473,36 @@ class Documento(models.Model):
         ])
 
     @property
+    def dias_para_vencer(self):
+        """Días (enteros) hasta ``fecha_vencimiento``; ``None`` si no hay."""
+        if not self.fecha_vencimiento:
+            return None
+        from django.utils import timezone as tz
+        return (self.fecha_vencimiento - tz.localdate()).days
+
+    @property
+    def estado_vigencia(self):
+        """Estado de vigencia para badges: vencido/vence_pronto/vigente/None."""
+        dias = self.dias_para_vencer
+        if dias is None:
+            return None
+        if dias <= 0:
+            return 'vencido'
+        if dias <= 7:
+            return 'vence_pronto'
+        return 'vigente'
+
+    @property
+    def clasificacion_color(self):
+        """Clase de badge (sufijo tras `badge--`) para la clasificación actual."""
+        return {
+            'publico': 'success',
+            'interno': 'secondary',
+            'confidencial': 'warning',
+            'restringido': 'danger',
+        }.get(self.clasificacion, 'secondary')
+
+    @property
     def resumen_ia_actualizado(self):
         """True si el resumen IA está listo y corresponde a la versión actual."""
         return bool(
@@ -521,11 +580,20 @@ class SolicitudDescarga(models.Model):
     solicitado_por = models.ForeignKey(
         User, on_delete=models.CASCADE, related_name='solicitudes_descarga'
     )
-    motivo = models.TextField(blank=True, default='')
+    motivo = models.TextField(blank=False, default='')
     estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='pendiente')
     fecha_solicitud = models.DateTimeField(auto_now_add=True)
     fecha_resolucion = models.DateTimeField(null=True, blank=True)
     observaciones = models.TextField(blank=True, default='')
+    version_aprobada = models.CharField(
+        max_length=20, blank=True, default='',
+        verbose_name='Versión aprobada',
+        help_text='Versión del documento a la que se autorizó la descarga.',
+    )
+    fecha_expiracion = models.DateTimeField(
+        null=True, blank=True, verbose_name='Expira',
+        help_text='Caduca la autorización de descarga (por defecto 30 días).',
+    )
 
     class Meta:
         verbose_name = 'Solicitud de Descarga'
@@ -542,12 +610,21 @@ class AprobacionDescarga(models.Model):
         ('aprobada', 'Aprobada'),
         ('rechazada', 'Rechazada'),
     ]
+    ROL_CHOICES = [
+        ('jefe', 'Jefe de Departamento'),
+        ('autorizador', 'Autorizador (Administrador)'),
+    ]
 
     solicitud = models.ForeignKey(
         SolicitudDescarga, on_delete=models.CASCADE, related_name='aprobaciones'
     )
     aprobador = models.ForeignKey(
         User, on_delete=models.CASCADE, related_name='aprobaciones_descarga'
+    )
+    rol_aprobador = models.CharField(
+        max_length=20, choices=ROL_CHOICES, default='jefe',
+        verbose_name='Rol del aprobador',
+        help_text='Para documentos restringidos se exige jefe + autorizador.',
     )
     estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='pendiente')
     observaciones = models.TextField(blank=True, default='')
@@ -621,6 +698,10 @@ class PlanillaCambios(models.Model):
     departamentos_afectados = models.ManyToManyField(
         Departamento, related_name='planillas_cambios'
     )
+    afecta_todos = models.BooleanField(
+        default=False,
+        verbose_name='Afecta a todos los departamentos'
+    )
     participantes_propuestos = models.JSONField(
         default=list, blank=True, verbose_name='Participantes Propuestos'
     )
@@ -646,10 +727,19 @@ class PlanillaCambios(models.Model):
 
     nombre_propuesto = models.CharField(max_length=200, blank=True, default='', verbose_name='Nombre Propuesto')
     descripcion_propuesta = models.TextField(blank=True, default='', verbose_name='Descripción Propuesta')
-    departamento_propuesto = models.ForeignKey(
-        Departamento, on_delete=models.SET_NULL, null=True, blank=True,
-        related_name='planillas_departamento_propuesto',
-        verbose_name='Departamento Propuesto'
+    clasificacion_propuesta = models.CharField(
+        max_length=20, blank=True, default='',
+        choices=Documento.CLASIFICACION_CHOICES,
+        verbose_name='Clasificación Propuesta',
+        help_text='Vacío = no se cambia la clasificación del documento.',
+    )
+    clasificacion_actual_snapshot = models.CharField(
+        max_length=20, blank=True, default='',
+        verbose_name='Clasificación Actual (snapshot)',
+    )
+    referencias_pendientes = models.JSONField(
+        default=list, blank=True, verbose_name='Referencias pendientes',
+        help_text='Códigos de documentos asociados que aún no existen; se enlazan al crearse.',
     )
     archivo_propuesto = models.FileField(
         upload_to='planillas_cambios/archivos/%Y/%m/', blank=True, null=True,
@@ -673,6 +763,12 @@ class PlanillaCambios(models.Model):
 
     def __str__(self):
         return f"{self.codigo} - {self.documento.codigo}"
+
+    def get_clasificacion_actual_snapshot_display(self):
+        """Etiqueta legible del snapshot (no tiene ``choices`` propios)."""
+        return dict(Documento.CLASIFICACION_CHOICES).get(
+            self.clasificacion_actual_snapshot, self.clasificacion_actual_snapshot,
+        )
 
 
 class AprobacionPlanilla(models.Model):
@@ -1115,6 +1211,8 @@ def mapear_valores_auto(formato, valores):
     for campo in formato.get_todos_los_campos().exclude(origen='usuario'):
         valor = valores.get(campo.origen)
         if valor not in (None, '', []):
+            if campo.tipo == 'checkbox_grupo' and not isinstance(valor, list):
+                valor = [valor]
             resultado[campo.clave] = valor
     return resultado
 
@@ -1437,6 +1535,16 @@ class SolicitudCambio(models.Model):
         verbose_name='Archivo adjunto',
         validators=[validar_archivo_documento],
     )
+    planilla_xlsx = models.FileField(
+        upload_to='solicitudes_cambio/planillas/%Y/%m/', blank=True, null=True,
+        verbose_name='Planilla XLSX generada',
+        help_text='Planilla del formato (SGC-FOR-001) rellenada, generada al aprobar.',
+    )
+    planilla_pdf = models.FileField(
+        upload_to='solicitudes_cambio/planillas/%Y/%m/', blank=True, null=True,
+        verbose_name='Planilla PDF generada',
+        help_text='PDF de la planilla generada (si LibreOffice está disponible).',
+    )
     observaciones = models.TextField(blank=True, default='', verbose_name='Observaciones')
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_modificacion = models.DateTimeField(auto_now=True)
@@ -1534,3 +1642,37 @@ class ResumenIAUso(models.Model):
 
     def __str__(self):
         return f"{self.usuario.username} {self.fecha}: {self.contador}"
+
+
+class ConversionPDFDiagnostico(models.Model):
+    """Resultado del QA de maquetación de un PDF convertido.
+
+    Desacoplado del artefacto (documento, planilla, plantilla…) a propósito:
+    se identifica por las rutas de origen y PDF, de modo que el conversor
+    genérico pueda registrar y reparar sin conocer el modelo de turno.
+    """
+
+    origen = models.CharField(max_length=500, db_index=True, verbose_name='Archivo origen')
+    pdf = models.CharField(max_length=500, db_index=True, verbose_name='PDF generado')
+    defectos = models.JSONField(default=list, blank=True, verbose_name='Defectos')
+    estado = models.CharField(
+        max_length=20, default='ok',
+        choices=[
+            ('ok', 'Limpio'),
+            ('pendiente', 'Reparación pendiente'),
+            ('reparado', 'Reparado'),
+            ('fallido', 'No se pudo reparar'),
+        ],
+        verbose_name='Estado',
+    )
+    intentos = models.PositiveSmallIntegerField(default=0, verbose_name='Intentos')
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Diagnóstico de conversión PDF'
+        verbose_name_plural = 'Diagnósticos de conversión PDF'
+        ordering = ['-actualizado']
+
+    def __str__(self):
+        return f"{self.origen} → {self.get_estado_display()}"

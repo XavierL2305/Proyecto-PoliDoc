@@ -177,4 +177,59 @@
   <span><i class="fa-solid fa-minus" style="color: var(--color-muted);"></i> Solo lectura / parcial</span>
   <span><i class="fa-solid fa-xmark" style="color: var(--color-danger);"></i> No permitido</span>
 </div>
+
+<div class="detail-card" style="margin-top: 2rem;">
+  <div class="detail-header"><h3><i class="fa-solid fa-stamp" style="color: var(--color-primary);"></i> Flujo de aprobación</h3></div>
+  <div class="detail-body">
+    <p style="font-size: .875rem; color: var(--color-text); margin-top: 0;">
+      Al crear, modificar o eliminar un documento (y en la Planilla de Cambios) siempre se generan
+      <strong>dos pasos</strong>: primero <strong>evalúa</strong> y luego <strong>autoriza</strong>.
+      El autorizador es siempre el <strong>jefe de GG</strong>.
+    </p>
+
+    <table class="table" style="min-width: 640px; margin-top: 1rem;">
+      <thead>
+        <tr>
+          <th style="width: 32%;">Quién inicia</th>
+          <th>Evaluador</th>
+          <th>Autorizador</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Jefe de departamento</td>
+          <td>
+            <strong>{{ evaluador_depto.nombre|default:"SGC" }}</strong>
+            {% if evaluador_jefe %}
+              — {{ evaluador_jefe.get_full_name|default:evaluador_jefe.username }}
+            {% else %}
+              — <span style="color: var(--color-muted);">Sin jefe asignado</span>
+            {% endif %}
+          </td>
+          <td>
+            Jefe de GG
+            {% if gg_jefe %}— {{ gg_jefe.get_full_name|default:gg_jefe.username }}{% else %}— <span style="color: var(--color-muted);">Sin asignar</span>{% endif %}
+          </td>
+        </tr>
+        <tr>
+          <td>Coordinador / Trabajador</td>
+          <td>Jefe de su departamento <span style="color: var(--color-muted);">(o jefe de GG si no tiene)</span></td>
+          <td>Jefe de GG{% if gg_jefe %} — {{ gg_jefe.get_full_name|default:gg_jefe.username }}{% endif %}</td>
+        </tr>
+        <tr>
+          <td>Administrador</td>
+          <td>Jefe de su departamento <span style="color: var(--color-muted);">(o jefe de GG)</span></td>
+          <td>Jefe de GG{% if gg_jefe %} — {{ gg_jefe.get_full_name|default:gg_jefe.username }}{% endif %}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p style="font-size: .8rem; color: var(--color-muted); margin-top: 1rem; margin-bottom: 0;">
+      <strong>Casos especiales:</strong> si el jefe de GG crea, evalúa {{ evaluador_depto.nombre|default:"SGC" }}
+      y GG autoriza (autofirma); si crea el jefe de {{ evaluador_depto.nombre|default:"SGC" }}, evalúa el primer
+      departamento con jefe y GG autoriza. Si no hay jefe disponible, el paso queda "en espera" hasta que se asigne.
+      El evaluador y el autorizador pueden coincidir (ese jefe hace los dos pasos).
+    </p>
+  </div>
+</div>
 {% endblock %}

@@ -1,5 +1,4 @@
 from celery import shared_task
-import subprocess
 import os
 import logging
 from django.conf import settings
@@ -15,9 +14,10 @@ def convertir_documento_a_pdf(self, documento_id):
     """
     Convierte documentos office a PDF usando LibreOffice headless.
     Soporta: DOC, DOCX, XLS, XLSX, VSDX
-    Se ejecuta asíncronamente en Celery Worker.
+    Se ejecuta asíncronamente en Celery Worker (la vista lo hace en línea).
     """
     from .models import Documento
+    from .services.documentos_pdf import convertir_documento_sync
 
     try:
         doc = Documento.objects.get(uuid=documento_id)
@@ -25,32 +25,10 @@ def convertir_documento_a_pdf(self, documento_id):
         if not doc.archivo or doc.tipo_archivo not in FORMATOS_CONVERTIBLES:
             return {'success': False, 'error': 'Formato no soportado para conversión'}
 
-        archivo_path = doc.archivo.path
-        output_dir = os.path.dirname(archivo_path)
+        if convertir_documento_sync(doc):
+            return {'success': True, 'pdf_path': doc.archivo_pdf.name}
 
-        cmd = [
-            'libreoffice', '--headless', '--convert-to', 'pdf',
-            '--outdir', output_dir, archivo_path
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-
-        if result.returncode == 0:
-            pdf_filename = os.path.splitext(os.path.basename(archivo_path))[0] + '.pdf'
-            pdf_path = os.path.join(output_dir, pdf_filename)
-
-            if os.path.exists(pdf_path):
-                # Convertir ruta absoluta a relativa (relativa a MEDIA_ROOT)
-                media_root = str(settings.MEDIA_ROOT)
-                if pdf_path.startswith(media_root):
-                    pdf_path = pdf_path[len(media_root):].lstrip(os.sep)
-
-                doc.archivo_pdf = pdf_path
-                doc.save(update_fields=['archivo_pdf'])
-                logger.info(f"PDF generado: {doc.tipo_id} {documento_id} ({doc.tipo_archivo})")
-                return {'success': True, 'pdf_path': pdf_path}
-
-        logger.error(f"Error LibreOffice: {result.stderr}")
-        return {'success': False, 'error': result.stderr}
+        return {'success': False, 'error': 'LibreOffice no generó el PDF'}
 
     except Exception as exc:
         logger.error(f"Error en conversión: {exc}")
@@ -62,6 +40,10 @@ def convertir_planilla_a_pdf(self, planilla_id):
     """
     Convierte el archivo propuesto de una planilla a PDF para vista previa.
     Se ejecuta asíncronamente cuando se crea una planilla con archivo DOCX/XLSX.
+
+    Usa el mismo conversor que los documentos (``convertir_a_pdf_sync``), de
+    modo que la previsualización de planillas sale con el papel y los márgenes
+    de ``settings`` y con la copia saneada.
     """
     try:
         from .models import PlanillaCambios
@@ -76,70 +58,110 @@ def convertir_planilla_a_pdf(self, planilla_id):
         if ext not in FORMATOS_CONVERTIBLES:
             return {'success': False, 'error': f'Formato {ext} no soportado para conversión'}
 
-        output_dir = os.path.dirname(archivo_path)
+        pdf_path = convertir_a_pdf_sync(archivo_path)
+        if not pdf_path:
+            return {'success': False, 'error': 'LibreOffice no generó el PDF'}
 
-        cmd = [
-            'libreoffice', '--headless', '--convert-to', 'pdf',
-            '--outdir', output_dir, archivo_path
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-
-        if result.returncode == 0:
-            pdf_filename = os.path.splitext(os.path.basename(archivo_path))[0] + '.pdf'
-            pdf_path = os.path.join(output_dir, pdf_filename)
-
-            if os.path.exists(pdf_path):
-                media_root = str(settings.MEDIA_ROOT)
-                if pdf_path.startswith(media_root):
-                    pdf_path = pdf_path[len(media_root):].lstrip(os.sep)
-
-                planilla.archivo_propuesto_pdf = pdf_path
-                planilla.save(update_fields=['archivo_propuesto_pdf'])
-                logger.info(f"PDF generado para planilla: {planilla.codigo}")
-                return {'success': True, 'pdf_path': pdf_path}
-
-        logger.error(f"Error LibreOffice planilla: {result.stderr}")
-        return {'success': False, 'error': result.stderr}
+        planilla.archivo_propuesto_pdf = pdf_path
+        planilla.save(update_fields=['archivo_propuesto_pdf'])
+        logger.info(f"PDF generado para planilla: {planilla.codigo}")
+        return {'success': True, 'pdf_path': pdf_path}
 
     except Exception as exc:
         logger.error(f"Error en conversión planilla: {exc}")
         self.retry(exc=exc, countdown=60)
 
 
+@shared_task(bind=True, max_retries=3)
+def generar_planilla_solicitud_task(self, solicitud_uuid):
+    """
+    Genera y guarda la planilla (XLSX + PDF) de una SolicitudCambio aprobada.
+    Se ejecuta en el Celery Worker al aprobar una creación/eliminación
+    (formato SGC-FOR-001). Ver documentos.services.planillas.
+    """
+    from .models import SolicitudCambio
+    from .services.planillas import generar_planilla_solicitud
+
+    try:
+        solicitud = SolicitudCambio.objects.get(uuid=solicitud_uuid)
+    except SolicitudCambio.DoesNotExist:
+        return {'success': False, 'error': 'Solicitud no encontrada'}
+
+    if solicitud.estado != 'aprobado':
+        return {
+            'success': False,
+            'error': f"Solicitud {solicitud.codigo} en estado '{solicitud.estado}'",
+        }
+
+    try:
+        resultado = generar_planilla_solicitud(solicitud)
+        if not resultado.get('success'):
+            logger.error("Planilla %s no generada: %s", solicitud.codigo, resultado.get('error'))
+        return resultado
+    except Exception as exc:
+        logger.error("Error generando planilla de %s: %s", solicitud.codigo, exc)
+        self.retry(exc=exc, countdown=60)
+
+
 def convertir_a_pdf_sync(archivo_path):
     """
-    Convierte un archivo office a PDF usando LibreOffice (síncrono).
-    Retorna la ruta relativa del PDF generado o None si falla.
+    Convierte un archivo office a PDF (síncrono) usando el mismo conversor que
+    los documentos: papel de ``settings.PAPEL_PDF_CONVERSION``, márgenes
+    ``settings.MARGEN_{SUPERIOR,INFERIOR}_PDF_CONVERSION`` y saneo de la copia
+    temporal (salto de página del encabezado repetido). Después corre el QA del
+    PDF; si detecta maquetación rota, programa la reparación adaptativa (ver
+    services/pdf_adaptativo.py).
+
+    Retorna la ruta del PDF generado relativa a ``MEDIA_ROOT`` (o la absoluta
+    si el origen vive fuera de Media) o None si falla. Nunca lanza excepciones.
     """
+    from .services.conversion_pdf import convertir_office_a_pdf
+
     try:
         ext = os.path.splitext(archivo_path)[1].lower().lstrip('.')
         if ext not in FORMATOS_CONVERTIBLES:
             return None
 
-        output_dir = os.path.dirname(archivo_path)
-        cmd = [
-            'libreoffice', '--headless', '--convert-to', 'pdf',
-            '--outdir', output_dir, archivo_path
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+        output_dir = os.path.dirname(archivo_path) or '.'
+        pdf_path = convertir_office_a_pdf(archivo_path, outdir=output_dir)
+        if not pdf_path:
+            return None
 
-        if result.returncode == 0:
-            pdf_filename = os.path.splitext(os.path.basename(archivo_path))[0] + '.pdf'
-            pdf_path = os.path.join(output_dir, pdf_filename)
+        try:
+            from .services.pdf_adaptativo import verificar
+            verificar(archivo_path, pdf_path)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"QA del PDF falló para {pdf_path}: {exc}")
 
-            if os.path.exists(pdf_path):
-                media_root = str(settings.MEDIA_ROOT)
-                if pdf_path.startswith(media_root):
-                    pdf_path = pdf_path[len(media_root):].lstrip(os.sep)
-                logger.info(f"PDF generado (sync): {pdf_path}")
-                return pdf_path
-
-        logger.error(f"Error LibreOffice sync: {result.stderr}")
-        return None
+        pdf_path = os.path.normpath(pdf_path)
+        media_root = str(settings.MEDIA_ROOT)
+        if pdf_path.startswith(media_root):
+            pdf_path = pdf_path[len(media_root):].lstrip(os.sep)
+        logger.info(f"PDF generado (sync): {pdf_path}")
+        return pdf_path
 
     except Exception as exc:
         logger.error(f"Error en conversión sync: {exc}")
         return None
+
+
+@shared_task(bind=True, max_retries=1)
+def reparar_pdf_adaptativo(self, archivo, pdf):
+    """Reconvierte ``archivo`` buscando una disposición sin defectos de maquetación.
+
+    Se encola desde ``pdf_adaptativo.verificar`` cuando el QA del PDF detecta un
+    logo recortado o un título huérfano. Sobrescribe ``pdf`` en su sitio; nunca
+    lanza.
+    """
+    from .services.pdf_adaptativo import reparar
+
+    try:
+        diagnostico = reparar(archivo, pdf)
+        logger.info("Reparación de %s: %s", pdf, diagnostico.resumen())
+        return {'success': True, 'resumen': diagnostico.resumen()}
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Reparación adaptativa falló para %s: %s", pdf, exc)
+        return {'success': False, 'error': str(exc)}
 
 
 @shared_task(bind=True, max_retries=1)
@@ -263,7 +285,14 @@ def generar_resumen_ia(self, documento_id):
     doc.resumen_ia_error = ''
     doc.save(update_fields=['resumen_ia_estado', 'resumen_ia_error'])
 
-    resultado = ai.generar_resumen(doc)
+    try:
+        resultado = ai.generar_resumen(doc)
+    except Exception as exc:  # noqa: BLE001 - no dejar el estado colgado en 'procesando'
+        doc.resumen_ia_estado = 'error'
+        doc.resumen_ia_error = str(exc)[:2000]
+        doc.save(update_fields=['resumen_ia_estado', 'resumen_ia_error'])
+        logger.error("Resumen IA excepción para %s: %s", documento_id, exc)
+        return {'success': False, 'error': str(exc)}
     if not resultado.get('ok'):
         doc.resumen_ia_estado = 'error'
         doc.resumen_ia_error = str(resultado.get('error', 'Error desconocido'))[:2000]
@@ -348,3 +377,60 @@ def escalar_aprobaciones_vencidas(self):
         escaladas, len(admins),
     )
     return {'escaladas': escaladas, 'admins': len(admins)}
+
+
+@shared_task(bind=True, max_retries=1)
+def generar_planillas_pendientes(self):
+    """Tarea periódica: genera las planillas SGC-FOR-001 que falten.
+
+    Red de seguridad del flujo asíncrono (ver services/planillas.py): si la
+    tarea disparada al aprobar no llegó a ejecutarse (worker caído, broker sin
+    consumidor, fallo transitorio), aquí se detectan las solicitudes aprobadas
+    de creación/eliminación sin `planilla_xlsx` y se generan. Idempotente: lo
+    que ya existe no se vuelve a generar.
+
+    Devuelve {'revisadas': n, 'generadas': k, 'errores': e}.
+    """
+    from django.db.models import Q
+    from .models import SolicitudCambio
+    from .services.planillas import OPERACIONES_CON_PLANILLA, generar_planilla_solicitud
+
+    lote = int(getattr(settings, 'PLANILLAS_BARRIDO_LOTE', 100))
+    pendientes = (
+        SolicitudCambio.objects.filter(
+            estado='aprobado',
+            operacion__in=OPERACIONES_CON_PLANILLA,
+            formato__plantilla_xlsx__isnull=False,
+        )
+        .exclude(Q(formato__plantilla_xlsx='') | Q(formato__plantilla_xlsx__isnull=True))
+        .filter(Q(planilla_xlsx__isnull=True) | Q(planilla_xlsx=''))
+        .select_related('formato')
+        .order_by('fecha_creacion', 'id')[:lote]
+    )
+
+    revisadas = generadas = errores = 0
+    for solicitud in pendientes:
+        revisadas += 1
+        try:
+            resultado = generar_planilla_solicitud(solicitud)
+        except Exception as exc:
+            errores += 1
+            logger.error(
+                "Barrido de planillas: error generando %s: %s", solicitud.codigo, exc,
+            )
+            continue
+        if resultado.get('success'):
+            generadas += 1
+        else:
+            errores += 1
+            logger.error(
+                "Barrido de planillas: %s no generada: %s",
+                solicitud.codigo, resultado.get('error'),
+            )
+
+    if revisadas:
+        logger.info(
+            "Barrido de planillas: %s revisadas, %s generadas, %s errores",
+            revisadas, generadas, errores,
+        )
+    return {'revisadas': revisadas, 'generadas': generadas, 'errores': errores}

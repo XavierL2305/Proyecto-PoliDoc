@@ -94,6 +94,31 @@ class APITransferirTest(BaseDocumentosTest):
         self.assertEqual(resp.status_code, 200)
         self.doc_activo.refresh_from_db()
         self.assertEqual(self.doc_activo.propietario, self.user_trabajador)
+        self.assertTrue(Notificacion.objects.filter(
+            usuario=self.user_trabajador, tipo='propiedad_transferida'
+        ).exists())
+
+    def test_transferir_mismo_propietario_400(self):
+        resp = self.client.post(
+            f'/documentos/api/procedimientos_generales/{self.doc_activo.uuid}/transferir/',
+            data=json.dumps({'nuevo_propietario_id': self.user_jefe_ti.id}),
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.doc_activo.refresh_from_db()
+        self.assertEqual(self.doc_activo.propietario, self.user_jefe_ti)
+
+    def test_admin_transfiere_directo(self):
+        self.client.logout()
+        self.client.login(username='admin01', password='testpass123')
+        resp = self.client.post(
+            f'/documentos/api/procedimientos_generales/{self.doc_activo.uuid}/transferir/',
+            data=json.dumps({'nuevo_propietario_id': self.user_trabajador.id}),
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.doc_activo.refresh_from_db()
+        self.assertEqual(self.doc_activo.propietario, self.user_trabajador)
 
     def test_transferir_sin_permiso(self):
         self.client.logout()
@@ -302,6 +327,19 @@ class APIAprobarPlanillaTest(BaseDocumentosTest):
         self.assertEqual(resp.status_code, 200)
         self.planilla.refresh_from_db()
         self.assertEqual(self.planilla.estado, 'aprobado')
+
+    def test_aprobar_planilla_copia_afecta_todos(self):
+        self.planilla.afecta_todos = True
+        self.planilla.save(update_fields=['afecta_todos'])
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.post(
+            f'/documentos/api/planilla/{self.planilla.uuid}/aprobar/',
+            data=json.dumps({'observaciones': 'ok'}),
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.doc_activo.refresh_from_db()
+        self.assertTrue(self.doc_activo.afecta_todos)
 
     def test_rechazar_planilla_con_motivo(self):
         self.client.login(username='jefe_ti', password='testpass123')
@@ -516,6 +554,37 @@ class VistasTransferirTest(BaseDocumentosTest):
         self.assertIn(resp.status_code, [200, 302])
 
     def test_transferir_propiedad_post(self):
+        resp = self.client.post(
+            f'/documentos/procedimientos_generales/{self.doc_activo.uuid}/transferir/',
+            data={'nuevo_propietario': self.user_trabajador.id},
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.doc_activo.refresh_from_db()
+        self.assertEqual(self.doc_activo.propietario, self.user_trabajador)
+        self.assertTrue(Notificacion.objects.filter(
+            usuario=self.user_trabajador, tipo='propiedad_transferida'
+        ).exists())
+
+    def test_transferir_mismo_propietario_error(self):
+        resp = self.client.post(
+            f'/documentos/procedimientos_generales/{self.doc_activo.uuid}/transferir/',
+            data={'nuevo_propietario': self.user_jefe_ti.id},
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.doc_activo.refresh_from_db()
+        self.assertEqual(self.doc_activo.propietario, self.user_jefe_ti)
+
+    def test_transferir_excluye_propietario_actual(self):
+        resp = self.client.get(
+            f'/documentos/procedimientos_generales/{self.doc_activo.uuid}/transferir/'
+        )
+        self.assertEqual(resp.status_code, 200)
+        ids = [p.usuario_id for p in resp.context['miembros_transferibles']]
+        self.assertNotIn(self.user_jefe_ti.id, ids)
+
+    def test_admin_transfiere_directo_web(self):
+        self.client.logout()
+        self.client.login(username='admin01', password='testpass123')
         resp = self.client.post(
             f'/documentos/procedimientos_generales/{self.doc_activo.uuid}/transferir/',
             data={'nuevo_propietario': self.user_trabajador.id},
@@ -1004,11 +1073,14 @@ class SolicitudDuplicadaTest(BaseDocumentosTest):
         )
 
     def test_solicitud_aprobada_bloquea_re_solicitud(self):
-        """Si ya hay solicitud aprobada, re-solicitar redirige con warning."""
+        """Si ya hay solicitud aprobada vigente, re-solicitar redirige con warning."""
+        from django.utils import timezone
         from documentos.models import SolicitudDescarga
         SolicitudDescarga.objects.create(
             documento=self.doc_activo, solicitado_por=self.user_trabajador,
-            motivo='Aprobada', estado='aprobada'
+            motivo='Aprobada', estado='aprobada',
+            version_aprobada=self.doc_activo.version_actual,
+            fecha_expiracion=timezone.now() + timedelta(days=30),
         )
         self.client.login(username='trab01', password='testpass123')
         resp = self.client.post(
@@ -1045,11 +1117,14 @@ class SolicitudDuplicadaTest(BaseDocumentosTest):
         )
 
     def test_detalle_muestra_boton_descargar_tras_aprobacion(self):
-        """Tras aprobación, el detalle muestra botón 'Descargar'."""
+        """Tras aprobación vigente, el detalle muestra botón 'Descargar'."""
+        from django.utils import timezone
         from documentos.models import SolicitudDescarga
         SolicitudDescarga.objects.create(
             documento=self.doc_activo, solicitado_por=self.user_trabajador,
-            motivo='Test', estado='aprobada'
+            motivo='Test', estado='aprobada',
+            version_aprobada=self.doc_activo.version_actual,
+            fecha_expiracion=timezone.now() + timedelta(days=30),
         )
         self.client.login(username='trab01', password='testpass123')
         resp = self.client.get(
@@ -1109,33 +1184,48 @@ class FormulariosDescargaTest(BaseDocumentosTest):
         )
 
     def test_solicitud_aprobada_ve_descargar(self):
-        """Con solicitud aprobada, la lista muestra 'Descargar' en vez de 'Solicitar'."""
-        from documentos.models import SolicitudDescarga
+        """Con solicitud aprobada vigente, la lista muestra 'Descargar'."""
+        from django.utils import timezone
+        from documentos.models import Documento, SolicitudDescarga
+        doc = Documento.objects.create(
+            tipo=self.tipo_formulario, nombre='Formulario Interno TI',
+            codigo='TI-FOR-300', estado='activo', propietario=self.user_jefe_ti,
+            departamento=self.depto_ti, version_actual='1.0',
+        )
         SolicitudDescarga.objects.create(
-            documento=self.doc_th, solicitado_por=self.user_trabajador,
-            motivo='Aprobado', estado='aprobada'
+            documento=doc, solicitado_por=self.user_trabajador,
+            motivo='Aprobado', estado='aprobada',
+            version_aprobada=doc.version_actual,
+            fecha_expiracion=timezone.now() + timedelta(days=30),
         )
         self.client.login(username='trab01', password='testpass123')
         resp = self.client.get('/documentos/')
         self.assertEqual(resp.status_code, 200)
-        self.assertContains(resp, 'Descargar')
-        self.assertNotContains(resp, 'Solicitar')
+        self.assertContains(
+            resp, f'/documentos/formulario/{doc.uuid}/descargar/',
+        )
 
     def test_solicitud_pendiente_ve_badge(self):
         """Con solicitud pendiente, la lista muestra badge en vez de 'Solicitar'."""
-        from documentos.models import SolicitudDescarga
-        # jefe_ti is propietario of doc_th (TH dept) → visible in list but not downloadable directly
-        self.doc_th.propietario = self.user_jefe_ti
-        self.doc_th.save(update_fields=['propietario'])
+        from documentos.models import Documento, SolicitudDescarga
+        # Doc interno de TH propiedad del jefe de TH; trab02 (TH, no propietario)
+        # no puede descargar directo y tiene una solicitud pendiente.
+        doc = Documento.objects.create(
+            tipo=self.tipo_formulario, nombre='Formulario TH Interno',
+            codigo='TH-FOR-200', estado='activo', propietario=self.user_jefe_th,
+            departamento=self.depto_th, version_actual='1.0',
+        )
         SolicitudDescarga.objects.create(
-            documento=self.doc_th, solicitado_por=self.user_jefe_ti,
+            documento=doc, solicitado_por=self.user_trabajador_otro,
             motivo='Pendiente', estado='pendiente'
         )
-        self.client.login(username='jefe_ti', password='testpass123')
+        self.client.login(username='trab02', password='testpass123')
         resp = self.client.get('/documentos/')
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, 'Solicitud pendiente')
-        self.assertNotContains(resp, 'Solicitar')
+        self.assertNotContains(
+            resp, f'/documentos/formulario/{doc.uuid}/solicitar-descarga/',
+        )
 
     def test_doc_publico_ve_descargar(self):
         """Documento público siempre muestra 'Descargar' sin solicitud."""
@@ -1144,14 +1234,16 @@ class FormulariosDescargaTest(BaseDocumentosTest):
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, 'Descargar')
 
-    def test_propietario_de_otro_depto_ve_solicitar(self):
-        """Jefe propietario de doc de otro depto (no admin) ve 'Solicitar'."""
+    def test_propietario_de_otro_depto_descarga_directo(self):
+        """El propietario de un interno descarga directo, aunque no sea de su depto."""
         self.doc_th.propietario = self.user_jefe_ti
         self.doc_th.save(update_fields=['propietario'])
         self.client.login(username='jefe_ti', password='testpass123')
         resp = self.client.get('/documentos/')
         self.assertEqual(resp.status_code, 200)
-        self.assertContains(resp, 'Solicitar')
+        self.assertContains(
+            resp, f'/documentos/formulario/{self.doc_th.uuid}/descargar/',
+        )
 
     def test_jefe_ve_descargar_en_deptos_que_puede_ver(self):
         """Jefe ve 'Descargar' para docs de su depto o que es propietario."""
@@ -1483,7 +1575,7 @@ class MotorFormulariosTest(BaseDocumentosTest):
         autocompletar_respuestas(self.doc_en_revision, {})
         sol.refresh_from_db()
         self.assertEqual(sol.respuestas.get('num'), self.doc_en_revision.codigo)
-        self.assertEqual(sol.respuestas.get('acc'), 'Creación')
+        self.assertEqual(sol.respuestas.get('acc'), ['Creación'])
 
     def test_seleccion_por_flags(self):
         self._crear_formato('ZZZ-CREA', aplica_creacion=True)
@@ -1525,7 +1617,7 @@ class MotorFormulariosTest(BaseDocumentosTest):
         _autollenar_envio(sol, self.user_trabajador)
         sol.refresh_from_db()
         self.assertEqual(sol.respuestas.get('titulo'), self.doc_en_revision.nombre)
-        self.assertEqual(sol.respuestas.get('accion'), 'Creación')
+        self.assertEqual(sol.respuestas.get('accion'), ['Creación'])
         self.assertNotIn('titulo_documento', sol.respuestas)
         self.assertNotIn('operacion', sol.respuestas)
 

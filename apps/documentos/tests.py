@@ -334,7 +334,7 @@ class DocumentoModelTest(BaseDocumentosTest):
         codigo = Documento.generar_codigo_secuencial(self.depto_th, 'descripcion_procesos')
         self.assertEqual(codigo, 'DPR-002')
 
-    def test_es_publico_default_false(self):
+    def test_clasificacion_default_interno(self):
         doc = Documento.objects.create(
             tipo=self.tipo_formulario,
             nombre='Test',
@@ -343,7 +343,8 @@ class DocumentoModelTest(BaseDocumentosTest):
             propietario=self.user_trabajador,
             departamento=self.depto_ti,
         )
-        self.assertFalse(doc.es_publico)
+        self.assertEqual(doc.clasificacion, 'interno')
+        self.assertIn('publico', [k for k, _ in Documento.CLASIFICACION_CHOICES])
 
     def test_estado_default_borrador(self):
         doc = Documento.objects.create(
@@ -819,9 +820,9 @@ class PuedeTransferirTest(BaseDocumentosTest):
         result = puede_transferir(self.user_jefe_gg, self.doc_activo)
         self.assertEqual(result, (False, 'sin_permiso'))
 
-    def test_admin_requiere_aprobacion(self):
+    def test_admin_directo(self):
         result = puede_transferir(self.user_admin, self.doc_activo)
-        self.assertEqual(result, (True, 'requiere_aprobacion'))
+        self.assertEqual(result, (True, 'directo'))
 
     def test_coordinador_no_puede(self):
         result = puede_transferir(self.user_coordinador, self.doc_activo)
@@ -1168,6 +1169,83 @@ class APIBuscarSugerenciasTest(BaseDocumentosTest):
         resp = self.client.get('/documentos/api/buscar-sugerencias/?q=test')
         self.assertIn(resp.status_code, [302, 403])
 
+    # ── Búsqueda por documentos relacionados ──
+
+    def _crear_principal(self, codigo='TI-PRG-010', nombre='Procedimiento Principal'):
+        return Documento.objects.create(
+            tipo=self.tipo_procedimiento, nombre=nombre, codigo=codigo,
+            estado='activo', propietario=self.user_jefe_ti,
+            departamento=self.depto_ti, version_actual='1.0',
+        )
+
+    def test_buscar_por_relacionado_codigo_devuelve_ambos(self):
+        self.client.logout()
+        self.client.login(username='jefe_ti', password='testpass123')
+        principal = self._crear_principal()
+        principal.documentos_relacionados.add(self.doc_activo)
+        resp = self.client.get('/documentos/api/buscar-sugerencias/?q=TI-PRG-001')
+        data = resp.json()['sugerencias']
+        codigos = [d['codigo'] for d in data]
+        self.assertIn('TI-PRG-001', codigos)
+        self.assertIn('TI-PRG-010', codigos)
+        item = next(d for d in data if d['codigo'] == 'TI-PRG-010')
+        self.assertEqual(item['relacionado_con'], 'TI-PRG-001')
+
+    def test_buscar_por_relacionado_nombre_devuelve_principal(self):
+        self.client.logout()
+        self.client.login(username='jefe_ti', password='testpass123')
+        principal = self._crear_principal()
+        principal.documentos_relacionados.add(self.doc_activo)
+        resp = self.client.get(
+            '/documentos/api/buscar-sugerencias/?q=Procedimiento de Prueba'
+        )
+        data = resp.json()['sugerencias']
+        codigos = [d['codigo'] for d in data]
+        self.assertIn('TI-PRG-010', codigos)
+        item = next(d for d in data if d['codigo'] == 'TI-PRG-010')
+        self.assertEqual(item['relacionado_con'], 'TI-PRG-001')
+
+    def test_buscar_por_referencia_pendiente_devuelve_principal(self):
+        self.client.logout()
+        self.client.login(username='jefe_ti', password='testpass123')
+        principal = self._crear_principal(
+            codigo='TI-PRG-011', nombre='Principal Pendiente'
+        )
+        ReferenciaDocumento.objects.create(
+            documento=principal, codigo_destino='TI-FOR-999',
+            creado_por=self.user_jefe_ti,
+        )
+        resp = self.client.get('/documentos/api/buscar-sugerencias/?q=TI-FOR-999')
+        data = resp.json()['sugerencias']
+        codigos = [d['codigo'] for d in data]
+        self.assertIn('TI-PRG-011', codigos)
+        item = next(d for d in data if d['codigo'] == 'TI-PRG-011')
+        self.assertEqual(item['relacionado_con'], 'TI-FOR-999')
+
+    def test_relacionado_no_visible_no_devuelve_principal(self):
+        self.client.logout()
+        self.client.login(username='jefe_ti', password='testpass123')
+        principal = self._crear_principal(
+            codigo='TI-PRG-012', nombre='Principal Oculto'
+        )
+        principal.documentos_relacionados.add(self.doc_th)
+        resp = self.client.get('/documentos/api/buscar-sugerencias/?q=TH-FOR-001')
+        data = resp.json()['sugerencias']
+        codigos = [d['codigo'] for d in data]
+        self.assertNotIn('TI-PRG-012', codigos)
+        self.assertNotIn('TH-FOR-001', codigos)
+
+    def test_mis_documentos_busca_por_relacionado(self):
+        self.client.logout()
+        self.client.login(username='jefe_ti', password='testpass123')
+        principal = self._crear_principal(
+            codigo='TI-PRG-013', nombre='Principal Mis Docs'
+        )
+        principal.documentos_relacionados.add(self.doc_activo)
+        resp = self.client.get('/documentos/mis-documentos/?buscar=TI-PRG-001')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'TI-PRG-013')
+
 
 class APIListaDocumentosTest(BaseDocumentosTest):
     """Tests del endpoint de lista de documentos."""
@@ -1239,6 +1317,25 @@ class APIUsuariosDepartamentoTest(BaseDocumentosTest):
     def test_usuarios_departamento(self):
         resp = self.client.get('/documentos/api/usuarios-departamento/')
         self.assertEqual(resp.status_code, 200)
+
+    def test_usuarios_departamento_por_documento_admin(self):
+        self.client.logout()
+        self.client.login(username='admin01', password='testpass123')
+        resp = self.client.get(
+            '/documentos/api/usuarios-departamento/',
+            {'tipo': 'procedimientos_generales', 'doc_id': str(self.doc_activo.uuid)},
+        )
+        self.assertEqual(resp.status_code, 200)
+        ids = [u['id'] for u in resp.json()['usuarios']]
+        self.assertIn(self.user_trabajador.id, ids)
+        self.assertNotIn(self.user_jefe_ti.id, ids)  # excluye al propietario
+
+    def test_usuarios_departamento_documento_sin_permiso(self):
+        resp = self.client.get(
+            '/documentos/api/usuarios-departamento/',
+            {'tipo': 'procedimientos_generales', 'doc_id': str(self.doc_activo.uuid)},
+        )
+        self.assertEqual(resp.status_code, 403)
 
 
 class APISolicitarAccesoTest(BaseDocumentosTest):
@@ -1363,6 +1460,23 @@ class VistasCatalogoTest(BaseDocumentosTest):
         self.client.login(username='jefe_ti', password='testpass123')
         resp = self.client.get('/documentos/departamento/')
         self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.context['es_admin'])
+        codigos = {g['departamento'].codigo for g in resp.context['grupos']}
+        self.assertEqual(codigos, {'TI'})
+
+    def test_documentos_departamento_admin_ve_todos(self):
+        self.client.logout()
+        self.client.login(username='admin01', password='testpass123')
+        resp = self.client.get('/documentos/departamento/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.context['es_admin'])
+        codigos = {g['departamento'].codigo for g in resp.context['grupos']}
+        self.assertIn('TI', codigos)
+        self.assertIn('TH', codigos)
+
+    def test_documentos_departamento_tercero_redirigido(self):
+        resp = self.client.get('/documentos/departamento/')
+        self.assertEqual(resp.status_code, 302)
 
     def test_seleccionar_tipo(self):
         resp = self.client.get('/documentos/seleccionar-tipo/')
@@ -1732,6 +1846,28 @@ class AsignacionDocumentoFormTest(BaseDocumentosTest):
         form = AsignacionDocumentoForm()
         self.assertEqual(form.fields['coordinador'].queryset.count(), 0)
 
+    def test_sin_asignables_muestra_aviso(self):
+        """Depto sin coordinadores/trabajadores → aviso y sin select."""
+        self.user_trabajador_otro.perfil.departamento = None
+        self.user_trabajador_otro.perfil.save(update_fields=['departamento'])
+        self.client.login(username='jefe_th', password='testpass123')
+        resp = self.client.get(
+            f'/documentos/formulario/{self.doc_th.uuid}/asignar/'
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'No hay coordinadores ni trabajadores')
+        self.assertNotContains(resp, 'name="coordinador"')
+        self.assertNotContains(resp, '>Asignar<')
+
+    def test_con_asignables_muestra_select(self):
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.get(
+            f'/documentos/procedimientos_generales/{self.doc_activo.uuid}/asignar/'
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'name="coordinador"')
+        self.assertNotContains(resp, 'No hay coordinadores ni trabajadores')
+
     def test_post_usuario_valido_crea_asignacion(self):
         self.client.login(username='jefe_ti', password='testpass123')
         resp = self.client.post(
@@ -1757,6 +1893,31 @@ class AsignacionDocumentoFormTest(BaseDocumentosTest):
                 documento=self.doc_activo, coordinador=self.user_trabajador_otro
             ).exists()
         )
+
+
+class TransferirPropiedadVistaTest(BaseDocumentosTest):
+    """Aviso si el departamento no tiene otros usuarios a quien transferir."""
+
+    def _url(self):
+        return f'/documentos/procedimientos_generales/{self.doc_activo.uuid}/transferir/'
+
+    def test_sin_transferibles_muestra_aviso(self):
+        for usuario in (self.user_coordinador, self.user_trabajador):
+            usuario.perfil.departamento = None
+            usuario.perfil.save(update_fields=['departamento'])
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.get(self._url())
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'No hay otros usuarios en el departamento')
+        self.assertNotContains(resp, 'name="nuevo_propietario"')
+        self.assertNotContains(resp, '>Transferir<')
+
+    def test_con_transferibles_muestra_select(self):
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.get(self._url())
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'name="nuevo_propietario"')
+        self.assertNotContains(resp, 'No hay otros usuarios en el departamento')
 
 
 @override_settings(MAILERS={
@@ -2341,6 +2502,81 @@ class ResumenIATest(BaseDocumentosTest):
         self.assertEqual(self.doc_activo.resumen_ia_estado, 'error')
         self.assertIn('Falla simulada', self.doc_activo.resumen_ia_error)
 
+    def test_tarea_excepcion_marca_error(self):
+        from documentos.tasks import generar_resumen_ia
+        with patch('documentos.ai.generar_resumen', side_effect=RuntimeError('boom')):
+            generar_resumen_ia(str(self.doc_activo.uuid))
+        self.doc_activo.refresh_from_db()
+        self.assertEqual(self.doc_activo.resumen_ia_estado, 'error')
+        self.assertIn('boom', self.doc_activo.resumen_ia_error)
+
+    def test_reconciliar_pendiente_con_resumen_marca_listo(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+        self.doc_activo.resumen_ia = {'objetivo': 'x'}
+        self.doc_activo.resumen_ia_estado = 'pendiente'
+        self.doc_activo.resumen_ia_solicitado = timezone.now() - timedelta(minutes=30)
+        self.doc_activo.save()
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get(self._url())
+        self.doc_activo.refresh_from_db()
+        self.assertEqual(self.doc_activo.resumen_ia_estado, 'listo')
+        self.assertEqual(resp.json()['estado'], 'listo')
+
+    def test_reconciliar_pendiente_sin_resumen_marca_error(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+        self.doc_activo.resumen_ia = None
+        self.doc_activo.resumen_ia_estado = 'pendiente'
+        self.doc_activo.resumen_ia_solicitado = timezone.now() - timedelta(minutes=30)
+        self.doc_activo.save()
+        self.client.login(username='trab01', password='testpass123')
+        self.client.get(self._url())
+        self.doc_activo.refresh_from_db()
+        self.assertEqual(self.doc_activo.resumen_ia_estado, 'error')
+        self.assertIn('tardó demasiado', self.doc_activo.resumen_ia_error)
+
+    def test_reconciliar_pendiente_reciente_no_se_toca(self):
+        from django.utils import timezone
+        self.doc_activo.resumen_ia_estado = 'pendiente'
+        self.doc_activo.resumen_ia_solicitado = timezone.now()
+        self.doc_activo.save()
+        self.client.login(username='trab01', password='testpass123')
+        self.client.get(self._url())
+        self.doc_activo.refresh_from_db()
+        self.assertEqual(self.doc_activo.resumen_ia_estado, 'pendiente')
+
+    def test_reconciliar_pendiente_sin_timestamp_marca_error(self):
+        self.doc_activo.resumen_ia = None
+        self.doc_activo.resumen_ia_estado = 'pendiente'
+        self.doc_activo.resumen_ia_solicitado = None
+        self.doc_activo.save()
+        self.client.login(username='trab01', password='testpass123')
+        self.client.get(self._url())
+        self.doc_activo.refresh_from_db()
+        self.assertEqual(self.doc_activo.resumen_ia_estado, 'error')
+
+    @override_settings(IA_RESUMEN_HABILITADO=True, GEMINI_API_KEY='test-key')
+    @patch('documentos.tasks.generar_resumen_ia.delay')
+    def test_post_guarda_solicitado(self, mock_delay):
+        self.client.login(username='trab01', password='testpass123')
+        self.client.post(self._url())
+        self.doc_activo.refresh_from_db()
+        self.assertIsNotNone(self.doc_activo.resumen_ia_solicitado)
+
+    def test_poll_solo_estado_omite_resumen(self):
+        self.doc_activo.resumen_ia = {'objetivo': 'x'}
+        self.doc_activo.resumen_ia_estado = 'listo'
+        self.doc_activo.resumen_ia_version = self.doc_activo.version_actual
+        self.doc_activo.save()
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get(self._url() + '?solo_estado=1')
+        data = resp.json()
+        self.assertEqual(data['estado'], 'listo')
+        self.assertIsNone(data['resumen'])
+
     def test_resumen_ia_actualizado_invalida_por_version(self):
         self.doc_activo.resumen_ia = {'objetivo': 'x'}
         self.doc_activo.resumen_ia_estado = 'listo'
@@ -2505,6 +2741,21 @@ class ResumenIATest(BaseDocumentosTest):
                 resultado = ai.generar_resumen(self.doc_th)
         self.assertFalse(resultado['ok'])
         self.assertEqual(calls, ['gemini-primary'])
+
+    def test_max_tokens_devuelve_error(self):
+        from documentos import ai
+        from unittest.mock import MagicMock
+        resp = MagicMock()
+        resp.text = '{"objetivo": "x"'
+        resp.candidates = [SimpleNamespace(finish_reason='MAX_TOKENS')]
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = resp
+        with override_settings(GEMINI_API_KEY='test-key'):
+            with patch('documentos.ai._crear_cliente', return_value=mock_client):
+                with patch('documentos.ai._leer_archivo', return_value=b'%PDF-1.4'):
+                    resultado = ai.generar_resumen(self.doc_th)
+        self.assertFalse(resultado['ok'])
+        self.assertIn('incompleto', resultado['error'].lower())
 
     @override_settings(IA_RESUMEN_HABILITADO=True, GEMINI_API_KEY='test-key')
     def test_detalle_renderiza_relacionados_con_enlace(self):
@@ -2972,10 +3223,13 @@ class ControlAccesoDepartamentoTest(BaseDocumentosTest):
             self.user_trabajador_otro, self.doc_activo, requerir_aprobada=True))
 
     def test_solicitud_descarga_aprobada_si_da_lectura(self):
+        from django.utils import timezone
         from documentos.permissions import puede_ver_documento
         SolicitudDescarga.objects.create(
             documento=self.doc_activo, solicitado_por=self.user_trabajador_otro,
             estado='aprobada', motivo='x',
+            version_aprobada=self.doc_activo.version_actual,
+            fecha_expiracion=timezone.now() + timedelta(days=30),
         )
         self.assertTrue(puede_ver_documento(self.user_trabajador_otro, self.doc_activo))
         self.assertTrue(puede_ver_documento(
@@ -3009,9 +3263,12 @@ class ControlAccesoDepartamentoTest(BaseDocumentosTest):
         self.assertEqual(self.client.get(url).status_code, 302)
 
     def test_ver_archivo_solicitud_aprobada_permitido(self):
+        from django.utils import timezone
         SolicitudDescarga.objects.create(
             documento=self.doc_th, solicitado_por=self.user_trabajador,
             estado='aprobada', motivo='x',
+            version_aprobada=self.doc_th.version_actual,
+            fecha_expiracion=timezone.now() + timedelta(days=30),
         )
         self.client.login(username='trab01', password='testpass123')  # TI
         url = f'/documentos/{self.doc_th.tipo_id}/{self.doc_th.uuid}/ver-archivo/'
@@ -3358,3 +3615,545 @@ class AprobarPlanillaWebTest(BaseDocumentosTest):
         url = reverse('documentos:aprobar_planilla', args=[self.planilla.uuid])
         resp = self.client.post(url, {'accion': 'aprobar', 'observaciones': ''})
         self.assertEqual(resp.status_code, 302)  # redirige con mensaje, no 500
+
+
+# =============================================================================
+# DEPARTAMENTOS AFECTADOS: "TODOS"
+# =============================================================================
+
+class AfectaTodosTest(BaseDocumentosTest):
+    """Tests del flag afecta_todos (todos los departamentos)."""
+
+    def setUp(self):
+        super().setUp()
+        self.client = Client()
+
+    def test_form_afecta_todos_limpia_departamentos(self):
+        from documentos.forms import DocumentoForm
+        form = DocumentoForm(
+            data={
+                'nombre': 'Doc todos',
+                'descripcion': '',
+                'clasificacion': 'interno',
+                'periodo_retencion': '',
+                'afecta_todos': 'on',
+                'departamentos_afectados': [
+                    str(self.depto_ti.id), str(self.depto_th.id),
+                ],
+            },
+            tipo_documento='procedimientos_generales',
+            departamento_id=self.depto_ti.id,
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(list(form.cleaned_data['departamentos_afectados']), [])
+
+    def test_visibilidad_afecta_todos(self):
+        """Un doc con `afecta_todos` se muestra UNA vez, en el grupo general."""
+        self.doc_activo.afecta_todos = True
+        self.doc_activo.save(update_fields=['afecta_todos'])
+        # La vista aplica visibilidad por clasificación: usamos un jefe que
+        # puede ver el documento (TI).
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.get('/documentos/departamento/')
+        self.assertEqual(resp.status_code, 200)
+        # Aparece en el grupo general ("Todos los departamentos")...
+        generales = [
+            doc for t in resp.context['generales'] for doc in t['documentos']
+        ]
+        self.assertIn(self.doc_activo, generales)
+        # ...y NO se repite bajo el departamento del jefe.
+        for g in resp.context['grupos']:
+            codigos = [
+                doc.codigo for t in g['tipos_documento'] for doc in t['documentos']
+            ]
+            self.assertNotIn(self.doc_activo.codigo, codigos)
+
+    def test_afecta_todos_no_se_repite_por_departamento(self):
+        """El doc general aparece exactamente una vez: ni en los grupos."""
+        self.doc_activo.afecta_todos = True
+        self.doc_activo.save(update_fields=['afecta_todos'])
+        self.client.login(username='admin01', password='testpass123')
+        resp = self.client.get('/documentos/departamento/')
+        self.assertEqual(resp.status_code, 200)
+        html = resp.content.decode()
+        uuid = str(self.doc_activo.uuid)
+        self.assertEqual(html.count(uuid), 1)
+        for g in resp.context['grupos']:
+            codigos = [
+                doc.codigo for t in g['tipos_documento'] for doc in t['documentos']
+            ]
+            self.assertNotIn(self.doc_activo.codigo, codigos)
+        # Su departamento dueño (TI) tampoco lo duplica: vive solo en el general.
+        codigos_ti = [
+            doc.codigo
+            for g in resp.context['grupos'] if g['departamento'].codigo == 'TI'
+            for t in g['tipos_documento'] for doc in t['documentos']
+        ]
+        self.assertNotIn(self.doc_activo.codigo, codigos_ti)
+
+    def test_filtro_clasificacion_tambien_aplica_al_grupo_general(self):
+        self.doc_activo.afecta_todos = True
+        self.doc_activo.save(update_fields=['afecta_todos'])
+        self.client.login(username='admin01', password='testpass123')
+        resp = self.client.get('/documentos/departamento/?clasificacion=publico')
+        self.assertEqual(resp.status_code, 200)
+        generales = [
+            doc for t in resp.context['generales'] for doc in t['documentos']
+        ]
+        # doc_activo es 'interno': el grupo general respeta el filtro.
+        self.assertNotIn(self.doc_activo, generales)
+
+    def test_detalle_muestra_badge(self):
+        self.doc_activo.afecta_todos = True
+        self.doc_activo.save(update_fields=['afecta_todos'])
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.get(
+            f'/documentos/{self.doc_activo.tipo_id}/{self.doc_activo.uuid}/'
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Todos los departamentos')
+
+
+# =============================================================================
+# CHECKBOX_GRUPO AUTOMÁTICO: valor como lista
+# =============================================================================
+
+class CheckboxGrupoAutoTest(BaseDocumentosTest):
+    """El autollenado de checkbox_grupo debe guardar una lista, no un string."""
+
+    def _formato_con_campo(self, clave, tipo, origen):
+        from documentos.models import Formato, SeccionFormato, CampoFormato
+        formato = Formato.objects.create(
+            codigo=f'F-{clave}', nombre='Test', version='1', edicion='1',
+        )
+        seccion = SeccionFormato.objects.create(formato=formato, titulo='S', orden=1)
+        CampoFormato.objects.create(
+            seccion=seccion, clave=clave, etiqueta=clave, tipo=tipo, origen=origen,
+        )
+        return formato
+
+    def test_checkbox_grupo_auto_es_lista(self):
+        from documentos.models import mapear_valores_auto
+        formato = self._formato_con_campo('accion', 'checkbox_grupo', 'operacion')
+        resultado = mapear_valores_auto(formato, {'operacion': 'Creación'})
+        self.assertEqual(resultado.get('accion'), ['Creación'])
+
+    def test_texto_auto_no_se_envuelve(self):
+        from documentos.models import mapear_valores_auto
+        formato = self._formato_con_campo('num_id', 'texto', 'num_identificacion')
+        resultado = mapear_valores_auto(formato, {'num_identificacion': 'TI-FOR-001'})
+        self.assertEqual(resultado.get('num_id'), 'TI-FOR-001')
+
+    def test_filtro_a_lista(self):
+        from documentos.templatetags.formato_extras import a_lista
+        self.assertEqual(a_lista('Creación'), ['Creación'])
+        self.assertEqual(a_lista(['a', 'b']), ['a', 'b'])
+        self.assertEqual(a_lista(''), [])
+        self.assertEqual(a_lista(None), [])
+
+
+# =============================================================================
+# EVALUADOR CUANDO EL JEFE DE GG CREA
+# =============================================================================
+
+class EvaluadorGGTest(BaseDocumentosTest):
+    """Si el jefe de GG crea, evalúa un jefe par (SGC por defecto)."""
+
+    def setUp(self):
+        super().setUp()
+        self.depto_sgc = Departamento.objects.create(
+            codigo='SGC', nombre='Sistema de Gestión de la Calidad', activo=True,
+        )
+
+    def test_gg_con_sgc_jefe(self):
+        from documentos.views import determinar_evaluador
+        self.depto_sgc.jefe = self.user_coordinador
+        self.depto_sgc.save(update_fields=['jefe'])
+        self.assertEqual(
+            determinar_evaluador(self.user_jefe_gg, self.depto_gg),
+            self.user_coordinador,
+        )
+
+    def test_gg_sin_sgc_jefe_usa_primer_depto_con_jefe(self):
+        from documentos.views import determinar_evaluador
+        # SGC sin jefe; GG es el solicitante (excluido) → primer depto por
+        # código con jefe (TH antes que TI).
+        evaluador = determinar_evaluador(self.user_jefe_gg, self.depto_gg)
+        self.assertEqual(evaluador, self.user_jefe_th)
+
+    def test_gg_sin_jefes_par_devuelve_none(self):
+        from documentos.views import determinar_evaluador
+        Departamento.objects.filter(codigo__in=['TI', 'TH']).update(jefe=None)
+        self.assertIsNone(determinar_evaluador(self.user_jefe_gg, self.depto_gg))
+
+    def test_no_jefe_crea_sin_cambios(self):
+        from documentos.views import determinar_evaluador
+        self.assertEqual(
+            determinar_evaluador(self.user_trabajador, self.depto_ti),
+            self.user_jefe_ti,
+        )
+
+    def test_jefe_depto_crea_evalua_sgc(self):
+        from documentos.views import determinar_evaluador
+        self.depto_sgc.jefe = self.user_coordinador
+        self.depto_sgc.save(update_fields=['jefe'])
+        # Cualquier jefe que crea → evalúa SGC (no GG).
+        self.assertEqual(
+            determinar_evaluador(self.user_jefe_ti, self.depto_ti),
+            self.user_coordinador,
+        )
+
+
+class ReajustarEvaluadorTest(BaseDocumentosTest):
+    """Comando reajustar_evaluador_pendientes."""
+
+    def setUp(self):
+        super().setUp()
+        self.depto_sgc = Departamento.objects.create(
+            codigo='SGC', nombre='Sistema de Gestión de la Calidad', activo=True,
+            jefe=self.user_coordinador,
+        )
+
+    def _crear_paso(self, solicitante, aprobador):
+        return SolicitudAprobacionDocumento.objects.create(
+            documento=self.doc_en_revision, solicitante=solicitante,
+            aprobador=aprobador, rol_aprobador='evaluador',
+            es_final=False, estado='pendiente', departamento_origen=self.depto_ti,
+        )
+
+    def test_reajusta_documento_de_jefe(self):
+        from django.core.management import call_command
+        Notificacion.objects.create(
+            usuario=self.user_jefe_gg, titulo='x', mensaje='x',
+            tipo='solicitud_aprobacion', documento=self.doc_en_revision,
+        )
+        paso = self._crear_paso(self.user_jefe_ti, self.user_jefe_gg)
+        call_command('reajustar_evaluador_pendientes')
+        paso.refresh_from_db()
+        self.assertEqual(paso.aprobador, self.user_coordinador)
+        self.assertEqual(paso.estado, 'pendiente')
+        self.assertTrue(Notificacion.objects.filter(
+            usuario=self.user_coordinador, tipo='solicitud_aprobacion',
+            documento=self.doc_en_revision,
+        ).exists())
+        self.assertFalse(Notificacion.objects.filter(
+            usuario=self.user_jefe_gg, tipo='solicitud_aprobacion',
+            documento=self.doc_en_revision,
+        ).exists())
+
+    def test_no_jefe_sin_cambios(self):
+        from django.core.management import call_command
+        paso = self._crear_paso(self.user_trabajador, self.user_jefe_ti)
+        call_command('reajustar_evaluador_pendientes')
+        paso.refresh_from_db()
+        self.assertEqual(paso.aprobador, self.user_jefe_ti)
+
+    def test_idempotente(self):
+        from django.core.management import call_command
+        paso = self._crear_paso(self.user_jefe_ti, self.user_jefe_gg)
+        call_command('reajustar_evaluador_pendientes')
+        paso.refresh_from_db()
+        primero = paso.aprobador
+        call_command('reajustar_evaluador_pendientes')
+        paso.refresh_from_db()
+        self.assertEqual(paso.aprobador, primero)
+        self.assertEqual(primero, self.user_coordinador)
+
+
+# =============================================================================
+# FLUJO DE APROBACIÓN EN EL DETALLE
+# =============================================================================
+
+class FlujoAprobacionDetalleTest(BaseDocumentosTest):
+    """El detalle muestra quién evalúa y quién autoriza (para todos los roles)."""
+
+    def _crear_cadena(self, doc, estado_eval='pendiente', estado_aut='esperando'):
+        SolicitudAprobacionDocumento.objects.create(
+            documento=doc, solicitante=self.user_trabajador,
+            aprobador=self.user_jefe_ti, rol_aprobador='evaluador',
+            es_final=False, estado=estado_eval, departamento_origen=self.depto_ti,
+        )
+        SolicitudAprobacionDocumento.objects.create(
+            documento=doc, solicitante=self.user_trabajador,
+            aprobador=self.user_jefe_gg, rol_aprobador='autorizador',
+            es_final=True, estado=estado_aut, departamento_origen=self.depto_ti,
+        )
+
+    def test_detalle_muestra_flujo_en_revision(self):
+        self._crear_cadena(self.doc_en_revision)
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.get(
+            f'/documentos/{self.doc_en_revision.tipo_id}/{self.doc_en_revision.uuid}/'
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Flujo de aprobación')
+        self.assertContains(resp, 'Evaluación')
+        self.assertContains(resp, 'Autorización')
+        self.assertContains(resp, 'Jefe TI')
+        self.assertContains(resp, 'Jefe GG')
+
+    def test_detalle_muestra_flujo_en_activo(self):
+        self._crear_cadena(
+            self.doc_activo, estado_eval='aprobada', estado_aut='aprobada',
+        )
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.get(
+            f'/documentos/{self.doc_activo.tipo_id}/{self.doc_activo.uuid}/'
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Flujo de aprobación')
+        self.assertContains(resp, 'Aprobada')
+
+    def test_detalle_flujo_con_paso_sin_aprobador(self):
+        SolicitudAprobacionDocumento.objects.create(
+            documento=self.doc_en_revision, solicitante=self.user_jefe_ti,
+            aprobador=None, rol_aprobador='evaluador', es_final=False,
+            estado='esperando', departamento_origen=self.depto_ti,
+        )
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.get(
+            f'/documentos/{self.doc_en_revision.tipo_id}/{self.doc_en_revision.uuid}/'
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Flujo de aprobación')
+        self.assertContains(resp, 'Sin asignar')
+
+    def test_historial_estado_ordenado_por_fecha_accion(self):
+        """El historial ordena por fecha de acción (respuesta > solicitud)."""
+        ev = SolicitudAprobacionDocumento.objects.create(
+            documento=self.doc_activo, solicitante=self.user_trabajador,
+            aprobador=self.user_jefe_ti, rol_aprobador='evaluador',
+            es_final=False, estado='aprobada', departamento_origen=self.depto_ti,
+        )
+        au = SolicitudAprobacionDocumento.objects.create(
+            documento=self.doc_activo, solicitante=self.user_trabajador,
+            aprobador=self.user_jefe_gg, rol_aprobador='autorizador',
+            es_final=True, estado='aprobada', departamento_origen=self.depto_ti,
+        )
+        SolicitudAprobacionDocumento.objects.filter(pk=ev.pk).update(
+            fecha_respuesta=timezone.now() - timedelta(minutes=10)
+        )
+        SolicitudAprobacionDocumento.objects.filter(pk=au.pk).update(
+            fecha_respuesta=timezone.now()
+        )
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.get(
+            f'/documentos/{self.doc_activo.tipo_id}/{self.doc_activo.uuid}/'
+        )
+        self.assertEqual(resp.status_code, 200)
+        historial = list(resp.context['historial_estados'])
+        self.assertEqual(
+            [s.rol_aprobador for s in historial], ['autorizador', 'evaluador']
+        )
+        # La fecha principal es la de respuesta y se conserva la de solicitud.
+        self.assertContains(resp, 'Solicitado ')
+
+
+# =============================================================================
+# LOADERS DE PROGRESO
+# =============================================================================
+
+class EstadoConversionTest(BaseDocumentosTest):
+    """Endpoint de estado de conversión (para polling del loader)."""
+
+    def test_endpoint_listo(self):
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.get(
+            f'/documentos/{self.doc_activo.tipo_id}/{self.doc_activo.uuid}/estado-conversion/'
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('listo', resp.json())
+
+    def test_endpoint_denegado(self):
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get(
+            f'/documentos/{self.doc_th.tipo_id}/{self.doc_th.uuid}/estado-conversion/'
+        )
+        self.assertEqual(resp.status_code, 403)
+
+
+class LoaderDetalleTest(BaseDocumentosTest):
+    """El detalle renderiza el componente de progreso donde corresponde."""
+
+    @patch('documentos.services.conversion_pdf.convertir_office_a_pdf',
+           return_value=None)
+    def test_detalle_convierte_en_linea_sin_loader(self, mock_conv):
+        """La conversión a PDF es SÍNCRONA: no hay loader ni polling."""
+        doc = Documento.objects.create(
+            tipo=self.tipo_formulario, nombre='Doc DOCX', codigo='TI-FOR-900',
+            estado='activo', propietario=self.user_trabajador,
+            departamento=self.depto_ti, tipo_archivo='docx',
+            archivo=SimpleUploadedFile('x.docx', b'data'),
+        )
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get(f'/documentos/{doc.tipo_id}/{doc.uuid}/')
+        self.assertEqual(resp.status_code, 200)
+        mock_conv.assert_called_once()
+        self.assertNotContains(resp, 'id="conv-progress"')
+        # Sin PDF y sin conversión, el detalle lo explica en lugar de romperse
+        self.assertContains(resp, 'No se pudo generar la vista previa en PDF')
+        self.assertContains(resp, 'Vista previa no disponible')
+
+    @override_settings(IA_RESUMEN_HABILITADO=True, GEMINI_API_KEY='k')
+    def test_detalle_muestra_loader_ia(self):
+        self.doc_activo.resumen_ia_estado = 'pendiente'
+        self.doc_activo.save(update_fields=['resumen_ia_estado'])
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get(
+            f'/documentos/{self.doc_activo.tipo_id}/{self.doc_activo.uuid}/'
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'resumen-ia-loading')
+        self.assertContains(resp, 'Refinando detalles')
+
+
+# =============================================================================
+# ANIMACIONES DE BOTÓN (button-animations)
+# =============================================================================
+
+class ButtonAnimationsTest(BaseDocumentosTest):
+    """Cableado del componente: CSS/JS en base, data-anim en las plantillas,
+    variant .btn--success definido y ausencia del toast eliminado."""
+
+    @staticmethod
+    def _static(nombre):
+        from django.contrib.staticfiles import finders
+        ruta = finders.find(nombre)
+        assert ruta, f'No se encontró el archivo estático {nombre}'
+        with open(ruta, encoding='utf-8') as fh:
+            return fh.read()
+
+    def test_base_carga_css_y_js(self):
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get('/documentos/mis-documentos/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'css/components/button-animations.css')
+        self.assertContains(resp, 'js/button-animations.js')
+
+    def test_formulario_nuevo_tiene_botones_animados(self):
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get('/documentos/nuevo/formulario/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'data-anim="save"')
+        self.assertContains(resp, 'data-anim="send"')
+        self.assertContains(resp, 'btn-label')
+
+    def test_planilla_tiene_botones_animados_sin_atributos_de_toast(self):
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get(
+            f'/documentos/planilla-cambios/nueva/?tipo=formulario'
+            f'&doc_uuid={self.doc_borrador.uuid}'
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'data-anim="save"')
+        self.assertContains(resp, 'data-anim="send"')
+        self.assertNotContains(resp, 'data-anim-title')
+
+    def test_detalle_borrador_tiene_enviar_animado(self):
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get(
+            f'/documentos/{self.doc_borrador.tipo_id}/{self.doc_borrador.uuid}/'
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'data-anim="send"')
+
+    def test_confirmar_eliminar_tiene_papelera_animada(self):
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get(
+            f'/documentos/{self.doc_borrador.tipo_id}/'
+            f'{self.doc_borrador.uuid}/eliminar/'
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'data-anim="delete"')
+        self.assertContains(resp, 'btn-label')
+
+    def test_variant_btn_success_esta_definido(self):
+        self.assertIn('.btn--success {', self._static('css/components/buttons.css'))
+
+    def test_js_sin_toast_y_con_liberacion_de_estado(self):
+        js = self._static('js/button-animations.js')
+        # El feedback final es el flash de Django: no debe volver el toast.
+        self.assertNotIn('PolidocToast', js)
+        self.assertNotIn('showToast', js)
+        # Si la navegación no ocurre, el botón no puede quedarse "busy".
+        self.assertIn('function resetBoton', js)
+
+    def test_dur_del_js_cubre_las_keyframes(self):
+        """DUR debe ser mayor que la duración total de cada bloque de @keyframes.
+
+        La duración total = suma de los tiempos de la declaración `animation:`
+        (duración + delay) para la regla que usa ese keyframes.
+        """
+        import re
+
+        def duracion_animacion(regla):
+            """Suma duración + delay de un shorthand `animation:`."""
+            sin_parentesis = re.sub(r'\([^)]*\)', '', regla)
+            tiempos = [float(v) for v in re.findall(r'([\d.]+)s\b', sin_parentesis)]
+            self.assertTrue(tiempos, f'Sin tiempos en: {regla}')
+            return sum(tiempos) * 1000
+
+        js = self._static('js/button-animations.js')
+        bloque_dur = re.search(r'var DUR = \{(.*?)\};', js, re.S).group(1)
+        dur = {
+            k: int(v)
+            for k, v in re.findall(r"['\"]?(\w+)['\"]?\s*:\s*(\d+)", bloque_dur)
+        }
+
+        css = self._static('css/components/button-animations.css')
+
+        def declaracion(selector):
+            regla = re.search(
+                r'%s\s*\{([^}]*)\}' % re.escape(selector), css, re.S
+            )
+            self.assertTrue(regla, f'No se encontró la regla {selector}')
+            anim = re.search(r'animation:\s*([^;]+);', regla.group(1))
+            self.assertTrue(anim, f'Sin animation en {selector}')
+            return anim.group(1)
+
+        total_save = max(
+            duracion_animacion(declaracion('.btn--anim-saving > i')),
+            duracion_animacion(declaracion('.btn--anim-saving::before')),
+            # El JS cambia el icono a los 430 ms y lanza el check desde ahí.
+            430 + duracion_animacion(declaracion('.btn--anim-saved > i')),
+        )
+        total_send = max(
+            duracion_animacion(declaracion('.btn--anim-sending')),
+            duracion_animacion(declaracion('.btn--anim-sending > i')),
+            duracion_animacion(declaracion('.btn--anim-sending::after')),
+        )
+        total_delete = max(
+            duracion_animacion(declaracion('.trash-anim__can')),
+            duracion_animacion(declaracion('.trash-anim__lid')),
+            duracion_animacion(declaracion('.trash-anim__flying')),
+        )
+
+        self.assertGreater(dur['save'], total_save)
+        self.assertGreater(dur['send'], total_send)
+        # La papelera se dibuja en DOM y espera exactamente DUR.delete.
+        self.assertGreaterEqual(dur['delete'], total_delete)
+
+
+# =============================================================================
+# ROLES Y PERMISOS: FLUJO DE APROBACIÓN
+# =============================================================================
+
+class RolesPermisosFlujoTest(BaseDocumentosTest):
+    """La página de roles y permisos documenta el flujo de aprobación."""
+
+    def test_admin_ve_flujo(self):
+        self.client.login(username='admin01', password='testpass123')
+        resp = self.client.get('/documentos/configuracion/roles-permisos/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Flujo de aprobación')
+
+    def test_jefe_ve_flujo(self):
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.get('/documentos/configuracion/roles-permisos/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Flujo de aprobación')
+
+    def test_trabajador_denegado(self):
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get('/documentos/configuracion/roles-permisos/')
+        self.assertEqual(resp.status_code, 302)

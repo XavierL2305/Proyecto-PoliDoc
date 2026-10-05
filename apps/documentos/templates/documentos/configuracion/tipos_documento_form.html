@@ -54,10 +54,19 @@
     color: var(--color-muted);
     margin-top: 0.25rem;
   }
+
+  /* === Picker visual de íconos === */
+  .icono-picker {
+    position: relative;
+  }
   .icono-input {
     display: flex;
     align-items: center;
     gap: 0.5rem;
+  }
+  .icono-input .form-input {
+    flex: 1;
+    min-width: 0;
   }
   .icono-preview {
     width: 2.25rem;
@@ -70,6 +79,102 @@
     background: var(--color-bg);
     color: var(--color-primary);
     flex-shrink: 0;
+  }
+  .icono-picker-toggle {
+    width: 2.25rem;
+    height: 2.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-bg);
+    color: var(--color-muted);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: all var(--transition);
+  }
+  .icono-picker-toggle:hover {
+    border-color: var(--color-muted);
+    color: var(--color-primary);
+  }
+  .icono-picker-toggle i {
+    transition: transform var(--transition);
+  }
+  .icono-picker-toggle[aria-expanded="true"] i {
+    transform: rotate(180deg);
+  }
+  .icono-picker-panel {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    z-index: 60;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    padding: 0.75rem;
+  }
+  .icono-picker-search {
+    position: relative;
+    margin-bottom: 0.625rem;
+  }
+  .icono-picker-search i {
+    position: absolute;
+    left: 0.625rem;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.75rem;
+    color: var(--color-muted);
+    pointer-events: none;
+  }
+  .icono-picker-search .form-input {
+    padding-left: 2rem;
+  }
+  .icono-picker-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(2.25rem, 1fr));
+    gap: 0.375rem;
+    max-height: 12rem;
+    overflow-y: auto;
+  }
+  .icono-picker-item {
+    width: 2.25rem;
+    height: 2.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all var(--transition);
+  }
+  .icono-picker-item:hover {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+  }
+  .icono-picker-item.is-selected {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+    background: var(--color-primary-light);
+  }
+  .icono-picker-item.is-hidden {
+    display: none;
+  }
+  .icono-picker-empty {
+    margin: 0.5rem 0 0;
+    font-size: 0.8125rem;
+    color: var(--color-muted);
+    text-align: center;
+  }
+  @media (max-width: 639px) {
+    .icono-picker-grid {
+      max-height: 40vh;
+    }
   }
 </style>
 {% endblock %}
@@ -86,14 +191,34 @@
       <div class="form-group">
         <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
         {% if field.name == 'icono' %}
-        <div class="icono-input">
-          {{ field }}
-          <span class="icono-preview"><i id="icono-preview" class="fa-solid fa-{{ field.value|default:'file' }}"></i></span>
+        <div class="icono-picker" id="icono-picker">
+          <div class="icono-input">
+            {{ field }}
+            <span class="icono-preview"><i id="icono-preview" class="fa-solid fa-{{ field.value|default:'file' }}"></i></span>
+            <button type="button" class="icono-picker-toggle" id="icono-picker-toggle"
+                    aria-haspopup="listbox" aria-expanded="false" aria-label="Elegir ícono">
+              <i class="fa-solid fa-chevron-down"></i>
+            </button>
+          </div>
+          <div class="icono-picker-panel" id="icono-picker-panel" hidden>
+            <div class="icono-picker-search">
+              <i class="fa-solid fa-magnifying-glass"></i>
+              <input type="text" id="icono-picker-search" class="form-input"
+                     placeholder="Buscar ícono..." autocomplete="off"
+                     aria-label="Buscar ícono">
+            </div>
+            <div class="icono-picker-grid" id="icono-picker-grid" role="listbox" aria-label="Íconos disponibles">
+              {% for ic in iconos_disponibles %}
+              <button type="button" class="icono-picker-item{% if field.value == ic %} is-selected{% endif %}"
+                      data-icon="{{ ic }}" role="option" title="{{ ic }}" aria-label="{{ ic }}">
+                <i class="fa-solid fa-{{ ic }}"></i>
+              </button>
+              {% endfor %}
+            </div>
+            <p class="icono-picker-empty" id="icono-picker-empty" hidden>Sin resultados</p>
+          </div>
         </div>
         <span class="form-help">Nombre FontAwesome sin "fa-". Elige de la lista o escríbelo (ej. book, file-lines).</span>
-        <datalist id="iconos-disponibles">
-          {% for ic in iconos_disponibles %}<option value="{{ ic }}"></option>{% endfor %}
-        </datalist>
         {% else %}
         {{ field }}
         {% endif %}
@@ -116,9 +241,89 @@
 document.addEventListener('DOMContentLoaded', function() {
   var input = document.getElementById('id_icono');
   var preview = document.getElementById('icono-preview');
-  if (!input || !preview) return;
+  var picker = document.getElementById('icono-picker');
+  var toggle = document.getElementById('icono-picker-toggle');
+  var panel = document.getElementById('icono-picker-panel');
+  var search = document.getElementById('icono-picker-search');
+  var grid = document.getElementById('icono-picker-grid');
+  var empty = document.getElementById('icono-picker-empty');
+  if (!input || !preview || !picker || !toggle || !panel || !search || !grid || !empty) return;
+
+  var items = Array.prototype.slice.call(grid.querySelectorAll('.icono-picker-item'));
+
+  function setPreview(icon) {
+    preview.className = 'fa-solid fa-' + (icon || 'file');
+  }
+
+  function markSelected(icon) {
+    items.forEach(function(item) {
+      item.classList.toggle('is-selected', item.dataset.icon === icon);
+    });
+  }
+
+  function filter(term) {
+    var q = (term || '').trim().toLowerCase();
+    var visible = 0;
+    items.forEach(function(item) {
+      var match = !q || item.dataset.icon.toLowerCase().indexOf(q) !== -1;
+      item.classList.toggle('is-hidden', !match);
+      if (match) visible += 1;
+    });
+    empty.hidden = visible !== 0;
+  }
+
+  function openPanel() {
+    panel.hidden = false;
+    toggle.setAttribute('aria-expanded', 'true');
+    markSelected(input.value.trim());
+    search.value = '';
+    filter('');
+    search.focus();
+  }
+
+  function closePanel() {
+    panel.hidden = true;
+    toggle.setAttribute('aria-expanded', 'false');
+  }
+
+  toggle.addEventListener('click', function() {
+    if (panel.hidden) { openPanel(); } else { closePanel(); }
+  });
+
   input.addEventListener('input', function() {
-    preview.className = 'fa-solid fa-' + (this.value.trim() || 'file');
+    setPreview(this.value.trim());
+  });
+
+  search.addEventListener('input', function() {
+    filter(this.value);
+  });
+
+  search.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+      closePanel();
+      input.focus();
+    }
+  });
+
+  grid.addEventListener('click', function(e) {
+    var btn = e.target.closest('.icono-picker-item');
+    if (!btn) return;
+    input.value = btn.dataset.icon;
+    setPreview(btn.dataset.icon);
+    markSelected(btn.dataset.icon);
+    closePanel();
+    input.focus();
+  });
+
+  document.addEventListener('click', function(e) {
+    if (!picker.contains(e.target)) { closePanel(); }
+  });
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && !panel.hidden) {
+      closePanel();
+      input.focus();
+    }
   });
 });
 </script>

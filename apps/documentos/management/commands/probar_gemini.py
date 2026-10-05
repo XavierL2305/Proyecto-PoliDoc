@@ -51,6 +51,7 @@ class Command(BaseCommand):
         self.stdout.write(f"  Modelo:       {estado['modelo']}")
         self.stdout.write(f"  Respaldo:     {estado.get('modelo_fallback') or '(ninguno)'}")
         self.stdout.write(f"  Reintentos:   {estado.get('reintentos', '?')}")
+        self.stdout.write(f"  Máx. tokens:  {estado.get('max_tokens', '?')}")
         self.stdout.write(f"  Límite:       {estado['max_mb']} MB")
         self.stdout.write(f"  SDK genai:    {estado.get('sdk_version', '?')}")
         self.stdout.write('')

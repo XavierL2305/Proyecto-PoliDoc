@@ -3,6 +3,43 @@ from django.db.models import Q
 from .models import Documento
 
 
+def q_documentos_visibles(usuario):
+    """Q de documentos visibles para el usuario (criterio por rol/clasificación).
+
+    - admin: todo.
+    - jefe: su departamento con clasificación ``interno``/``confidencial`` +
+      propios + públicos activos + asignaciones/distribuciones. ``restringido``
+      NO se ve por departamento.
+    - coordinador/trabajador: propios + públicos activos + asignaciones
+      (coordinador) + distribuciones no revocadas.
+
+    Las asignaciones/distribuciones se resuelven por subconsulta (``id__in``)
+    para no introducir JOINs que dupliquen resultados.
+    """
+    from .models import AsignacionDocumento, DistribucionDocumento
+
+    perfil = getattr(usuario, 'perfil', None)
+    if perfil and perfil.es_administrador:
+        return Q()
+
+    publicos = Q(clasificacion='publico', estado='activo')
+    ids_asignados = AsignacionDocumento.objects.filter(
+        coordinador=usuario, activa=True,
+    ).values('documento_id')
+    ids_distribuidos = DistribucionDocumento.objects.filter(
+        usuario=usuario, revocado=False,
+    ).values('documento_id')
+    grants = Q(id__in=ids_asignados) | Q(id__in=ids_distribuidos)
+
+    base = Q(propietario=usuario) | publicos | grants
+    if perfil and perfil.es_jefe and perfil.departamento_id:
+        base |= Q(
+            departamento_id=perfil.departamento_id,
+            clasificacion__in=['interno', 'confidencial'],
+        )
+    return base
+
+
 def es_jefe_de_departamento(usuario, documento):
     return (usuario.perfil.es_jefe
             and documento.departamento
@@ -22,12 +59,58 @@ def puede_editar(usuario, documento):
     return documento.propietario == usuario
 
 
+def descarga_autorizada(documento, usuario):
+    """True si hay una solicitud de descarga **aprobada, vigente y de la
+    versión actual** del documento para ``usuario`` (ISO: autorización temporal).
+    """
+    from django.utils import timezone
+
+    from .models import SolicitudDescarga
+
+    if not documento or not getattr(usuario, 'pk', None):
+        return False
+    return SolicitudDescarga.objects.filter(
+        documento=documento,
+        solicitado_por=usuario,
+        estado='aprobada',
+        version_aprobada=documento.version_actual,
+        fecha_expiracion__gt=timezone.now(),
+    ).exists()
+
+
+def tiene_distribucion(documento, usuario):
+    """True si ``usuario`` tiene una distribución no revocada del documento."""
+    from .models import DistribucionDocumento
+
+    if not documento or not getattr(usuario, 'pk', None):
+        return False
+    return DistribucionDocumento.objects.filter(
+        documento=documento, usuario=usuario, revocado=False,
+    ).exists()
+
+
 def puede_descargar(usuario, documento):
+    """Descarga directa según clasificación (ISO 9001:7.5.3).
+
+    admin y públicos: directo; jefe del departamento para ``interno``; el
+    propietario de un ``interno``; quien tenga una distribución vigente; y
+    quien tenga una solicitud aprobada vigente y de la versión actual.
+    ``confidencial``/``restringido`` requieren solicitud aprobada.
+    """
+    if not hasattr(usuario, 'perfil'):
+        return False
     if usuario.perfil.es_administrador:
         return True
-    if es_jefe_de_departamento(usuario, documento):
+    if documento.clasificacion == 'publico':
         return True
-    if documento.es_publico:
+    if (documento.clasificacion == 'interno'
+            and es_jefe_de_departamento(usuario, documento)):
+        return True
+    if documento.clasificacion == 'interno' and documento.propietario == usuario:
+        return True
+    if tiene_distribucion(documento, usuario):
+        return True
+    if descarga_autorizada(documento, usuario):
         return True
     return False
 
@@ -41,12 +124,16 @@ def puede_inhabilitar(usuario, documento):
 
 
 def puede_transferir(usuario, documento):
+    """Solo administradores y el jefe del departamento del documento.
+
+    Ambos transfieren de forma directa (no existe aprobación de transferencia).
+    """
     if usuario.perfil.es_jefe:
         depto_doc = getattr(documento, 'departamento', None)
         if depto_doc == usuario.perfil.departamento:
             return True, "directo"
     if usuario.perfil.es_administrador:
-        return True, "requiere_aprobacion"
+        return True, "directo"
     return False, "sin_permiso"
 
 
@@ -56,18 +143,20 @@ def puede_ver_documento(usuario, documento, requerir_aprobada=False):
     Retorna True si ALGUNA de estas condiciones se cumple:
     - Es administrador
     - Es propietario del documento
-    - Documento es público y activo
-    - Mismo departamento y activo (excepto DPR)
-    - Jefe del departamento del documento
-    - Es jefe y el documento es DPR (global, cualquier jefe)
+    - Documento público y activo
+    - ``interno``: mismo departamento y activo, o jefe del departamento, o DPR
+      (cualquier jefe)
+    - ``confidencial``: jefe del departamento
+    - ``restringido``: solo admin/propietario/grants (abajo)
     - Tiene asignación activa con puede_leer
     - Tiene distribución activa (revocado=False)
     - Está involucrado en una solicitud del documento
 
     Con ``requerir_aprobada=True`` las solicitudes de descarga/acceso solo
-    cuentan si están APROBADAS. Se usa para servir el CONTENIDO del archivo
-    (visor), de modo que una solicitud pendiente no filtre el documento antes
-    de su aprobación — aunque sí permita ver la página de detalle/estado.
+    cuentan si están APROBADAS (y, en la descarga, vigentes y de la versión
+    actual). Se usa para servir el CONTENIDO del archivo (visor), de modo que
+    una solicitud pendiente no filtre el documento antes de su aprobación —
+    aunque sí permita ver la página de detalle/estado.
     """
     if not hasattr(usuario, 'perfil'):
         return False
@@ -78,16 +167,18 @@ def puede_ver_documento(usuario, documento, requerir_aprobada=False):
         return True
 
     es_activo = documento.estado == 'activo'
+    clasificacion = documento.clasificacion
 
-    if documento.es_publico and es_activo:
+    if clasificacion == 'publico' and es_activo:
         return True
 
     es_dpr = getattr(documento.tipo, 'key', None) == 'descripcion_procesos'
 
     if es_dpr:
+        # DPR es global para jefes (cualquiera); el resto entra por grants.
         if usuario.perfil.es_jefe:
             return True
-    else:
+    elif clasificacion == 'interno':
         mismo_depto = (
             documento.departamento
             and usuario.perfil.departamento
@@ -97,6 +188,11 @@ def puede_ver_documento(usuario, documento, requerir_aprobada=False):
             return True
         if es_jefe_de_departamento(usuario, documento):
             return True
+    elif clasificacion == 'confidencial':
+        # Need-to-know dentro del departamento: solo el jefe (y los grants).
+        if es_jefe_de_departamento(usuario, documento):
+            return True
+    # restringido: sin acceso por departamento; solo admin/propietario/grants.
 
     from .models import AsignacionDocumento, DistribucionDocumento
     if AsignacionDocumento.objects.filter(
@@ -126,10 +222,14 @@ def puede_ver_documento(usuario, documento, requerir_aprobada=False):
     ).exists():
         return True
 
-    filtro_descarga = {'documento': documento, 'solicitado_por': usuario}
     if requerir_aprobada:
-        filtro_descarga['estado'] = 'aprobada'
-    if SolicitudDescarga.objects.filter(**filtro_descarga).exists():
+        # El contenido solo se sirve con una autorización aprobada, vigente y
+        # de la versión actual.
+        if descarga_autorizada(documento, usuario):
+            return True
+    elif SolicitudDescarga.objects.filter(
+        documento=documento, solicitado_por=usuario
+    ).exists():
         return True
     if AprobacionDescarga.objects.filter(
         solicitud__documento=documento, aprobador=usuario

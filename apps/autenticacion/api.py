@@ -26,7 +26,7 @@ def api_notificaciones(request):
                     n.departamento is not None and
                     user_departamento is not None and
                     n.departamento != user_departamento and
-                    not (n.documento and n.documento.es_publico)
+                    not (n.documento and n.documento.clasificacion == 'publico')
                 ),
             }
             for n in notificaciones

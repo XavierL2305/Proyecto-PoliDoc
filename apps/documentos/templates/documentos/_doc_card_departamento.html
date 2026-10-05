@@ -1,0 +1,36 @@
+{% comment %}
+Tarjeta de documento de la vista "Departamento".
+Uso: {% include 'documentos/_doc_card_departamento.html' with doc=doc tipo=tipo %}
+Necesita en el contexto: hoy, dias7 (fechas de vencimiento).
+{% endcomment %}
+        <div class="doc-card">
+          <div class="doc-card-header">
+            <div class="doc-icon" style="background: var(--color-{{ tipo.color }}-light); color: var(--color-{{ tipo.color }});">
+              <i class="fa-solid fa-{{ tipo.icono }}"></i>
+            </div>
+            <div class="doc-info">
+              <h4>{{ doc.nombre }}</h4>
+              <p>{{ doc.codigo }}</p>
+            </div>
+          </div>
+          <div class="doc-meta">
+            <span class="badge badge--{{ doc.estado }}">{{ doc.get_estado_display }}</span>
+            <span class="badge badge--{{ doc.clasificacion_color }}" style="font-size: 0.65rem;">{{ doc.get_clasificacion_display }}</span>
+            <span>v{{ doc.version_actual }}</span>
+            <span>{{ doc.fecha_modificacion|date:"d/m/Y" }}</span>
+            {% if doc.estado_vigencia == 'vencido' %}
+            <span class="badge badge--danger" style="font-size: 0.65rem;">Vencido {{ doc.fecha_vencimiento|date:"d/m/Y" }}</span>
+            {% elif doc.estado_vigencia == 'vence_pronto' %}
+            <span class="badge badge--warning" style="font-size: 0.65rem;">Vence {{ doc.fecha_vencimiento|date:"d/m/Y" }}</span>
+            {% elif doc.estado_vigencia == 'vigente' %}
+            <span class="badge badge--success" style="font-size: 0.65rem;">Vigente</span>
+            {% elif doc.tipo.requiere_vigencia %}
+            <span class="badge badge--danger" style="font-size: 0.65rem;">Falta vigencia</span>
+            {% else %}
+            <span class="badge badge--secondary" style="font-size: 0.65rem;">Sin vigencia</span>
+            {% endif %}
+          </div>
+          <div class="doc-actions">
+            <a href="{% url 'documentos:detalle' tipo=tipo.key documento_id=doc.uuid %}" class="btn btn--ghost btn--sm"><i class="fa-solid fa-eye"></i> Ver</a>
+          </div>
+        </div>

@@ -1,6 +1,7 @@
 import logging
 import json
 from django.shortcuts import render, redirect
+from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_POST
@@ -24,6 +25,20 @@ logger = logging.getLogger('django_auth_ldap')
 LOGIN_MAX_INTENTOS = 5
 LOGIN_BLOQUEO_SEGUNDOS = 300
 MENSAJE_CREDENCIALES = 'Usuario o contraseña incorrectos.'
+
+
+def _ctx_login(extra=None):
+    """
+    Contexto base del login.
+
+    Siempre expone la versión vigente de los Términos (settings.TERMINOS_VERSION)
+    para que la plantilla pueda mostrarla en el modal.
+    """
+    ctx = {'terminos_version': settings.TERMINOS_VERSION}
+    if extra:
+        ctx.update(extra)
+    return ctx
+
 
 
 def _login_throttle_key(ip, username):
@@ -106,7 +121,11 @@ def login_view(request):
                     'Demasiados intentos fallidos. '
                     'Espera unos minutos antes de volver a intentar.'
                 )
-                return render(request, 'registration/login.html', {'error': error})
+                return render(
+                    request,
+                    'registration/login.html',
+                    _ctx_login({'error': error}),
+                )
 
             user = authenticate(request, username=username, password=password)
 
@@ -121,37 +140,70 @@ def login_view(request):
                         f"{username} desde {ip_cliente}"
                     )
                 # Verificar perfil
+                version_terminos_pendiente = False
                 try:
                     perfil = user.perfil
-                    terminos_aceptados = perfil.acepto_terminos
+                    # Los términos sólo cuentan como aceptados si la versión
+                    # aceptada coincide con la vigente (TERMINOS_VERSION):
+                    # si cambió el texto, hay que volver a aceptarlos.
+                    terminos_aceptados = (
+                        perfil.acepto_terminos
+                        and perfil.terminos_version == settings.TERMINOS_VERSION
+                    )
+                    version_terminos_pendiente = (
+                        perfil.acepto_terminos
+                        and perfil.terminos_version != settings.TERMINOS_VERSION
+                    )
                     logger.info(f"Perfil encontrado para {username}: grupo={perfil.grupo_ldap}, tiene_acceso={perfil.tiene_acceso}")
                     if not perfil.tiene_acceso:
                         error = 'Tu usuario no tiene permisos para acceder a este sistema.'
                         logger.warning(
                             f"Usuario {username} autenticado pero sin grupo válido: {perfil.grupo_ldap}"
                         )
-                        return render(request, 'registration/login.html', {'error': error})
+                        return render(
+                            request,
+                            'registration/login.html',
+                            _ctx_login({'error': error}),
+                        )
                 except PerfilUsuario.DoesNotExist:
                     logger.info(f"Usuario {username} sin perfil LDAP, permitiendo acceso")
 
                 # Validar aceptación de términos (server-side)
                 if terms != 'on':
-                    error = 'Debes aceptar los Términos y Condiciones para continuar.'
-                    return render(request, 'registration/login.html', {
-                        'error': error,
-                        'terminos_aceptados': terminos_aceptados,
-                    })
+                    if version_terminos_pendiente:
+                        error = (
+                            'Se actualizaron los Términos y Condiciones '
+                            f'(versión {settings.TERMINOS_VERSION}). '
+                            'Debes aceptarlos para continuar.'
+                        )
+                    else:
+                        error = 'Debes aceptar los Términos y Condiciones para continuar.'
+                    return render(
+                        request,
+                        'registration/login.html',
+                        _ctx_login({
+                            'error': error,
+                            'terminos_aceptados': terminos_aceptados,
+                        }),
+                    )
 
                 # Login exitoso
                 login(request, user)
 
-                # Guardar aceptación de términos en el perfil
+                # Guardar aceptación de términos en el perfil, registrando la
+                # versión aceptada (auditoría de consentimiento).
                 try:
                     perfil = user.perfil
-                    if not perfil.acepto_terminos:
+                    if (not perfil.acepto_terminos
+                            or perfil.terminos_version != settings.TERMINOS_VERSION):
                         perfil.acepto_terminos = True
                         perfil.fecha_acepto_terminos = timezone.now()
-                        perfil.save(update_fields=['acepto_terminos', 'fecha_acepto_terminos'])
+                        perfil.terminos_version = settings.TERMINOS_VERSION
+                        perfil.save(update_fields=[
+                            'acepto_terminos',
+                            'fecha_acepto_terminos',
+                            'terminos_version',
+                        ])
                 except PerfilUsuario.DoesNotExist:
                     pass
 
@@ -165,7 +217,7 @@ def login_view(request):
                 _cache_set_seguro(throttle_key, intentos + 1, LOGIN_BLOQUEO_SEGUNDOS)
                 logger.warning(f"Login fallido: {username} (intento {intentos + 1})")
 
-    return render(request, 'registration/login.html', {'error': error})
+    return render(request, 'registration/login.html', _ctx_login({'error': error}))
 
 
 @require_POST

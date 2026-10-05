@@ -284,9 +284,11 @@ async function abrirModalTransferir(tipo, docId) {
     document.getElementById('modal-transferir-doc-id').value = docId;
     document.getElementById('modal-transferir-tipo').value = tipo;
 
-    // Cargar usuarios del departamento
+    // Cargar usuarios del departamento del documento
     try {
-        const response = await fetch('/documentos/api/usuarios-departamento/');
+        const response = await fetch(
+            `/documentos/api/usuarios-departamento/?tipo=${encodeURIComponent(tipo)}&doc_id=${encodeURIComponent(docId)}`
+        );
         const data = await response.json();
         const select = document.getElementById('modal-transferir-usuario');
         select.innerHTML = '<option value="">Seleccione un usuario</option>';

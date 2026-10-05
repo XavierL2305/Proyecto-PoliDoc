@@ -36,15 +36,19 @@ class DocumentoForm(forms.ModelForm):
 
     class Meta:
         model = Documento
-        fields = ['nombre', 'descripcion', 'archivo', 'es_publico',
-                  'periodo_retencion', 'participantes']
+        fields = ['nombre', 'descripcion', 'archivo', 'clasificacion',
+                  'periodo_vigencia', 'periodo_retencion', 'participantes', 'afecta_todos']
         widgets = {
             'nombre': forms.TextInput(attrs={'class': 'form-input', 'placeholder': ' '}),
             'descripcion': forms.Textarea(attrs={'class': 'form-input', 'rows': 4, 'placeholder': ' '}),
-            'es_publico': forms.CheckboxInput(attrs={'class': 'form-checkbox'}),
+            'clasificacion': forms.Select(attrs={'class': 'form-input'}),
+            'periodo_vigencia': forms.Select(attrs={'class': 'form-input'}),
             'periodo_retencion': forms.Select(attrs={'class': 'form-input'}),
             'archivo': forms.FileInput(attrs={'class': 'form-input'}),
             'participantes': forms.HiddenInput(),
+            'afecta_todos': forms.CheckboxInput(attrs={
+                'class': 'form-checkbox', 'onchange': 'toggleAfectaTodos(this)',
+            }),
         }
 
     def __init__(self, *args, **kwargs):
@@ -55,7 +59,8 @@ class DocumentoForm(forms.ModelForm):
             'nombre': 'Nombre con el que se identificará en el catálogo. Sé claro y específico (ej. Procedimiento de Control de Documentos).',
             'descripcion': 'Resume el objetivo y el alcance: para qué sirve y a quién aplica.',
             'archivo': 'Archivo principal del documento (PDF, Word o Excel, máx. 10 MB). Es la versión que se controla y distribuye.',
-            'es_publico': 'Si lo marcas, cualquier departamento podrá verlo y solicitarlo; si no, solo el tuyo.',
+            'clasificacion': '"Público" hace el documento visible para todos los departamentos; el resto se mantiene dentro del tuyo.',
+            'periodo_vigencia': 'Tiempo que el documento permanece vigente antes de requerir revisión/renovación. Puede quedar sin vigencia si el tipo lo permite.',
             'periodo_retencion': 'Tiempo que debe conservarse antes de su disposición final (ISO 15489).',
             'departamentos_afectados': 'Áreas a las que impacta este documento.',
             'responsables': 'Áreas responsables de mantener y aplicar el documento.',
@@ -67,6 +72,8 @@ class DocumentoForm(forms.ModelForm):
                 self.fields[nombre].help_text = texto
         self.fields['periodo_retencion'].queryset = Periodo.objects.filter(activo=True)
         self.fields['periodo_retencion'].empty_label = 'Sin período'
+        self.fields['periodo_vigencia'].queryset = Periodo.objects.filter(activo=True)
+        self.fields['periodo_vigencia'].empty_label = '— Sin vigencia —'
 
         tipo_obj = None
         if tipo_documento:
@@ -74,6 +81,7 @@ class DocumentoForm(forms.ModelForm):
                 tipo_obj = TipoDocumento.objects.filter(key=tipo_documento).first()
             else:
                 tipo_obj = tipo_documento
+        self._tipo_obj = tipo_obj
 
         if tipo_documento:
             qs = Documento.objects.filter(
@@ -85,6 +93,10 @@ class DocumentoForm(forms.ModelForm):
             self.fields['documentos_relacionados'].queryset = qs
             if tipo_obj and tipo_obj.periodo_retencion and not self.instance.pk:
                 self.fields['periodo_retencion'].initial = tipo_obj.periodo_retencion
+            if tipo_obj and tipo_obj.periodo_vigencia and not self.instance.pk:
+                self.fields['periodo_vigencia'].initial = tipo_obj.periodo_vigencia
+            if tipo_obj and tipo_obj.requiere_vigencia:
+                self.fields['periodo_vigencia'].required = True
         else:
             self.fields['documentos_relacionados'].queryset = Documento.objects.none()
 
@@ -92,12 +104,27 @@ class DocumentoForm(forms.ModelForm):
         if tipo_obj:
             if not tipo_obj.usa_departamentos_afectados:
                 self.fields.pop('departamentos_afectados', None)
+                self.fields.pop('afecta_todos', None)
             if not tipo_obj.usa_responsables:
                 self.fields.pop('responsables', None)
             if not tipo_obj.usa_participantes:
                 self.fields.pop('participantes', None)
             if not tipo_obj.usa_documentos_relacionados:
                 self.fields.pop('documentos_relacionados', None)
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned.get('afecta_todos'):
+            # "Todos" reemplaza la selección específica.
+            cleaned['departamentos_afectados'] = Departamento.objects.none()
+        tipo_obj = getattr(self, '_tipo_obj', None)
+        if (tipo_obj and tipo_obj.requiere_vigencia
+                and not cleaned.get('periodo_vigencia')):
+            self.add_error(
+                'periodo_vigencia',
+                'Este tipo de documento exige un período de vigencia.',
+            )
+        return cleaned
 
     def clean_participantes(self):
         return self.cleaned_data.get('participantes') or []
@@ -145,18 +172,28 @@ class PlanillaCambiosForm(forms.ModelForm):
         required=False, widget=forms.HiddenInput(),
         label='Documentos Asociados (JSON)'
     )
+    clasificacion_propuesta = forms.ChoiceField(
+        choices=[('', '— Sin cambios —')] + list(Documento.CLASIFICACION_CHOICES),
+        required=False,
+        label='Clasificación Propuesta',
+        widget=forms.Select(attrs={'class': 'form-input form-select'}),
+    )
 
     class Meta:
         model = PlanillaCambios
         fields = [
             'nombre_propuesto', 'descripcion_propuesta', 'archivo_propuesto',
-            'departamentos_afectados', 'participantes_propuestos',
+            'clasificacion_propuesta', 'departamentos_afectados',
+            'participantes_propuestos', 'afecta_todos',
         ]
         widgets = {
             'nombre_propuesto': forms.TextInput(attrs={'class': 'form-input'}),
             'descripcion_propuesta': forms.Textarea(attrs={'rows': 3, 'class': 'form-input'}),
             'archivo_propuesto': forms.FileInput(attrs={'class': 'form-input'}),
             'participantes_propuestos': forms.HiddenInput(),
+            'afecta_todos': forms.CheckboxInput(attrs={
+                'class': 'form-checkbox', 'onchange': 'toggleAfectaTodos(this)',
+            }),
         }
 
     def __init__(self, *args, **kwargs):
@@ -192,6 +229,7 @@ class PlanillaCambiosForm(forms.ModelForm):
 
         if not mostrar_deptos:
             self.fields.pop('departamentos_afectados', None)
+            self.fields.pop('afecta_todos', None)
         elif tipo_key in ('formulario', 'normas'):
             self.fields['departamentos_afectados'].required = False
 
@@ -201,6 +239,12 @@ class PlanillaCambiosForm(forms.ModelForm):
             self.fields.pop('participantes_propuestos', None)
         if not mostrar_documentos:
             self.fields.pop('documentos_asociados_json', None)
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned.get('afecta_todos'):
+            cleaned['departamentos_afectados'] = Departamento.objects.none()
+        return cleaned
 
     def clean_participantes_propuestos(self):
         return self.cleaned_data.get('participantes_propuestos') or []
@@ -294,6 +338,7 @@ class TipoDocumentoForm(forms.ModelForm):
             'usa_departamentos_afectados', 'usa_responsables',
             'usa_participantes', 'usa_documentos_relacionados',
             'icono', 'color', 'solo_jefes', 'sin_prefijo_depto',
+            'periodo_vigencia', 'periodo_retencion', 'requiere_vigencia',
         ]
         widgets = {
             'codigo': forms.TextInput(attrs={'class': 'form-input', 'placeholder': ' '}),
@@ -307,11 +352,13 @@ class TipoDocumentoForm(forms.ModelForm):
             'icono': forms.TextInput(attrs={
                 'class': 'form-input',
                 'placeholder': 'file',
-                'list': 'iconos-disponibles',
                 'autocomplete': 'off',
             }),
             'solo_jefes': forms.CheckboxInput(attrs={'class': 'form-checkbox'}),
             'sin_prefijo_depto': forms.CheckboxInput(attrs={'class': 'form-checkbox'}),
+            'periodo_vigencia': forms.Select(attrs={'class': 'form-input form-select'}),
+            'periodo_retencion': forms.Select(attrs={'class': 'form-input form-select'}),
+            'requiere_vigencia': forms.CheckboxInput(attrs={'class': 'form-checkbox'}),
         }
 
     def clean_icono(self):
@@ -327,6 +374,13 @@ class TipoDocumentoForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields['icono'].required = False
+        periodos = Periodo.objects.filter(activo=True)
+        self.fields['periodo_vigencia'].queryset = periodos
+        self.fields['periodo_vigencia'].empty_label = '— Sin vigencia —'
+        self.fields['periodo_retencion'].queryset = periodos
+        self.fields['periodo_retencion'].empty_label = '— Sin retención —'
+        self.fields['periodo_vigencia'].required = False
+        self.fields['periodo_retencion'].required = False
 
 
 

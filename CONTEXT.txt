@@ -115,7 +115,12 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
 -------------------------------------------------------------------
   4.1 PROPIEDAD DE DOCUMENTOS:
       - El propietario es el usuario que CREA el documento original
-      - La propiedad es TRANSFERIBLE (el Jefe puede transferir)
+      - La propiedad es TRANSFERIBLE (solo Admin y Jefe del depto del doc;
+        el propietario NO puede transferir por sí mismo)
+      - Toda transferencia es DIRECTA (no hay aprobación de transferencia),
+        notifica al nuevo propietario y se audita en MongoDB
+        (`services/transferencia.py:transferir_propiedad_documento`)
+      - El nuevo propietario debe pertenecer al MISMO departamento del doc
       - Solo el propietario (o Jefe) puede eliminar documentos
 
    4.2 MATRIZ DE PERMISOS:
@@ -141,28 +146,47 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
        | Solicitar acceso doc otro   | ❌          | ❌                     | ✅          |
        | Aprobar solicitud acceso    | ❌          | ❌                     | ✅ (destino)|
 
+       Nota: el ADMINISTRADOR también transfiere (directo, cualquier documento)
+       y además puede ver TODOS los departamentos en la vista "Departamento".
+       La columna "Descargar documento depto" contempla la clasificación: el
+       jefe descarga directo solo en `interno`; `confidencial`/`restringido`
+       requieren solicitud aprobada (`restringido`, doble control). Ver §10.3.
+
 5. FLUJO DE FORMULARIOS DESCARGABLES
 -------------------------------------------------------------------
   5.1 CONCEPTO:
       - El catálogo muestra documentos de tipo "Formulario" (estado=activo)
-      - Visibilidad: documentos del departamento del usuario + documentos públicos (es_publico=True)
+      - Visibilidad: documentos del departamento del usuario + documentos públicos (clasificacion='publico')
       - Admin: ve todos los formularios activos
       - Jefe: ve propios + de su departamento + públicos
       - Trabajador/Coordinador: ve de su departamento + públicos
 
   5.2 DESCARGA DIRECTA (Formularios Públicos):
-      - Documentos con es_publico=True se descargan directamente (sin aprobación)
+      - Documentos con clasificacion='publico' se descargan directamente (sin aprobación)
       - Se registra log de auditoría en MongoDB (registrar_descarga)
       - Trazabilidad completa: IP, usuario, fecha/hora, integridad HMAC-SHA256
       - Botón "Descargar" en el catálogo
 
-  5.3 SOLICITUD DE DESCARGA (Formularios No Públicos):
-      - Documentos del mismo departamento sin es_publico requieren aprobación
-      - Trabajador solicita → Jefe del depto propietario aprueba (1 aprobación)
-      - Botón "Solicitar" en el catálogo
-      - Se genera notificación al aprobador
+  5.3 SOLICITUD DE DESCARGA (No Públicos), según clasificación (ver §10.3):
+      - `interno`: el propietario descarga directo (deja distribución); el
+        resto del departamento solicita y el jefe aprueba.
+      - `confidencial`: solicitud aprobada por el jefe del departamento (admin
+        directo).
+      - `restringido`: solicitud con **doble control** (jefe + admin).
+      - `motivo` OBLIGATORIO.
+      - Botón "Solicitar" en el catálogo; notifica al aprobador.
 
-  5.4 PROCESO POST-DESCARGA (NORMAS ISO):
+  5.4 AUTORIZACIÓN TEMPORAL Y DISTRIBUCIÓN:
+      - La aprobación caduca (`settings.DESCARGA_VIGENCIA_DIAS`, 30 días) y
+        queda ligada a la versión: si el documento cambia de versión o vence,
+        hay que volver a solicitar.
+      - Al aprobar se crea una `DistribucionDocumento` (copia controlada);
+        revocarla corta ver Y descargar.
+      - Todo el ciclo se audita en Mongo con `correlation_id`
+        `descarga-<id_solicitud>` (solicitud → aprobaciones → distribución →
+        descargas), además del espejo en `distribuciones_documento`.
+
+  5.5 PROCESO POST-DESCARGA (NORMAS ISO):
       - Trabajador llena el documento con información de reunión/trabajo
       - Trabajador sube el archivo como NUEVA VERSIÓN del documento original
       - Se genera un registro en VersionDocumento
@@ -176,13 +200,19 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
       - Se crea SolicitudDescarga con estado: "pendiente"
 
   6.2 APROBACIÓN:
-      - Solo 1 aprobación requerida (Jefe del depto propietario)
-      - Jefe aprueba → documento descargable
-      - Jefe rechaza → se notifica al solicitante
+      - `interno`/`confidencial`: 1 aprobación (jefe del depto propietario; si
+        no hay jefe, un admin).
+      - `restringido`: **doble control** (jefe + admin); la solicitud queda
+        "aprobada" solo cuando todas las aprobaciones están aprobadas.
+      - Al aprobar (paso final): fija `version_aprobada` y `fecha_expiracion`
+        (30 días) y crea la `DistribucionDocumento`; el solicitante ve
+        "Descargar".
+      - Rechazo → notifica al solicitante y no crea distribución.
 
   6.3 Trazabilidad:
-      - Todo intento, solicitud y aprobación queda registrado en MongoDB
-      - IP, usuario, fecha/hora, acción realizada
+      - Todo intento, solicitud, aprobación, distribución y descarga queda
+        registrado en MongoDB, con IP/usuario/fecha y `correlation_id`
+        `descarga-<id_solicitud>` para reconstruir el ciclo.
 
 7. GESTIÓN Y PLANILLA DE CAMBIOS (VERSIONES)
 -------------------------------------------------------------------
@@ -191,10 +221,13 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
   - Parámetros Específicos: La planilla recopilará los criterios obligatorios
     de la institución (justificación, alcance, departamentos afectados, etc.).
   - Circuito de Doble Aprobación: La nueva versión no entrará en vigencia
-    hasta que la Planilla cumpla con aprobación del Evaluador (Jefe de
-    Departamento de origen) y del Autorizador (Jefe de GG, o administrador
-    si no existe Jefe de GG en ese depto). Si Evaluador == Autorizador,
-    se colapsa a un solo paso.
+    hasta que la Planilla cumpla con la aprobación del Evaluador (jefe par
+    si el solicitante es jefe; si no, jefe del departamento de origen) y del
+    Autorizador (jefe de GG). SIEMPRE son dos pasos: no hay fallback a
+    administrador ni colapso cuando Evaluador == Autorizador (el mismo jefe
+    aprueba primero como evaluador y luego como autorizador). Si falta el
+    jefe de un paso, ese paso queda en 'esperando' (aprobador=None) hasta
+    que se asigne uno. Ver §7.3 y §20.
 
   7.1 FLUJO DE BORRADOR:
       - El usuario puede guardar la planilla como "Borrador" sin bloquear el documento
@@ -238,7 +271,7 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
 9. ARQUITECTURA TÉCNICA
 -------------------------------------------------------------------
   - Frontend: HTML5, CSS3, JavaScript (Renderizado mediante plantillas de Django).
-  - Backend: Django 6.0, Python 3.12.
+  - Backend: Django 6.1, Python 3.12.
    - Base de datos:
      * DESARROLLO: SQLite (db_new.sqlite3) — db.sqlite3 corrupta, NO usar
      * PRODUCCIÓN: PostgreSQL (via psycopg)
@@ -368,11 +401,28 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
        - Transferir propiedad
        - Descargar archivos (registrar_descarga en auditoria/services.py)
 
-     10.3 CONTROL DE DISTRIBUCIÓN (ISO 9001:7.5.3):
-       - Formularios públicos: descarga directa + log de auditoría (sin aprobación)
-       - Documentos no públicos del depto: solicitud + aprobación del jefe
-       - Documentos de otros deptos: solo visualización (solicitar acceso)
-       - Toda descarga queda registrada en MongoDB con integridad HMAC-SHA256
+     10.3 CONTROL DE DESCARGA Y DISTRIBUCIÓN (ISO 9001:7.5.3 / 27001 A.9):
+       Descarga directa (`permissions.puede_descargar`): admin; `publico`
+       cualquiera; jefe del depto en `interno`; el propietario de un `interno`;
+       una distribución no revocada; y una solicitud aprobada **vigente y de la
+       versión actual**. `confidencial`/`restringido` requieren solicitud.
+        - `publico`: descarga directa + log (sin aprobación).
+        - `interno`: el propietario descarga directo (crea distribución);
+          jefe/admin directo; el resto del depto con solicitud aprobada.
+        - `confidencial`: ver = jefe del depto/propietario/admin/grants (NO todo
+          el depto); descargar = solicitud aprobada por el jefe (admin directo).
+        - `restringido`: ver = propietario/admin/grants (jefe solo si
+          autorizado); descargar = solicitud con doble control (jefe + admin).
+       Vigencia: `settings.DESCARGA_VIGENCIA_DIAS` (30) y ligada a la versión;
+       al vencer o cambiar de versión hay que re-solicitar. Al aprobar se crea
+       `DistribucionDocumento` (copia controlada); revocarla corta ver y
+       descargar (`tiene_distribucion`).
+       Auditoría: descarga/visor en Mongo (`registrar_descarga`/
+       `registrar_consulta`, fail-closed, HMAC-SHA256) con `correlation_id`
+       `descarga-<id_solicitud>`; la creación de distribución también se audita
+       (`registrar_distribucion`) además del espejo en `distribuciones_documento`.
+       Aprobadores: jefe del depto (admin si no hay jefe); `restringido` jefe +
+       admin. `SolicitudDescarga.motivo` OBLIGATORIO.
 
       10.4 NOTIFICACIONES (Botón Campana):
         - Solicitud de descarga recibida
@@ -385,6 +435,7 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
         - Propiedad transferida
         - Solicitud de acceso a documento (entre Jefes)
         - Solicitud de acceso aprobada / rechazada
+        - Vigencia establecida / eliminada (propietario y jefe del departamento)
 
       10.5 REPORTE PDF DE AUDITORÍA (ISO 9001:§7.5 / §9.2.2):
         - Endpoint: GET /documentos/configuracion/auditoria/reporte-pdf/
@@ -495,6 +546,10 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
 
   13.3 ISO 27001 - SEGURIDAD DE LA INFORMACIÓN:
        - Control de acceso (roles y permisos)
+       - Control de descarga proporcional a la clasificación (`publico`/
+         `interno` directo según rol; `confidencial`/`restringido` con
+         solicitud aprobada; `restringido` doble control) y autorización
+         temporal (30 días) ligada a la versión. Ver §10.3.
        - Auditoría inmutable (logs en MongoDB)
        - Integridad verificable (HMAC-SHA256 + cadena prev_hash en cada registro)
        - Trazabilidad completa (correlation_id para agrupar acciones)
@@ -503,13 +558,35 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
        - Protección de información confidencial
        - Cumplimiento normativo
 
-  13.4 CAMPOS ISO AGREGADOS AL MODELO BASE (InformacionDocumentada):
+  13.4 CAMPOS ISO AGREGADOS AL MODELO BASE (Documento):
        - revision: Número de revisión (separado de versión; ver §13.8)
        - aprobado_por: FK al usuario que aprobó
        - fecha_aprobacion: Fecha de aprobación
        - fecha_vigencia: Fecha de entrada en vigor
        - proxima_revision: Próxima fecha de revisión programada
        - historial_cambios: Registro de cambios realizados
+       - clasificacion: Clasificación de seguridad (publico/interno/
+         confidencial/restringido), default `interno`. Sustituyó al
+         booleano `es_publico` (columna eliminada en migración 0039);
+         sólo `publico` hace el documento visible para otros departamentos.
+       - Vigencia: `periodo_vigencia` + `fecha_vigencia` (entrada en vigor) +
+         `fecha_vencimiento`/`proxima_revision` (se calculan con
+         `Documento.establecer_vigencia()` y en la aprobación). `estado_vigencia`
+         ('vencido'/'vence_pronto'/'vigente'/None) y `dias_para_vencer` son
+         propiedades reutilizadas por las plantillas. `TipoDocumento.
+         requiere_vigencia` (migración 0044) hace la vigencia **obligatoria**
+         en ese tipo; `TipoDocumento.periodo_vigencia` es el default (precarga
+         en `DocumentoForm`). Quitar vigencia: vista `quitar_vigencia`
+         (propietario/jefe del depto/admin, motivo obligatorio, bloqueada si el
+         tipo la exige) → limpia período/vencimiento/revisión, deja línea en
+         `historial_cambios`, notifica y audita (`eliminacion_vigencia`).
+         El **control de vigencia de documentos activos vive solo en la card
+         ISO** (establecer/cambiar/quitar); el botón "Renovar" de la fila
+         "Vencimiento" (Información General) se retiró y "Renovar Vencimiento"
+         (`renovar_vencimiento`) queda **solo para reactivar obsoletos**.
+         La vista `documentos_departamento` aplica `q_documentos_visibles` y
+         añade panel + filtro por vigencia (vencidos/vence pronto/vigentes/
+         sin vigencia).
 
   13.5 RESTRICCIONES DE ESTADO (ISO 9001:7.5):
        - Documentos OBSOLETOS: No se editan ni eliminan
@@ -529,6 +606,20 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
          al documento al aprobar la planilla.
        - Aprobación de planilla también propaga departamentos_afectados
          y documentos_asociados al documento (corrección de consistencia).
+        - "Todos los departamentos" (`afecta_todos`, booleano en `Documento` y
+          `PlanillaCambios`, migración 0035): si está marcado, el documento
+          aplica a todas las áreas y se resuelve dinámicamente (incluye
+          departamentos futuros). Reemplaza a `departamentos_afectados`
+          (el form limpia los tags). En la vista `documentos_departamento`
+          se agrupa aparte: `_grupos_documentos` lo saca del reparto por
+          departamento y lo devuelve en `generales`, que el template
+          renderiza UNA sola vez en el grupo "Todos los departamentos"
+          (arriba del listado) — no se repite bajo cada cabecera (antes
+          aparecía 38 veces, una por departamento activo). El filtro de
+          clasificación aplica también a ese grupo. En los asociables de
+          planilla se incluye `Q(afecta_todos=True)`.
+          El detalle muestra el badge "Todos los departamentos". Se propaga al
+          documento al aprobar la planilla (vista y API).
 
   13.7 CONFIGURACIÓN DE PERÍODOS (CRUD en Configuración):
        - Modelo Periodo: nombre, meses (duración), activo, orden.
@@ -646,6 +737,16 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
          ├── SGC-PRG-001_v3_20261015.pdf
          └── ...
 
+       media/solicitudes_cambio/
+       ├── adjuntos/{AAAA}/{MM}/          archivos que sube el usuario
+       │                                  (SolicitudCambio.archivo_adjunto)
+       └── planillas/{AAAA}/{MM}/         planilla rellenada SGC-FOR-001
+                                          (SolicitudCambio.planilla_xlsx/pdf,
+                                          generada al aprobar; ver §20.7)
+
+       media/formatos/plantillas/{AAAA}/  plantillas XLSX de los formatos
+       media/formatos/pdf/                PDFs de preview de los formatos
+
   15.2 FORMATO DE NOMBRADO:
        {codigo}_v{version}_{fecha}.{extension}
 
@@ -753,7 +854,8 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
        POST /documentos/api/<tipo>/<uuid>/rechazar-creacion/ → Rechazar creación de documento
 
    17.5 PARÁMETROS DE QUERY (Lista Documentos):
-       - buscar      → Búsqueda por nombre, código o propietario
+       - buscar      → Búsqueda por nombre, código, propietario, documentos
+                       relacionados (visibles) y referencias pendientes (§17.6)
        - tipo        → Filtro por tipo (proceso, procedimiento, formulario)
        - estado      → Filtro por estado (borrador, activo, obsoleto)
        - ordenar     → Campo de ordenamiento (nombre, tipo, estado, propietario, fecha_modificacion)
@@ -762,13 +864,29 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
 
    17.6 BÚSQUEDA NAVBAR (AUTOCOMPLETE):
         GET /documentos/api/buscar-sugerencias/?q=&limit=8
-        - Búsqueda por nombre, código y propietario (Q objects)
-        - Scope por rol: admin ve todo, jefe ve propios + depto + públicos,
-          trabajador ve propios + públicos
-        - Solo documentos estado='activo' (propios muestran cualquier estado)
-        - Respuesta: [{nombre, codigo, tipo, tipo_display, estado, propietario, fecha_vencimiento}]
-        - XSS-safe: escapeHtml() en JS, sin innerHTML directo
-        - Sincronizado con campo mis_documentos del navbar
+        - Búsqueda por nombre, código y propietario (Q objects).
+        - Búsqueda por documentos RELACIONADOS: un documento aparece si alguno
+          de sus `documentos_relacionados` (M2M) es visible para el usuario y
+          coincide con q. Como el relacionado también casa por su propio
+          campo, al buscar su código salen AMBOS (el relacionado y el
+          principal). Ver §10.7 y `views._procesar_referencias`.
+        - Búsqueda por REFERENCIAS PENDIENTES: el relacionado puede existir sin
+          registro (se guarda el código en `ReferenciaDocumento.codigo_destino`
+          y el signal `resolver_referencias` lo enlaza al crearse). El endpoint
+          también matchea `referencias_salientes__codigo_destino`.
+        - Visibilidad: se usa `permissions.q_documentos_visibles(usuario)` para
+          el documento y para el relacionado (admin todo; jefe depto+propios+
+          públicos; coordinador propios+asignados+públicos; trabajador
+          propios+públicos). Un relacionado NO visible no provoca el match.
+        - Respuesta: [{nombre, codigo, tipo, tipo_display, estado, propietario,
+          fecha_vencimiento, relacionado_con}]. `relacionado_con` = código del
+          relacionado/referencia que disparó el match (o null); el navbar lo
+          pinta como "↳ relacionado: <código>" (`search.js`, `.result-relacionado`).
+        - XSS-safe: escapeHtml() en JS, sin innerHTML directo para datos de usuario.
+        - Sincronizado con campo mis_documentos del navbar.
+        - `views.mis_documentos` (fallback "Enter") usa el MISMO criterio en su
+          filtro `buscar` (nombre/código + relacionados visibles + referencias
+          pendientes), así ambos caminos coinciden.
 
    17.7 RENOVACIÓN DE VENCIMIENTO:
         POST /documentos/<tipo>/<uuid>/renovar-vencimiento/
@@ -837,7 +955,7 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
       - Se verifica que el departamento destino tenga Jefe asignado
 
    19.3 MODELO SolicitudAccesoDocumento:
-       - documento_tipo, documento_id
+       - documento (FK → Documento)
        - solicitante (FK → User)
        - jefe_destino (FK → User)
        - departamento_destino (FK → Departamento)
@@ -862,11 +980,26 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
 
   20.2 DETERMINACIÓN DE APROBADORES:
        a) Evaluador (determinar_evaluador):
-          1. Solicitante ≠ jefe de su depto → jefe del depto de origen.
-          2. Solicitante ES el jefe → jefe de GG.
-          3. Sin jefe disponible → None (queda en espera).
+          1. Solicitante ES jefe (de cualquier depto) → jefe par:
+             a) jefe del depto designado (`APROBACION_EVALUADOR_DEPTO_GG`,
+                default `SGC`); b) si no, primer depto activo con jefe (orden
+                por código), distinto al solicitante.
+          2. Solicitante NO es jefe → jefe del depto de origen.
+          3. Sin jefe de depto → jefe de GG.
+          4. Sin jefe disponible → None (queda en espera).
        b) Autorizador (determinar_autorizador):
           1. Jefe de GG.   2. Sin jefe de GG → None (queda en espera).
+          Nota: si el jefe de GG creó el documento, él mismo autoriza
+          (autofirma) tras la evaluación de un jefe par.
+       Reajuste de cadenas existentes: `manage.py reajustar_evaluador_pendientes`
+       recalcula el evaluador de las cadenas PENDIENTES (documentos y planillas)
+       cuando el solicitante es jefe; renotifica al nuevo evaluador y limpia la
+       notificación pendiente del anterior. Idempotente.
+       Documentación visible: la página **Roles y Permisos**
+       (`configuracion/roles-permisos/`, admin/jefe) incluye una sección
+       "Flujo de aprobación" con la regla por rol y los datos reales (depto
+       evaluador configurado + su jefe, y jefe de GG). Contexto en
+       `views.roles_permisos`.
 
   20.3 FLUJO DETALLADO:
        1. Usuario crea documento → "borrador", luego "en_revision".
@@ -883,6 +1016,12 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
        5. Autorizador (jefe de GG) aprueba → _activar_documento(): estado "activo",
           aprobado_por, fecha_aprobacion, fecha_vigencia, revision +1.
           Si rechaza → cancela el hermano y el documento vuelve a "borrador".
+       - El detalle del documento (`detalle.html`) muestra una card **"Flujo de
+         aprobación"** para TODOS los roles (sin gating por rol/estado): lista
+         evaluador y autorizador asignados y su estado (Pendiente / En espera /
+         Aprobada / Rechazada). El tab "Estado" incluye el nombre del aprobador
+         por entrada del historial. Contexto: `aprobaciones_actuales` (última
+         cadena, evaluador primero).
 
   20.4 MODELO SolicitudAprobacionDocumento:
        - documento (FK), version_a_eliminar (FK, opcional)
@@ -908,7 +1047,74 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
          en 48h (`escalar_aprobaciones_vencidas`, tarea horaria de Celery Beat).
          Notifica a los administradores y marca `fecha_escalado` (idempotente);
          no reasigna. Umbral configurable `APROBACION_ESCALADO_HORAS`.
-       - No se pueden crear sub-versiones de documentos no aprobados.
+        - No se pueden crear sub-versiones de documentos no aprobados.
+
+  20.7 PLANILLA GENERADA AL APROBAR (SGC-FOR-001):
+       - Al aprobar el paso final, la solicitud de cambio (creación o
+         eliminación) genera su planilla rellenada y la PERSISTE en
+         media/solicitudes_cambio/planillas/{AAAA}/{MM}/:
+             SolicitudCambio.planilla_xlsx  (siempre)
+             SolicitudCambio.planilla_pdf   (si LibreOffice convierte; opcional)
+       - Ruta de código: services/planillas.py
+             generar_planilla_solicitud(sol, force=False)  generación (idempotente)
+             encolar_generacion_planilla(sol)              publica la tarea en
+                                                           transaction.on_commit()
+       - Tarea Celery: documentos.tasks.generar_planilla_solicitud_task(uuid).
+         Si el broker (RabbitMQ) no responde, hace fallback a generación en
+         línea y loguea el error: la aprobación NUNCA falla por esto.
+       - Red de seguridad ante worker caído: tarea periódica
+         `generar_planillas_pendientes` (Celery Beat, cada
+         PLANILLAS_BARRIDO_MINUTOS, default 15) que detecta solicitudes
+         `aprobado` + creacion/eliminacion sin `planilla_xlsx` (y con formato
+         que tenga plantilla) y las genera. Idempotente; procesa de a lo más
+         PLANILLAS_BARRIDO_LOTE (default 100) por pasada.
+       - Puntos de enganche (los dos únicos casos con operación
+         creacion/eliminacion):
+             api.aprobar_creacion_documento  (es_final → estado 'aprobado')
+             views.eliminar_documento        (eliminación directa: la solicitud
+                                              nace en 'aprobado')
+       - Descargas descargar_solicitud_xlsx/pdf sirven el archivo GUARDADO si
+         existe; si no, exportan al vuelo (comportamiento histórico).
+        - Requiere migración 0040 y worker de Celery para el modo asíncrono.
+        - UI: el detalle (`detalle.html`) muestra los formularios SGC
+          (`SolicitudCambio`) agrupados por **operación** en pestañas
+          (creación/modificación/eliminación — solo las no vacías, con conteo) y
+          cada solicitud como **acordeón colapsado** (el primero de cada
+          operación abierto). `switchTab` está scopeado al `.detail-card` para
+          convivir con las pestañas laterales. El CSS del partial
+          `_formato_dinamico.html` se extrajo a
+          `static/css/components/formato-dinamico.css` (cargado en `base.html`)
+          para no repetirlo por cada formulario. Los acordeones se animan por
+          **altura** (`static/js/accordion.js`, cargado en `base_app.html`;
+          `accordion.css` usa `height:0`+`transition` en vez de
+          `display:none`, con el padding/borde en `.accordion-body`, un hijo
+          interno, para que el estado colapsado mida 0 real), de modo que el
+          contenedor padre crece/decrece suave; `toggleAccordion` ya no se
+          define inline en las plantillas.
+
+  20.8 SELECTOR COMPARTIDO DE DOCUMENTOS (relacionados / asociados):
+       - `documentos/_documentos_selector.html` + `static/js/documentos-
+         selector.js` (`initDocumentosSelector`, auto-init por `.documentos-
+         selector`). Búsqueda libre por nombre/código con debounce y soporte de
+         códigos inexistentes ("Pendiente").
+       - `payload_mode`: `inputs` (nuevo/editar documento → hidden
+         `documentos_relacionados` por documento + JSON
+         `referencias_pendientes_json` con los códigos pendientes) o `json`
+         (planilla → `documentos_asociados_json` con items
+         `{uuid, codigo, nombre, estado, tipo, pendiente}`).
+       - Endpoint `GET /documentos/api/referenciables/`: universo por defecto
+         propio depto + públicos activos; `departamentos` (afectados),
+         `incluir_borradores=1` (propio/afectados en borrador), `todos=1`
+         (todos los deptos activos, p. ej. planillas `afecta_todos`), `buscar`,
+         `exclude_id`.
+       - Planilla: los existentes crean `DocumentoAsociadoPlanilla` (idempotente);
+         los pendientes se guardan en `PlanillaCambios.referencias_pendientes`
+         (migración 0046) y al aprobar `aplicar_planilla_al_documento()` crea
+         `ReferenciaDocumento` (se resuelven al crearse el destino).
+       - Sustituye los componentes previos `docrel-*` (formulario) y
+         `asociado-select`/`procedimientos-por-departamentos` (planilla); los
+         endpoints viejos quedan por compatibilidad.
+
 
 21. REGLAS DE EDICIÓN DE DOCUMENTOS
 -------------------------------------------------------------------
@@ -946,6 +1152,12 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
        7. Si cualquiera rechaza → se cancela el paso hermano y se revierte
        8. La versión entera es: v1 (creación), v2, v3... (cada planilla aprobada)
        (Ver §7.3 para la cadena completa y §13.8 para versión vs edición)
+
+       La planilla también puede proponer un **cambio de clasificación**
+       (`PlanillaCambios.clasificacion_propuesta`, precargada con la actual);
+       se aplica al documento en la aprobación final. `departamento_propuesto`
+       se eliminó (campo muerto, migración `documentos.0042`). Ver §23
+       "Clasificación de seguridad".
 
   21.5 RESTRICCIONES POR ESTADO (ISO 9001:7.5):
        - OBSOLETO: No se permite edición ni eliminación
@@ -1029,21 +1241,30 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
     - SQLite dev (DB_NAME=db_new.sqlite3 en .env; NO usar db.sqlite3)
     - MongoDB: auditoría (no siempre corriendo; fall-safe imprime error pero no bloquea)
     - Redis + Celery + RabbitMQ: tareas async (PDF, vencimientos)
-    - Docker: docker-compose.yml (web:8001, celery_worker, mongodb, redis, rabbitmq)
-    - LibreOffice: SOLO en la imagen Docker (generación de PDF); no disponible localmente
+    - Docker: docker-compose.yml (web:8001, celery_worker, celery_beat,
+      mongodb, mongo_express, redis, rabbitmq, mailpit)
+    - LibreOffice: generación de PDF. En Docker y también disponible en local
+      (si no está, los tests que convierten de verdad se auto-omiten con
+      `skipUnless(LIBREOFFICE)`) — ver §23.4 "Tamaño de papel y márgenes"
     - Frontend: templates Django + vanilla JS, Font Awesome 6, Inter font
 
   23.2 APPS Y ARCHIVOS CLAVE
     - apps/documentos/
-        models.py          Documento, TipoDocumento, Departamento, PerfilUsuario,
-                           VersionDocumento, AsignacionDocumento, SolicitudCambio,
-                           PlanillaCambios, Formato, SeccionFormato, CampoFormato,
-                           SolicitudAprobacionDocumento, AprobacionPlanilla,
-                           ReferenciaDocumento, Periodo, Notificacion
-        views.py           flujos: crear_documento, eliminar_documento, eliminar_version,
-                           crear_planilla, enviar_planilla, aprobar_planilla,
-                           detalle_documento, historial_versiones, formato_preview,
-                           exportar_xlsx/pdf, detalle_formato_dinamico
+        models.py          Documento, TipoDocumento, Departamento, SubArea, Periodo,
+                           VersionDocumento, AsignacionDocumento, SolicitudDescarga,
+                           AprobacionDescarga, SolicitudAccesoDocumento,
+                           PlanillaCambios, AprobacionPlanilla,
+                           DocumentoAsociadoPlanilla, DistribucionDocumento,
+                           SolicitudAprobacionDocumento, RenovacionVencimiento,
+                           ReferenciaDocumento, Formato, SeccionFormato, CampoFormato,
+                            SolicitudCambio, FormatoPublicacion, ResumenIAUso,
+                            ConversionPDFDiagnostico
+         views.py           flujos: crear_documento, eliminar_documento, eliminar_version,
+                            crear_planilla, enviar_planilla, aprobar_planilla,
+                            detalle_documento, historial_versiones, formato_preview,
+                            exportar_xlsx/pdf, detalle_formato_dinamico,
+                            buscar (resultados del navbar), establecer_vigencia,
+                            quitar_vigencia
         api.py             endpoints JSON: aprobar/actualizar/eliminar documentos,
                            aprobar/rechazar planillas, solicitudes pendientes
         permissions.py     puede_ver/editar/descargar/inhabilitar/transferir,
@@ -1051,8 +1272,18 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
         signals.py         post_save → logs ISO en Mongo (asignación, solicitud de
                            acceso, planilla). GOTCHA: SolicitudAccesoDocumento usa
                            `solicitante`; SolicitudDescarga usa `solicitado_por`.
-        tasks.py           Celery: verificar_vencimientos, generar_resumen_ia,
-                           convertir_a_pdf_sync (LibreOffice)
+          tasks.py           Celery: verificar_vencimientos, generar_resumen_ia,
+                             convertir_a_pdf_sync (punto único de conversión:
+                             delega en services/conversion_pdf → papel, márgenes
+                             y salto de sección; corre el QA del PDF y encola la
+                             reparación si hace falta; lo usan planillas,
+                             exportación y plantillas),
+                             convertir_documento_a_pdf (usa services/conversion_pdf),
+                             convertir_planilla_a_pdf (preview, idem),
+                             reparar_pdf_adaptativo (reconvierte buscando una
+                             disposición sin logo recortado; ver §23.4),
+                             generar_planilla_solicitud_task (planilla SGC-FOR-001),
+                             generar_planillas_pendientes (barrido Beat, ver §20.7)
         ai.py              integración Gemini (resúmenes IA): límite diario,
                            reintentos, registrar_uso atómico (F), _mensaje_error genérico
         validators.py      validar_archivo_documento: magic bytes + extensión + tamaño
@@ -1060,21 +1291,102 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
         sanitizers.py      sanitizar_html: lista blanca para instructivo_html (|safe).
                            Se aplica en FormatoForm.clean Y Formato.save(). Ver §10.6.
         services/exportacion.py  exportar_xlsx() y exportar_pdf() con patching XML
+         services/conversion_pdf.py  tamaño de papel, márgenes, salto de
+                                     sección (detección estructural por el logo
+                                     de encabezado) y `generar_alternativas`/
+                                     `convertir_lote` de la reparación; parchea
+                                     una copia temporal y el subido queda
+                                     intacto. Ver §23.4.
+         services/pdf_qa.py          QA del PDF: imágenes recortadas, imágenes
+                                     sobre texto y títulos huérfanos. Nunca
+                                     lanza. Ver §23.4.
+         services/pdf_adaptativo.py  verificar/reparar/programar_reparacion:
+                                     QA tras convertir, bucle de reparación
+                                     (Celery o en línea) y registro en
+                                     ConversionPDFDiagnostico. Ver §23.4.
+         services/documentos_pdf.py  pdf_disponible/limpiar_pdf_inexistente/
+                                     convertir_documento_sync/asegurar_pdf:
+                                     el PDF se regenera en línea cuando la ruta
+                                     de BD apunta a un fichero borrado; tras
+                                     convertir corre el QA (`verificar`).
+                                     Ver §23.4 "Regeneración del PDF".
+        services/planillas.py     generar_planilla_solicitud() y
+                                  encolar_generacion_planilla() (ver §20.7);
+                                  aplicar_planilla_al_documento() (vuelca la
+                                  planilla aprobada, incluida la clasificación;
+                                  la usan la vista web y la API).
+        services/busqueda.py      buscar_documentos_visibles(): matching del
+                                  navbar (nombre/código/propietario/relacionados/
+                                  referencias) filtrado por q_documentos_visibles.
+                                  Lo usan la API y la vista `buscar`.
         templatetags/formato_extras.py  get_item, to_json, opt_valor, opt_etiqueta,
                                         opt_cell, opt_shape (filtros del motor)
         urls.py            ~40 rutas: CRUD, planillas, formato, aprobaciones, API, config
         admin.py           DocumentoAdmin, SolicitudAprobacionDocumentoAdmin,
                            AprobacionPlanillaAdmin, SolicitudCambioAdmin
-        tests.py / tests_endpoints.py  incluyen: SignalReasignacionPendientesTest
-                           (8 tests), BandejaDepartamentoTest (3 tests),
-                           EnviarDocumentoTest (6 tests).
-        migrations/        0001–0034; última: 0034 (validadores de subida en FileField)
+        tests.py / tests_endpoints.py  tests_endpoints.py: EnviarDocumentoTest,
+                           BandejaDepartamentoTest; tests.py: modelos/secciones/
+                           permisos. (SignalReasignacionPendientesTest vive en
+                           apps/autenticacion/tests.py).
+        tests_planillas.py  generación/enlace/descarga de la planilla SGC-FOR-001
+                            (media/solicitudes_cambio/planillas/). Ver §20.7.
+         tests_conversion.py tamaño de papel, márgenes y saneo del PDF (parcheo
+                             XLSX/DOCX y salto de página — ya NO se sanean
+                             dibujos, ver §23.4 "Logo de cada sección",
+                             conversión mockeada, tests reales con LibreOffice:
+                             A4 595×842 por defecto, Folio 612×936, márgenes
+                             0.4" haciendo caber el contenido en una página,
+                             el título repetido abriendo página, el logo de la
+                             última página conservado, la tarea Celery y el
+                             conversor único) Y regeneración cuando el PDF de
+                             BD desaparece del disco (vistas sin 500).
+         tests_pdf_qa.py     QA del PDF (imagen recortada, texto tapado, título
+                             huérfano), detección estructural de secciones por
+                             el logo, alternativas de reparación, bucle
+                             adaptativo (Celery en línea o encolado), tarea
+                             `reparar_pdf_adaptativo` y `w:pageBreakBefore` en
+                             DOCX. Ver §23.4 "QA del PDF + reparación".
+         tests_clasificacion.py  clasificación propuesta en la Planilla de
+                             Cambios (form precargado, helper compartido,
+                             aprobación web/API, rechazo) y su auditoría ISO.
+                             Ver §23 "Clasificación de seguridad".
+          tests_descarga_iso.py   descarga controlada ISO (permisos por
+                              clasificación, motivo obligatorio, vigencia+versión,
+                              distribución/revocación, doble control de
+                              restringido, trazabilidad) y vista de resultados
+                              de búsqueda + badge de clasificación. Ver §10.3.
+         tests_vigencia.py    vigencia: config por tipo (periodo + requiere
+                              vigencia), formulario, `estado_vigencia`,
+                              eliminación trazable (permisos/motivo/auditoría)
+                              y panel+filtro del jefe con visibilidad. Ver §13.4.
+         tests_detalle_formularios.py  card "Formularios SGC" del detalle:
+                              agrupación por operación (solo no vacías),
+                              pestañas y acordeones. Ver §20.7.
+         tests_selector_documentos.py  selector compartido de documentos:
+                              endpoint `/api/referenciables/` (propio/público/
+                              afectados/borradores/todos), guardado de
+                              pendientes en la planilla y render en ambas
+                              pantallas. Ver §20.8.
+        migrations/        0001–0046; última: 0046
+                            (PlanillaCambios.referencias_pendientes, para asociar
+                            documentos aún inexistentes por código). La 0045 añadió
+                            Documento.resumen_ia_solicitado. La 0044 añadió
+                            TipoDocumento.requiere_vigencia. La 0043 añadió
+                            rol_aprobador en AprobacionDescarga +
+                            version_aprobada/fecha_expiracion y motivo
+                            obligatorio en SolicitudDescarga. La 0042 añadió la
+                            clasificación propuesta en PlanillaCambios y eliminó
+                            `departamento_propuesto`.
         management/commands/  poblar_departamentos, poblar_tipos_documento,
-                              poblar_formato_sgc_for_005, poblar_periodos,
-                              seed_usuarios_iniciales
+                              poblar_formato_sgc_for_001, poblar_formato_sgc_for_005,
+                              poblar_periodos, reajustar_evaluador_pendientes,
+                              probar_gemini, verificar_vencimientos,
+                              verificar_destruccion, verificar_exportacion,
+                              verificar_revisiones_pendientes, limpiar_documentos,
+                              revisar_pdfs
     - apps/autenticacion/
         models.py          PerfilUsuario (roles: administrador/jefe_departamento/
-                           coordinador/trabajador), Notificacion, HistorialAcciones
+                           coordinador/trabajador), Notificacion
         views.py           login, logout, gestionar_usuarios
     - apps/auditoria/
         services.py        cliente Mongo (get_mongo_client, fail-safe) + integridad
@@ -1082,7 +1394,11 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
                            cadena prev_hash, verificar_integridad_log/cadena. Ver §10.1.
         middleware.py      resolver_ip_cliente (X-Forwarded-For con proxies de confianza)
     - polidoc/settings.py  DEBUG, DB, SIMPLE_JWT, CORS, y (Fase 3-5) AUDIT_HMAC_KEY,
-                           AUDIT_TRUSTED_PROXIES, AUDIT_FAIL_CLOSED, DOCUMENTOS_MAX_UPLOAD_MB
+                           AUDIT_TRUSTED_PROXIES, AUDIT_FAIL_CLOSED, DOCUMENTOS_MAX_UPLOAD_MB.
+                           Conversión PDF: PAPEL_PDF_CONVERSION, MARGEN_{SUPERIOR,
+                           INFERIOR}_PDF_CONVERSION, PDF_QA_ADAPTATIVO,
+                           PDF_REPARAR_EN_CELERY, PDF_MAX_INTENTOS, PDF_QA_TEXTO_SOLAPE,
+                           PDF_SALTO_DOCX (ver §23.4)
     - polidoc/mail_backends.py  SmtpWithConsoleFallback (caída SMTP→consola, logueada)
     - CONTEXT.txt         este archivo (fuente de verdad funcional)
 
@@ -1098,7 +1414,10 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
       dict estático maps.TIPOS_INFO, que queda solo para el seed).
       El campo `icono` se valida contra la lista curada
       `documentos/icons.py:ICONOS_DISPONIBLES` (fallback `file`); el
-      formulario de config lo sugiere con un datalist y muestra preview.
+      formulario de config (tipos_documento_form.html) lo sugiere con un
+      picker visual: input de texto + popover con buscador y grilla de íconos
+      reales (render server-side, selección marca `.is-selected`) y preview
+      en vivo. Ya NO usa `<datalist>`.
     - Referencias entre documentos (ReferenciaDocumento)
     - Participantes (tags) y responsables (M2M a Departamento)
     - Motor de formularios configurable SGC-FOR-001 (crear/eliminar) y
@@ -1110,6 +1429,20 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
       regla híbrida: se muestra si el tipo la permite O si el documento ya
       tiene datos en ella (así la aprobación no borra datos existentes).
     - Export fiel XLSX y PDF con patching XML directo (openpyxl + lxml)
+    - Transferencia de propiedad centralizada en
+      `services/transferencia.py:transferir_propiedad_documento()`
+      (usada por la vista web y la API): cambia propietario, notifica al nuevo
+      dueño y audita. Solo Admin (cualquier doc) y Jefe del depto del doc;
+      siempre directo, mismo departamento, nuevo ≠ actual.
+    - Vista "Departamento" (`documentos_departamento`): el jefe ve su depto y
+      el ADMIN ve TODOS los departamentos agrupados (mismo helper
+      `views._grupos_documentos`, consultas fijas sin N+1, semántica
+      propio|afectado). El helper devuelve `(generales, grupos)`:
+      `generales` = docs `afecta_todos` agrupados por tipo (una sola vez,
+      renderizados arriba bajo "Todos los departamentos"); `grupos` = docs
+      propios/afectados por departamento. La tarjeta vive en el partial
+      `documentos/_doc_card_departamento.html` (reutilizado por ambos
+      bloques). El ítem del sidebar se muestra a ambos.
     - Seeds: poblar_formato_sgc_for_001 y poblar_formato_sgc_for_005
     - Email personal editable en /perfil/ (guarda en `User.email`). El backend
       LDAP solo sobrescribe el email si AD trae `mail`, así no borra el dato
@@ -1121,19 +1454,120 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
       (aprobación, versionado, propagación) vive en código Python.
     - Export fiel: se edita el XML del XLSX directamente (openpyxl destruye
       los shapes y el logo). Ver services/exportacion.py.
+    - Tamaño de papel, márgenes, salto de sección y QA del PDF
+      (services/conversion_pdf.py + pdf_qa.py + pdf_adaptativo.py):
+      LibreOffice no tiene opción de CLI para el papel — el PDF sale con el
+      `pageSetup` del XLSX/DOCX de origen. Si el origen es A4 y el contenido
+      es más alto, LibreOffice parte las tablas y las últimas filas "saltan" a
+      la página siguiente; si el papel es demasiado alto (Folio 8.5"x13"), el
+      contenido de una página se descoloca con el de la siguiente. Solución:
+      `convertir_office_a_pdf()` copia el archivo a un temporal, le parchea el
+      tamaño (`paperSize` en XLSX / `w:pgSz` en DOCX) **y los márgenes
+      superior/inferior** (`pageMargins` en pulgadas / `w:pgMar` en twips,
+      conservando izquierdo/derecho y encabezado/pie) y convierte esa copia:
+      el archivo subido queda intacto.
+      Papel por defecto: `settings.PAPEL_PDF_CONVERSION` = `A4` (código OOXML
+      9 → PDF 595×842 pt), configurable por env (también `Folio`/`oficio`=14,
+      `Legal`=5, `Letter`/`carta`=1; vacío = respetar el origen).
+      Márgenes por defecto: `MARGEN_SUPERIOR_PDF_CONVERSION` y
+      `MARGEN_INFERIOR_PDF_CONVERSION` = **0.4"** (env, vacío = no tocar).
+      La razón: el formulario SGC-FOR-001/002 escalado mide ~755 pt y con los
+      márgenes originales (0.75") el área útil de la A4 es de 734 pt — no
+      cabía; con 0.4" son 784 pt y vuelve a caber en **una sola página** (el
+      instructivo, 2 más, sigue dando 3 páginas en total). No tocar
+      izquierdo/derecho (el ancho nunca fue el problema).
+       Formatos sin parcheo posible (`.xls`, `.vsdx`…) se convierten igual que
+       antes. Regenerar los PDF ya existentes: basta con **borrar el fichero**
+       del disco (la vista detecta la ruta huérfana y lo vuelve a crear).
+       **Scope: un solo conversor para todo.** `convertir_a_pdf_sync()` (tasks)
+       delega en `convertir_office_a_pdf()`, así que heredan papel, márgenes y
+       saneo: documentos subidos (`convertir_documento_a_pdf` /
+       `convertir_documento_sync`), preview de planillas
+       (`convertir_planilla_a_pdf`), planillas generadas
+       (`services/planillas._guardar_pdf`), exportación al vuelo
+       (`services/exportacion.exportar_pdf`), la preview del archivo propuesto
+       y `Formato.plantilla_pdf`. `convertir_a_pdf_sync` sigue devolviendo la
+       ruta **relativa a MEDIA_ROOT** y nunca lanza.
+       Saneo de la copia (mismo paso, solo XLSX), pensado para que la
+       previsualización no salga rota:
+        1. **Logo de cada sección**: cada sección de SGC-FOR-001/002/005 lleva
+           su **propio** logo: `twoCellAnchor` en filas 1-5 (`A1:A5`) para la
+           sección 1 y `oneCellAnchor` en `from(59,0)` + `rowOff=47626` +
+           `ext=885824×885824` EMU (70 pt) con el **mismo `rId`** en el hueco
+           `A60:A64` para la sección 2 — es decir, la ancla "sobrante" de la
+           fila 59 **es** el logo de la última página. La versión previa la
+           borraba por parecer duplicada y por eso el `SGC-FOR-002` perdió el
+           logo de la última página (la queja original). Por eso **no se
+           eliminan imágenes**.
+        2. **Detección estructural de secciones**: `_secciones_de_hoja()` lee el
+           dibujo de cada hoja y toma como cabecera la imagen anclada en la fila
+           0; toda otra ancla que reutilice ese mismo `rId` marca una sección.
+           `_insertar_salto_de_pagina()` escribe
+           `<rowBreaks><brk id="59" max="16383" man="1"/></rowBreaks>` (el `id`
+           es la fila 0-based del logo, o sea la anterior al inicio de sección).
+           Si la hoja no reutiliza imagen se cae al respaldo
+           `_fila_titulo_repetido()` (primera fila que repite la fila 1). La
+           hoja del formulario (solo logo en fila 0) no recibe salto.
+           Resultado: 3 páginas — formulario / firmas / instrucciones — y cada
+           sección empieza por su encabezado.
+    - QA del PDF + reparación adaptativa (services/pdf_qa.py y
+      services/pdf_adaptativo.py): la maquetación de LibreOffice no se controla
+      del todo (un `oneCellAnchor` justo en la fila del salto puede redibujarse
+      recortado al pie de la página anterior; en `SGC-FOR-005` tapaba "Fecha:").
+      Tras convertir, `verificar()` corre `analizar_pdf()` (con `pdfplumber`):
+      imágenes fuera del área imprimible (`imagen_recortada`), imágenes sobre
+      texto (`texto_tapado`) y títulos huérfanos. Si hay defecto se encola
+      `reparar_pdf_adaptativo` (o se repara en línea si no hay broker):
+      `generar_alternativas()` crea copias con el logo de sección una fila más
+      abajo y/o el salto desplazado, `convertir_lote()` las convierte en **una
+      sola** llamada a LibreOffice, se elige la de menos defectos y se
+      sobrescribe el PDF en su ruta. Ajustes en settings: `PDF_QA_ADAPTATIVO`,
+      `PDF_REPARAR_EN_CELERY`, `PDF_MAX_INTENTOS`, `PDF_QA_TEXTO_SOLAPE`,
+      `PDF_SALTO_DOCX`. Cada resultado queda en `ConversionPDFDiagnostico`
+      (origen, pdf, defectos JSON, estado, intentos). `manage.py revisar_pdfs
+      [--reparar]` audita/reconvierte los PDF ya generados. En DOCX,
+      `_marcar_salto_docx()` pone `w:pageBreakBefore` en el párrafo que repite
+      el primero (equivale al salto del título repetido de los XLSX). Los logos
+      seguirán intactos: la reparación mueve la copia temporal, nunca el
+      original ni la plantilla.
+    - Regeneración del PDF / rutas fantasma (services/documentos_pdf.py):
+      `Documento.archivo_pdf` guarda una **ruta en BD**, no valida que el
+      fichero exista. Si alguien borra el PDF del disco, el campo queda
+      "fantasma" y `ver_archivo` se rompía con `FileNotFoundError` (500).
+      Ahora `pdf_disponible()` (campo seteado Y `storage.exists`) es la única
+      fuente de verdad y se usa en `detalle_documento` (`pdf_listo`),
+      `ver_archivo`, `estado_conversion` (`listo`), el preview de
+      `aprobar_planilla` y `ai.py`. `asegurar_pdf()` limpia el puntero con
+      `limpiar_pdf_inexistente()` y **convierte en línea** (`SÍNCRONO`, ~2-3 s
+      con LibreOffice): no depende de broker/Celery, así que la petición
+      devuelve el PDF ya regenerado y no hace falta recargar. La tarea
+      `convertir_documento_a_pdf` delega en `convertir_documento_sync()`.
+      Si la conversión falla o falta el origen, las vistas **redirigen al
+      detalle con mensaje** (nunca 500 y nunca se sirve un office a pdf.js).
     - Checkbox = rectángulos <xdr:sp> en drawing1.xml; fill verde #00A651.
-    - Aprobación: Evaluador = jefe del depto de origen. Autorizador = jefe
-      de GG (fallback: administrador). Si ambos coinciden → un solo paso.
+    - Aprobación (doble paso, sin fallback ni colapso; §7.3/§20):
+      Evaluador = jefe par si el solicitante es jefe (`_evaluador_par`);
+      si no, jefe del depto de origen; sin jefe de depto → jefe de GG.
+      Autorizador = jefe de GG. Si falta un jefe, el paso queda 'esperando'
+      con aprobador=None. El documento solo se activa al aprobar el
+      autorizador (GG).
       La bandeja de aprobaciones (bandeja_aprobaciones.html) muestra
-      solicitudes del depto (Q(departamento_origen=perfil.departamento))
-      + las asignadas al usuario (Q(aprobador=user)). Los endpoints API
-      (aprobar/rechazar_creacion_documento) resuelven por depto fallback
-      y auto-reasignan si el aprobador actual no está en el depto.
+      las asignadas al usuario (Q(aprobador=user)) + las del depto del jefe
+      (Q(departamento_origen=perfil.departamento, rol_aprobador='evaluador'));
+      el filtro `estado` se aplica después, sin quedar hardcodeado.
+      Los endpoints API (aprobar/rechazar_creacion_documento) resuelven
+      estrictamente por `documento + estado='pendiente' + aprobador=user`
+      (sin fallback por depto ni auto-reasignación).
     - `AprobacionPlanilla` con `rol_aprobador` + `es_final` para mantener
       la query `filter(aprobador=user, estado='pendiente')` funcionando.
     - `AsignacionDocumentoForm` limita el select de Coordinador a usuarios
       con rol coordinador/trabajador del departamento del documento
-      (validación server-side incluida).
+      (validación server-side incluida). La vista `asignar_documento` calcula
+      `hay_asignables`; si el departamento no tiene candidatos, el template
+      muestra un `alert--warning` ("No hay coordinadores ni trabajadores…") y
+      oculta el formulario (sin select ni botón Asignar) en vez de salir vacío.
+      Igual en `transferir_propiedad`: `hay_transferibles` y aviso ("No hay
+      otros usuarios en el departamento…") si no hay a quién transferir.
     - Distribución por email (Fase 1): `distribuir_documento` envía correo
       con enlace + adjunto si el archivo pesa <= 5 MB, y registra
       `enviado`/`error` en `DistribucionDocumento`. Backend
@@ -1164,10 +1598,92 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
       con `puede_descargar`.
     - Al revocar una distribución se limpia `url_accion` de las
       notificaciones `documento_distribuido` previas de ese usuario+documento.
+    - Componente de progreso reutilizable: `polidoc/static/css/components/
+      progress.css` + `polidoc/static/js/progress-loader.js`
+      (`createProgressLoader(el, stages)` → `{start, setStage, finish, fail}`).
+      Barra con **goteo continuo** de velocidad variable (incrementos aleatorios
+      cada 150–500 ms, más lento al acercarse al tope, micro-pausas ~8%) que se
+      estanca en **95%** y salta a 100% al terminar. Las etapas solo cambian el
+      texto. Ancho del componente al **50%** del contenedor (90% en móvil).
+      Usado en: resumen IA (etapas sincronizadas con el polling) y preview de
+      planilla (`planilla-conv-progress`). **Ya NO en la conversión de
+      documentos**: es síncrona (§23.4), así que `detalle.html` renderiza el
+      PDF de inmediato; el bloque `#conv-progress` y su JS de polling quedan
+      solo como compatibilidad (`convirtiendo` se pasa siempre a `False`) y el
+      endpoint `estado-conversion/` sigue vivo como API. No hay progreso real
+      de LibreOffice/Gemini.
+    - Micro-animaciones de botón: `polidoc/static/css/components/
+      button-animations.css` + `polidoc/static/js/button-animations.js`
+      (ambos enlazados en `base.html`). El JS intercepta el `submit` de los
+      botones con `data-anim` y reproduce la animación ANTES del envío nativo
+      (`HTMLFormElement.prototype.submit`, sin recursión, reinyectando el
+      name/value del submitter en un input oculto). Tres tipos: `save` =
+      sello + anillo verde + check (DUR 900 ms), `send` = pop + avión +
+       estela (DUR 1100 ms), `delete` = papelera dibujada en DOM (`.trash-anim`,
+       1000 ms, `position:fixed` → NO la recorta `.page-content`). **Regla:
+       `DUR{}` del JS debe ser MAYOR que la duración de las keyframes del CSS**
+       (igual basta en `delete`; cada `@keyframes` indica con qué DUR cuadra) o
+       la navegación corta la animación. El vuelo del avión está acotado (52px y
+       desvanecido antes de
+      llegar al final) porque `.page-content` tiene `overflow-x:hidden` y los
+      botones de acción van alineados a la derecha (`form-card-footer` con
+      `flex-end`): un recorrido largo se cortaba contra el borde.
+      `resetBoton()` es el ÚNICO dueño del estado busy (`data-anim-busy`,
+      `aria-busy`, clases `btn--anim-*`) y lo libera si la navegación no
+      ocurre; el overlay de la papelera lo retira `playTrash()`. En `delete`,
+      `playTrash()` dimensiona el overlay SOLO con el alto del botón (el ancho
+      no influye): bote = `h × 1.0` (**el mismo alto que el botón: NO se
+      agranda**; `--trash-can-h` y `--trash-can-w` = alto × 0.9), bolita =
+      `h × 0.7` (`--trash-ball-sx/sy` = diámetro/ancho
+      y /alto) y `--trash-fly-y` = boca del bote (borde del cuerpo, 8px por
+      encima) menos el centro del botón. El bote fija
+      `font-size: var(--trash-can-h)` y SU GEOMETRÍA ENTERA está en `em`
+      (1em = alto del bote): antes estaba en px fijos (68×76px) y salía
+       1.85× el botón. El clon se ARRUGA en la bolita (`trashCrumple`
+       0–200 ms: icono y label se apagan, fondo rojo → papel `#e4e4e7`,
+       `border-radius` → 50%, `clip-path` de rectángulo → polígono irregular
+       con los MISMOS 14 puntos — si no coinciden el navegador salta — y
+       escala a Ø29px de forma MONÓTONA: la bolita **solo se encoge**,
+       el keyframe 10% usa el mismo `scale` que el 20%, porque con el
+       sobrepico que había la bola subía creciendo de 20 a 29px), vuela
+       200–630 ms y a los 630 ms cambia
+       `z-index` 3 → 1: pasa POR DETRÁS del borde ("entró") y se hunde mientras
+       la tapa cierra encima. **`rotate()` va ANTES de `scale()`** en la lista
+       de `transform`: al revés, la escala no uniforme (0.14/0.71) deforma la
+       rotación y la "bola" sale como una gota alargada. El botón real se
+       oculta con `visibility: hidden` + `transition: none` (`.btn` tiene
+       `transition: all` y tardaría ~300 ms en ocultarlo, dejando el botón
+        doblado sobre el clon). La tapa (`trashLid`) es MÁS ANCHA que el
+        bote (112% de su ancho, 37→~41px, con vuelo por cada lado: a
+        `width:100%` quedaba a ras de la boca y se leía como una línea
+        puesta encima), abre 0–250 ms, AGUANTA ABIERTA hasta 630 ms y
+        cierra con rebote 630–820 ms; el bote APARECE
+        con fundido 0–150 ms (`trashCan`) y YA NO HACE GULP: se queda del
+        MISMO tamaño todo el tiempo — nunca se ensancha ni se achata — y lo
+        único que se mueve son la tapa (que solo gira, su ancho no cambia) y
+        el destello del polvo, que es de TAMAÑO FIJO (solo `opacity`: antes
+        crecía de 0.2× a 1.7×). Bloque completo = **1000 ms**
+        (`DUR.delete = 1000`, todas las `animation:` en `1s`). Como el
+        navegador cacheaba el CSS sin versión, `base.html` cuelga las
+        animaciones con `?v=<mtime>` (context processor
+        `polidoc.context_processors.static_versions`), que es por lo que se
+        seguía viendo el bote inflarse tras los arreglos. El JS fija el
+      ancho del botón (`minWidth` capturado antes de animar) mientras cambia
+      el label, para que "Enviar a Revisión" → "Enviando…" no salte el layout
+      (se restaura en `resetBoton`). **Sin toast**:
+      el feedback final es el flash de Django (`partials/_messages.html`), para
+      no duplicarlo ni mostrar algo que muere con la redirección (se eliminó
+      `window.PolidocToast`; `toasts.css` quedó sin consumidor). Con
+      `prefers-reduced-motion` no se anima (JS y CSS); sin JS todo sigue
+      funcionando. Botones con `data-anim`: `formulario.html` y
+      `formulario_planilla.html` (save+send), `detalle.html` (send, estado
+      borrador) y `confirmar_eliminar.html` (delete). Variant `.btn--success`
+      añadido a `buttons.css` (estaba usado en 9 plantillas y sin definir:
+      salían sin fondo). Tests: `ButtonAnimationsTest` en `documentos/tests.py`.
     - Resumen con IA (Google AI Studio / Gemini): bajo demanda desde el
       detalle. Config en `.env`/settings: `IA_RESUMEN_HABILITADO`,
       `GEMINI_API_KEY`, `GEMINI_MODEL` (default `gemini-3.8-flash`),
-      `IA_RESUMEN_MAX_MB`. Servicio `apps/documentos/ai.py` envía el PDF
+      `IA_RESUMEN_MAX_MB`, `IA_RESUMEN_MAX_TOKENS`. Servicio `apps/documentos/ai.py` envía el PDF
       (`archivo_pdf` o `archivo`) directo a Gemini con salida estructurada
       (`response_schema`, JSON) y fallback a texto con `pypdf` si supera el
       límite. Tarea Celery `generar_resumen_ia`; endpoint
@@ -1187,6 +1703,17 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
       El `celery_worker` lee `.env` al arrancar: reiniciarlo tras cambiar la
       key. Si el broker no está disponible y `IA_RESUMEN_SINCRONO=True`
       (default), el resumen se genera en el proceso web (fallback).
+      SONDEO Y ESTADOS COLGADOS: la card del detalle sondea
+      `<...>/resumen-ia/?solo_estado=1` cada 3 s SOLO mientras el estado sea
+      `pendiente`/`procesando`, con tope de intentos (`_resumenIAMaxIntentos`,
+      ~2 min) y limpieza del timer en `pagehide`. Si el `.delay` encola bien
+      pero el worker no procesa la tarea, el estado podía quedar colgado y la
+      UI sondeaba sin fin; ahora `_reconciliar_resumen_ia()` (llamado al
+      renderizar el detalle y en el GET) marca `listo` (si ya hay resumen) o
+      `error` los `pendiente`/`procesando` sin `resumen_ia_solicitado` o más
+      antiguos que `IA_RESUMEN_TIMEOUT_MIN` (default 5 min). Campo nuevo
+      `resumen_ia_solicitado` (migración `documentos.0045`); la tarea envuelve
+      `ai.generar_resumen` en try/except para no quedar en `procesando`.
       Diagnóstico: `manage.py probar_gemini` (muestra versión del SDK y el
       error exacto; `--listar-modelos` lista los modelos disponibles;
       `--probar-modelos` sondea la disponibilidad real de cada modelo con una
@@ -1200,13 +1727,22 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
       escapa el HTML antes de insertar `<strong>` (seguro ante inyección).
       `GEMINI_MODEL` debe ser un modelo vigente (p. ej. `gemini-3.8-flash`);
       Google retira modelos para usuarios nuevos (404 NOT_FOUND).
+      Recomendado para el tier gratuito: un modelo **lite** (p. ej.
+      `gemini-3.1-flash-lite` / `gemini-flash-lite-latest`), que no usa
+      thinking y evita el truncamiento. `IA_RESUMEN_MAX_TOKENS` (default 4096)
+      define `max_output_tokens`; los modelos Gemini 3.x "flash" gastan parte
+      de ese presupuesto en thinking y pueden truncar el JSON. Si la respuesta
+      termina con `finish_reason=MAX_TOKENS`, `generar_resumen` devuelve un
+      error claro (no guarda JSON roto).
       Resiliencia: el cliente usa reintentos nativos del SDK
       (`HttpRetryOptions`, `IA_RESUMEN_REINTENTOS` default 4, códigos
       408/429/500/502/503/504) y, si el modelo principal falla por saturación
-      tras los reintentos, reintenta con `GEMINI_MODEL_FALLBACK`
-      (`gemini-3.7-flash`); se guarda en `resumen_ia_modelo` el usado. Errores
+      tras los reintentos, reintenta con `GEMINI_MODEL_FALLBACK`; se guarda en
+      `resumen_ia_modelo` el usado. Errores
       no transitorios (404/401) no hacen fallback. Si todo falla por
       saturación, `resumen_ia_error` muestra un mensaje amigable.
+      Si el resumen no se pudo estructurar (texto crudo), la card muestra un
+      aviso + el texto en `<pre>` colapsable + botón Regenerar.
       Límite diario (`IA_RESUMEN_LIMITE_DIARIO`, default 20; 0 = sin límite)
       por usuario, contado en el modelo `ResumenIAUso` (usuario, fecha,
       contador). La vista `resumen_ia` responde 429 al alcanzarlo; los
@@ -1222,25 +1758,69 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
       afectado por la planilla, o ya asociado al documento (evita perderlos).
     - Versión = entera (v1, v2, v3...). Edición (norma/estructura) = pendiente
       (ver §13.8).
+    - Clasificación de seguridad (`Documento.clasificacion`, migraciones
+      `documentos.0037` + `0038` con backfill `es_publico=True → 'publico'`):
+      sustituye al booleano `es_publico`, que se ELIMINÓ (migración
+      `documentos.0039`) como única fuente de verdad de la visibilidad. Todo
+      lo que antes usaba `Q(es_publico=True)` / `documento.es_publico` usa
+      ahora `Q(clasificacion='publico')` / `documento.clasificacion ==
+      'publico'` (permissions.py, views.py, api.py, signals.py,
+      autenticacion/api.py). No queda ninguna referencia a `es_publico`.
+      Choices: `publico`/`interno`/`confidencial`/`restringido`, default
+      `interno`; badge con `Documento.clasificacion_color`.
+      Filtros por clasificación (GET `clasificacion`) en `mis_documentos`
+      (select en el filter-bar + badge por tarjeta + conservado en la
+      paginación) y en la vista `Departamento` (aplicado en
+      `_grupos_documentos(departamentos, clasificacion)`).
+      **Cambio de clasificación vía Planilla de Cambios**: campo
+      `clasificacion_propuesta` (+ `clasificacion_actual_snapshot`; migración
+      `documentos.0042`, que además elimina `PlanillaCambios.
+      departamento_propuesto`). El formulario lo precarga con la clasificación
+      actual ("— Sin cambios —" = no cambiar) y solo lo puede proponer quien
+      puede editar el documento (`puede_editar_documento`). El helper único
+      `services/planillas.aplicar_planilla_al_documento()` (usado por la vista
+      web y la API, antes duplicadas) la vuelca al aprobar; el rechazo no la
+      aplica. Auditoría: log ISO explícito `aprobacion_planilla` (con
+      `planilla_codigo` y clasificación anterior/nueva) y el asiento `edicion`
+      del documento incluye `clasificacion` con `valores_anteriores`
+      (`signals.py` guarda la previa con un `pre_save`).
+      FIX auditoría Mongo: las señales de `documentos/signals.py` indexaban
+      `get_mongo_client()['auditoria_polidoc']['coleccion']`, pero
+      `get_mongo_client()` devuelve la **BD** (no un cliente) → en producción
+      lanzaba `TypeError` y no escribía. Ahora usan
+      `db = get_mongo_client(); db['coleccion']`, coherente con
+      `registrar_log_iso` (`db.audit_logs`).
+      NOTA: `documentos/lista.html` sigue SIN ruta (UI muerta) y NO se tocó.
+    - Términos y Condiciones versionados: `settings.TERMINOS_VERSION`
+      (default `1.0`) + `PerfilUsuario.terminos_version`
+      (migración `autenticacion.0008`). `login_view` sólo da por aceptados
+      los Términos si la versión registrada coincide con la vigente; si
+      cambia, exige re-aceptación (mensaje "Se actualizaron los Términos...")
+      y guarda la versión + fecha de aceptación. El modal de `login.html`
+      incluye la sección **"12. Uso de Inteligencia Artificial"** (IA de
+      apoyo, no decisión automatizada; envío del contenido a Google
+      AI Studio/Gemini con transferencia internacional; aplica a TODOS los
+      documentos; aceptación de los Términos = consentimiento; supervisión
+      humana; auditoría) y muestra la versión vigente en el encabezado.
+      El texto de esa sección está EN BORRADOR: pendiente de validación
+      jurídica (no citar normas ni afirmar cumplimiento).
     - APPROVAL_THRESHOLD eliminado de settings.py.
 
   23.5 PENDIENTES CONOCIDOS
     - Ejecutar la verificación de exportación en Docker:
       `python manage.py verificar_exportacion` (genera XLSX y PDF desde
       SGC-FOR-005 y valida cabecera/peso; opcional `--formato` y `--salida`).
-      En local falla el PDF porque LibreOffice no está instalado fuera de Docker.
+      En local también funciona: LibreOffice **sí está instalado** en este
+      entorno (verificado 2026-10-01; los tests reales de conversión corren
+      sin Docker y generan PDF 595×842).
       El Dockerfile incluye `fonts-liberation` y `fonts-crosextra-carlito` para
       reducir diferencias de tipografía en el PDF.
     - Tests desactualizados tras cambio a doble aprobación; actualizables con
       `rol_aprobador` y `es_final`.
     - `detalle_documento` reencola conversión a PDF en cada apertura.
-    - `bandeja_aprobaciones.html` usaba `sol.documento_tipo` y
-      `sol.documento_id` (atributos inexistentes en SolicitudAprobacionDocumento).
-      Fix: cambiar a `sol.documento.tipo_id` y `sol.documento.uuid`.
-    - `bandeja_aprobaciones` filtraba depto con `estado='pendiente'` hardcodeado.
-      El template ofrece pestañas "Aprobadas / Rechazadas / Todas" pero al
-      cambiar filtro, la visibilidad del depto desaparecía. Fix: quitar
-      `estado='pendiente'` del Q y dejar que `filtro_estado` lo aplique después.
+    - Validar jurídicamente la sección 12 de los Términos y Condiciones
+      (uso de IA / transferencia internacional de información) antes de
+      publicarla; el texto actual es borrador.
 
   23.6 GOTCHAS / BLOQUEADORES
     - MongoDB caído: los signals/auditoría de creación, edición, resumen IA y
@@ -1253,8 +1833,10 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
       como válvula de emergencia si Mongo se cae en producción.
     - Celery worker debe reiniciarse tras cambios de modelo (error de columna
       antigua en consola).
-    - LibreOffice no está instalado fuera de Docker; las conversiones a PDF
-      fallan localmente.
+    - LibreOffice: instalado también fuera de Docker (2026-10-01), por lo que
+      las conversiones a PDF funcionan en local. RabbitMQ/Redis **no** están:
+      no hay broker ni worker, todo lo asíncrono se degrada a ejecución en
+      línea.
     - `db.sqlite3` es la BD vieja; usar siempre `db_new.sqlite3` (configurada
       en .env y settings.py).
     - El usuario coordinador "Luis" es el que usa la app; su departamento es
@@ -1330,6 +1912,21 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
       'aprobador', 'rol_aprobador']` (migración 0033). El flujo de dos pasos
       sigue igual; el mismo jefe aprueba primero como evaluador y luego como
       autorizador.
+    - (Corregido 2026-09-28) El autollenado de un campo `checkbox_grupo` con
+      origen automático (p.ej. `accion` ← `origen='operacion'`) guardaba un
+      **string** (`'Creación'`) en vez de una lista, y el render de solo-lectura
+      (`_formato_dinamico.html`) lo iteraba por carácter (`☑ C☑ r☑ e...`).
+      Fix: `mapear_valores_auto` envuelve escalares en lista para
+      `checkbox_grupo`; filtro `a_lista` endurece el render (read-only y
+      editable); data migration `0036` normaliza las respuestas existentes.
+    - (Corregido 2026-09-29) `bandeja_aprobaciones` (vista y template):
+      (a) el template usaba `sol.documento_tipo` / `sol.documento_id`
+      (inexistentes en SolicitudAprobacionDocumento) → ahora
+      `sol.documento.tipo_id` / `sol.documento.uuid`; (b) los endpoints API
+      `aprobar/rechazar_creacion_documento` resolvían el paso por depto con
+      fallback y auto-reasignación → ahora resuelven estrictamente por
+      `documento + estado='pendiente' + aprobador=user`. Ya no son pendientes
+      (ver §23.4).
 
 24. MOTOR DE FORMULARIOS CONFIGURABLES (SGC-FOR-005) Y AYUDA CONTEXTUAL
 -------------------------------------------------------------------
@@ -1361,7 +1958,8 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
       hay varios orígenes marcados, se usa el primero según el orden de
       `CampoFormato.opciones`. Restricción única parcial
       `(formato, origen_cambio, num_solicitud)`. Migración 0029 hizo backfill
-      desde `respuestas`.
+      desde `respuestas`. Migración 0040 añade `planilla_xlsx` / `planilla_pdf`
+      (archivo rellenado generado al aprobar; ver §20.7).
     - Tipos de campo: texto, textarea, fecha, select, checkbox_grupo, tabla.
     - Orígenes auto (CampoFormato.origen): nombre_solicitante, fecha_solicitud,
       num_solicitud, evaluado_por_*, autorizado_por_*, resolucion, operacion,

@@ -23,13 +23,30 @@
             Propietario actual: <strong>{{ documento.propietario.get_full_name|default:documento.propietario.username }}</strong>
           </p>
 
+          {% if not hay_transferibles %}
+          <div class="alert alert--warning" style="margin-bottom: 1rem;">
+            <span class="alert-icon"><i class="fa-solid fa-circle-exclamation"></i></span>
+            <div class="alert-content">
+              {% if documento.departamento %}
+              No hay otros usuarios en el departamento
+              <strong>{{ documento.departamento.nombre }}</strong> a quien transferir
+              la propiedad. Agrega otro usuario al departamento para poder transferirla.
+              {% else %}
+              Este documento no tiene departamento asignado; no se puede transferir la propiedad.
+              {% endif %}
+            </div>
+          </div>
+          <div class="form-card-footer">
+            <a href="{% url 'documentos:detalle' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost">Volver</a>
+          </div>
+          {% else %}
           <form method="post">
             {% csrf_token %}
             <div class="form-group">
               <label class="form-label">Nuevo Propietario *</label>
               <select name="nuevo_propietario" class="form-input" required>
                 <option value="">Seleccione un usuario...</option>
-                {% for miembro in documento.departamento.miembros.all %}
+                {% for miembro in miembros_transferibles %}
                 <option value="{{ miembro.usuario.id }}">{{ miembro.usuario.get_full_name|default:miembro.usuario.username }}</option>
                 {% endfor %}
               </select>
@@ -39,6 +56,7 @@
               <button type="submit" class="btn btn--primary">Transferir</button>
             </div>
           </form>
+          {% endif %}
         </div>
       </div>
 {% endblock %}

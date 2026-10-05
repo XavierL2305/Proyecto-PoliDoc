@@ -304,7 +304,12 @@
 <div class="modal-overlay terminos-modal" id="terminos-modal">
   <div class="modal modal--lg">
     <div class="modal-header">
-      <h3><i class="fa-solid fa-file-contract"></i> Términos y Condiciones de Uso — POLIDOC</h3>
+      <h3>
+        <i class="fa-solid fa-file-contract"></i> Términos y Condiciones de Uso — POLIDOC
+        <span style="font-size: 0.7em; font-weight: 400; color: var(--color-text-muted, #94a3b8);">
+          Versión {{ terminos_version|default:"1.0" }}
+        </span>
+      </h3>
       <button class="modal-close" onclick="closeTerminosModal()">&times;</button>
     </div>
     <div class="modal-body">
@@ -370,6 +375,20 @@
 
       <h4>11. Legislación Aplicable</h4>
       <p>Estos Términos y Condiciones se rigen por las leyes de la República Bolivariana de Venezuela. Cualquier controversia será sometida a los tribunales competentes de la ciudad de San Cristóbal, Estado Táchira.</p>
+
+      <!-- ============================================================================
+           SECCIÓN 12 EN BORRADOR. Pendiente de validación jurídica: NO citar
+           normas específicas ni afirmar cumplimiento legal hasta su aprobación.
+           ============================================================================ -->
+      <h4>12. Uso de Inteligencia Artificial</h4>
+      <p>POLIDOC incorpora funciones de apoyo basadas en inteligencia artificial (IA), capaces de generar resúmenes y sugerencias a partir del contenido de los documentos almacenados en el sistema. Al aceptar estos Términos usted reconoce y acepta lo siguiente:</p>
+      <ul>
+        <li><strong>Aplicación:</strong> la función de IA está disponible para todos los documentos del sistema, sin importar su clasificación.</li>
+        <li><strong>Finalidad:</strong> la IA se utiliza únicamente como herramienta de apoyo a la lectura. Los resultados son orientativos y no constituyen una decisión automatizada: requieren siempre la revisión y supervisión de una persona autorizada.</li>
+        <li><strong>Proveedor y transferencia:</strong> para producir el resultado, el contenido del documento se envía al servicio de IA de Google (Google AI Studio / Gemini), lo que implica su tratamiento fuera de la institución y una transferencia internacional de información.</li>
+        <li><strong>Consentimiento:</strong> la aceptación de estos Términos equivale a su consentimiento para el uso de la función de IA descrita. Si no está de acuerdo, no utilice la función.</li>
+        <li><strong>Auditoría:</strong> cada uso de la función queda registrado con usuario, documento, fecha y resultado, conforme a la trazabilidad descrita en la sección 8.</li>
+      </ul>
     </div>
     <div class="modal-footer">
       <button class="btn btn--ghost" onclick="closeTerminosModal()">Cerrar</button>

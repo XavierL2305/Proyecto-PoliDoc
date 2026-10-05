@@ -1,13 +1,16 @@
 {% extends 'base_app.html' %}
 {% load static %}
 
-{% block title %}Documentos del Departamento - POLIDOC{% endblock %}
+{% block title %}{% if es_admin %}Documentos por Departamento{% else %}Documentos del Departamento{% endif %} - POLIDOC{% endblock %}
 
 {% block extra_css %}
 <style>
   .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2rem; flex-wrap: wrap; gap: 1rem; }
   .page-header h1 { font-size: 1.5rem; font-weight: 700; color: var(--color-text); margin: 0; }
   .section-title { font-size: 1.125rem; font-weight: 600; color: var(--color-text); margin: 1.5rem 0 1rem; }
+  .dept-header { margin: 2rem 0 0.5rem; padding-bottom: 0.5rem; border-bottom: 2px solid var(--color-border); }
+  .dept-header:first-of-type { margin-top: 0; }
+  .dept-header h2 { font-size: 1.25rem; font-weight: 700; color: var(--color-text); margin: 0; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
   .doc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; }
   .doc-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: 1rem; transition: all var(--transition); }
   .doc-card:hover { box-shadow: var(--shadow-md); }
@@ -18,14 +21,28 @@
   .doc-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; font-size: 0.75rem; color: var(--color-muted); }
   .doc-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--color-border); }
   .doc-card { min-width: 0; }
+  .dept-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 1.25rem; }
+  .dept-filter select { max-width: 260px; }
+  .vigencia-panel { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem; margin-bottom: 1.25rem; }
+  .vigencia-card { display: flex; flex-direction: column; gap: 0.15rem; padding: 0.85rem 1rem; border: 1px solid var(--color-border); border-left-width: 4px; border-radius: var(--radius-lg); background: var(--color-surface); text-decoration: none; transition: all var(--transition); }
+  .vigencia-card:hover { box-shadow: var(--shadow-md); }
+  .vigencia-card.is-active { box-shadow: var(--shadow-md); background: var(--color-bg-alt); }
+  .vigencia-card--danger { border-left-color: var(--color-danger); }
+  .vigencia-card--warning { border-left-color: var(--color-warning); }
+  .vigencia-card--success { border-left-color: var(--color-success); }
+  .vigencia-card--muted { border-left-color: var(--color-muted); }
+  .vigencia-num { font-size: 1.35rem; font-weight: 700; color: var(--color-text); }
+  .vigencia-label { font-size: 0.75rem; color: var(--color-muted); }
 </style>
 {% endblock %}
 
 {% block app_content %}
       <div class="page-header">
         <div>
-          <h1>Documentos del Departamento</h1>
-          <p style="font-size: 0.875rem; color: var(--color-muted);">{{ departamento.nombre }}</p>
+          <h1>{% if es_admin %}Documentos por Departamento{% else %}Documentos del Departamento{% endif %}</h1>
+          <p style="font-size: 0.875rem; color: var(--color-muted);">
+            {% if es_admin %}Todas las áreas{% else %}{{ departamento.nombre }}{% endif %}
+          </p>
         </div>
         <div style="display: flex; gap: 0.5rem;">
           <a href="{% url 'documentos:gestionar_asignaciones' %}" class="btn btn--ghost btn--sm">
@@ -43,45 +60,92 @@
       </div>
       {% endif %}
 
-      {% if tipos_documento %}
-      {% for tipo in tipos_documento %}
-      <h2 class="section-title">{{ tipo.nombre }}</h2>
+      <div class="vigencia-panel">
+        <a href="?vigencia=vencido{% if clasificacion_filter %}&clasificacion={{ clasificacion_filter }}{% endif %}"
+           class="vigencia-card vigencia-card--danger{% if vigencia_filter == 'vencido' %} is-active{% endif %}">
+          <span class="vigencia-num">{{ conteos_vigencia.vencidos }}</span>
+          <span class="vigencia-label">Vencidos</span>
+        </a>
+        <a href="?vigencia=vence_pronto{% if clasificacion_filter %}&clasificacion={{ clasificacion_filter }}{% endif %}"
+           class="vigencia-card vigencia-card--warning{% if vigencia_filter == 'vence_pronto' %} is-active{% endif %}">
+          <span class="vigencia-num">{{ conteos_vigencia.vence_pronto }}</span>
+          <span class="vigencia-label">Vence en 7 días</span>
+        </a>
+        <a href="?vigencia=vigente{% if clasificacion_filter %}&clasificacion={{ clasificacion_filter }}{% endif %}"
+           class="vigencia-card vigencia-card--success{% if vigencia_filter == 'vigente' %} is-active{% endif %}">
+          <span class="vigencia-num">{{ conteos_vigencia.vigentes }}</span>
+          <span class="vigencia-label">Vigentes</span>
+        </a>
+        <a href="?vigencia=sin_vigencia{% if clasificacion_filter %}&clasificacion={{ clasificacion_filter }}{% endif %}"
+           class="vigencia-card vigencia-card--muted{% if vigencia_filter == 'sin_vigencia' %} is-active{% endif %}">
+          <span class="vigencia-num">{{ conteos_vigencia.sin_vigencia }}</span>
+          <span class="vigencia-label">Sin vigencia</span>
+        </a>
+      </div>
+
+      <form method="get" class="dept-filter">
+        <select name="clasificacion" class="form-input" onchange="this.form.submit()" aria-label="Clasificación">
+          <option value="">Todas las clasificaciones</option>
+          {% for valor, etiqueta in clasificacion_choices %}
+          <option value="{{ valor }}" {% if clasificacion_filter == valor %}selected{% endif %}>{{ etiqueta }}</option>
+          {% endfor %}
+        </select>
+        <select name="vigencia" class="form-input" onchange="this.form.submit()" aria-label="Vigencia">
+          <option value="">Todas las vigencias</option>
+          <option value="vencido" {% if vigencia_filter == 'vencido' %}selected{% endif %}>Vencidos</option>
+          <option value="vence_pronto" {% if vigencia_filter == 'vence_pronto' %}selected{% endif %}>Vence en 7 días</option>
+          <option value="vigente" {% if vigencia_filter == 'vigente' %}selected{% endif %}>Vigentes</option>
+          <option value="sin_vigencia" {% if vigencia_filter == 'sin_vigencia' %}selected{% endif %}>Sin vigencia</option>
+        </select>
+        <button type="submit" class="btn btn--primary btn--sm"><i class="fa-solid fa-filter"></i> Filtrar</button>
+        {% if clasificacion_filter or vigencia_filter %}
+        <a href="?" class="btn btn--ghost btn--sm"><i class="fa-solid fa-xmark"></i> Quitar filtros</a>
+        {% endif %}
+      </form>
+
+      {% if generales %}
+      <div class="dept-header">
+        <h2>
+          <i class="fa-solid fa-layer-group"></i> Todos los departamentos
+          <span class="badge badge--secondary">General</span>
+        </h2>
+      </div>
+      {% for tipo in generales %}
+      <h3 class="section-title">{{ tipo.nombre }}</h3>
       <div class="doc-grid">
         {% for doc in tipo.documentos %}
-        <div class="doc-card">
-          <div class="doc-card-header">
-            <div class="doc-icon" style="background: var(--color-{{ tipo.color }}-light); color: var(--color-{{ tipo.color }});">
-              <i class="fa-solid fa-{{ tipo.icono }}"></i>
-            </div>
-            <div class="doc-info">
-              <h4>{{ doc.nombre }}</h4>
-              <p>{{ doc.codigo }}</p>
-            </div>
-          </div>
-          <div class="doc-meta">
-            <span class="badge badge--{{ doc.estado }}">{{ doc.get_estado_display }}</span>
-            <span>v{{ doc.version_actual }}</span>
-            <span>{{ doc.fecha_modificacion|date:"d/m/Y" }}</span>
-            {% if doc.fecha_vencimiento %}
-              {% if doc.fecha_vencimiento <= hoy %}
-              <span class="badge badge--danger" style="font-size: 0.65rem;">Vencido</span>
-              {% elif doc.fecha_vencimiento <= dias7 %}
-              <span class="badge badge--warning" style="font-size: 0.65rem;">Vence pronto</span>
-              {% endif %}
-            {% endif %}
-          </div>
-          <div class="doc-actions">
-            <a href="{% url 'documentos:detalle' tipo=tipo.key documento_id=doc.uuid %}" class="btn btn--ghost btn--sm"><i class="fa-solid fa-eye"></i> Ver</a>
-          </div>
-        </div>
+        {% include 'documentos/_doc_card_departamento.html' with doc=doc tipo=tipo %}
         {% endfor %}
       </div>
       {% endfor %}
-      {% else %}
+      {% endif %}
+
+      {% for g in grupos %}
+      <div class="dept-header">
+        <h2>
+          <i class="fa-solid fa-building"></i> {{ g.departamento.nombre }}
+          <span class="badge badge--secondary">{{ g.departamento.codigo }}</span>
+        </h2>
+      </div>
+      {% for tipo in g.tipos_documento %}
+      <h3 class="section-title">{{ tipo.nombre }}</h3>
+      <div class="doc-grid">
+        {% for doc in tipo.documentos %}
+        {% include 'documentos/_doc_card_departamento.html' with doc=doc tipo=tipo %}
+        {% endfor %}
+      </div>
+      {% endfor %}
+      {% endfor %}
+
+      {% if not generales and not grupos %}
       <div style="text-align: center; padding: 3rem; background: var(--color-surface); border: 1px dashed var(--color-border); border-radius: var(--radius-lg); color: var(--color-muted); margin-top: 1.5rem;">
         <i class="fa-solid fa-folder-open" style="font-size: 2.5rem; opacity: 0.4; display: block; margin-bottom: 1rem;"></i>
-        <p style="font-size: 1rem; font-weight: 600; margin: 0 0 0.5rem;">No hay documentos en el departamento</p>
-        <p style="font-size: 0.875rem; margin: 0;">{{ departamento.nombre }} — cuando se registren documentos aparecerán aquí.</p>
+        <p style="font-size: 1rem; font-weight: 600; margin: 0 0 0.5rem;">
+          {% if clasificacion_filter %}Ningún documento con esta clasificación{% else %}No hay documentos registrados{% endif %}
+        </p>
+        <p style="font-size: 0.875rem; margin: 0;">
+          {% if clasificacion_filter %}Prueba con otra clasificación o quita el filtro.{% elif es_admin %}Aún no hay documentos en ningún departamento.{% else %}{{ departamento.nombre }} — cuando se registren documentos aparecerán aquí.{% endif %}
+        </p>
       </div>
       {% endif %}
 {% endblock %}

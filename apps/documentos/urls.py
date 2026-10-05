@@ -43,6 +43,9 @@ urlpatterns = [
     # Mis documentos
     path('mis-documentos/', views.mis_documentos, name='mis_documentos'),
 
+    # Resultados de búsqueda (navbar)
+    path('buscar/', views.buscar, name='buscar'),
+
     # Bandeja de aprobaciones (Jefe/Admin)
     path('bandeja-aprobaciones/', views.bandeja_aprobaciones, name='bandeja_aprobaciones'),
 
@@ -67,6 +70,7 @@ urlpatterns = [
     path('<str:tipo>/<uuid:documento_id>/eliminar/', views.eliminar_documento, name='eliminar'),
     path('<str:tipo>/<uuid:documento_id>/descargar/', views.descargar_archivo, name='descargar_archivo'),
     path('<str:tipo>/<uuid:documento_id>/ver-archivo/', views.ver_archivo, name='ver_archivo'),
+    path('<str:tipo>/<uuid:documento_id>/estado-conversion/', views.estado_conversion, name='estado_conversion'),
     path('<str:tipo>/<uuid:documento_id>/resumen-ia/', views.resumen_ia, name='resumen_ia'),
 
     # Descargas
@@ -80,6 +84,7 @@ urlpatterns = [
     # Renovación de vencimiento
     path('<str:tipo>/<uuid:documento_id>/renovar-vencimiento/', views.renovar_vencimiento, name='renovar_vencimiento'),
     path('<str:tipo>/<uuid:documento_id>/establecer-vigencia/', views.establecer_vigencia, name='establecer_vigencia'),
+    path('<str:tipo>/<uuid:documento_id>/quitar-vigencia/', views.quitar_vigencia, name='quitar_vigencia'),
 
     # Asignaciones (Jefe)
     path('<str:tipo>/<uuid:documento_id>/asignar/', views.asignar_documento, name='asignar_documento'),

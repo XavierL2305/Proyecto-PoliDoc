@@ -102,6 +102,12 @@ class PerfilUsuario(models.Model):
         blank=True,
         verbose_name='Fecha de Aceptación de Términos'
     )
+    terminos_version = models.CharField(
+        max_length=20,
+        blank=True,
+        default='',
+        verbose_name='Versión de los Términos Aceptados'
+    )
 
     class Meta:
         verbose_name = 'Perfil de Usuario'

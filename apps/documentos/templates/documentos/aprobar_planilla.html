@@ -45,6 +45,16 @@
             <span class="detail-label">Documento</span>
             <span class="detail-value">{{ planilla.documento.get_tipo_display }} {{ planilla.documento.codigo }}</span>
           </div>
+          {% if planilla.clasificacion_propuesta %}
+          <div class="detail-row">
+            <span class="detail-label">Clasificación</span>
+            <span class="detail-value">
+              {{ planilla.get_clasificacion_actual_snapshot_display|default:"—" }}
+              <i class="fa-solid fa-arrow-right" style="margin: 0 .35rem; color: var(--color-muted);"></i>
+              <strong>{{ planilla.get_clasificacion_propuesta_display }}</strong>
+            </span>
+          </div>
+          {% endif %}
           <div class="detail-row">
             <span class="detail-label">Responsable</span>
             <span class="detail-value">{{ planilla.responsable.get_full_name|default:planilla.responsable.username }}</span>
@@ -72,10 +82,19 @@
                 <div id="pdf-viewer" data-url="{{ archivo_preview.url }}" style="display: flex; justify-content: center;"></div>
               </div>
             {% else %}
-              <div style="padding: 2rem; text-align: center;">
-                <i class="fa-solid fa-spinner fa-spin" style="font-size: 2rem; color: var(--color-primary);"></i>
-                <p style="margin-top: 0.5rem; color: var(--color-muted);">Convirtiendo documento a PDF para vista previa...</p>
-              </div>
+              <div id="planilla-conv-progress" class="progress-loader" style="padding: 2rem;"></div>
+              <script>
+                document.addEventListener('DOMContentLoaded', function () {
+                  if (!window.createProgressLoader) return;
+                  var pl = createProgressLoader('planilla-conv-progress', [
+                    { pct: 10, text: 'Preparando documento…' },
+                    { pct: 40, text: 'Transformando documento…' },
+                    { pct: 70, text: 'Convirtiendo a PDF…' },
+                    { pct: 90, text: 'Refinando detalles…' },
+                  ]);
+                  pl.start();
+                });
+              </script>
             {% endif %}
           </div>
           {% endif %}

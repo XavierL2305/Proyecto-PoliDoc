@@ -246,7 +246,7 @@
     {% else %}
     <span class="badge" style="margin-left:auto;">
       <i class="fa-solid fa-user-clock"></i>
-      Pendiente de {{ sol.aprobador.get_full_name|default:sol.aprobador.username|default:"asignación" }}
+      Pendiente de {% if sol.aprobador %}{{ sol.aprobador.get_full_name|default:sol.aprobador.username }}{% else %}asignación{% endif %}
     </span>
     {% endif %}
   </div>

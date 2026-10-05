@@ -1,4 +1,5 @@
 from django.test import TestCase, Client
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.utils import timezone
 from datetime import date, timedelta
@@ -878,3 +879,84 @@ class LoginViewSeguridadTest(BaseDocumentosTest):
         resp = self.client.post('/logout/')
         self.assertEqual(resp.status_code, 302)
         self.assertNotIn('_auth_user_id', self.client.session)
+
+
+class TerminosYCondicionesVersionTest(BaseDocumentosTest):
+    """Fase 6: sección 12 (IA) y versionado de los Términos y Condiciones."""
+
+    def setUp(self):
+        super().setUp()
+        self.client = Client()
+        cache.clear()
+        self.perfil = self.user_trabajador.perfil
+
+    def tearDown(self):
+        cache.clear()
+        super().tearDown()
+
+    def _post_login(self, **extra):
+        datos = {
+            'usuario': 'trab01',
+            'password': 'testpass123',
+            'terms': 'on',
+        }
+        datos.update(extra)
+        if datos.get('terms') is None:
+            datos.pop('terms', None)
+        return self.client.post('/login/', datos)
+
+    def test_login_guarda_version_vigente(self):
+        """Al aceptar, se registra la versión vigente de los Términos."""
+        resp = self._post_login()
+        self.assertEqual(resp.status_code, 302)
+        self.perfil.refresh_from_db()
+        self.assertTrue(self.perfil.acepto_terminos)
+        self.assertEqual(self.perfil.terminos_version, settings.TERMINOS_VERSION)
+        self.assertIsNotNone(self.perfil.fecha_acepto_terminos)
+
+    def test_login_sin_aceptar_no_entra(self):
+        resp = self._post_login(terms=None)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Debes aceptar los Términos y Condiciones')
+        self.perfil.refresh_from_db()
+        self.assertFalse(self.perfil.acepto_terminos)
+
+    def test_version_anterior_exige_re_aceptacion(self):
+        """Con una versión distinta a la vigente, el login exige aceptar de nuevo."""
+        self.perfil.acepto_terminos = True
+        self.perfil.terminos_version = '0.9'
+        self.perfil.save(update_fields=['acepto_terminos', 'terminos_version'])
+
+        resp = self._post_login(terms=None)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Se actualizaron los Términos y Condiciones')
+        self.assertContains(resp, settings.TERMINOS_VERSION)
+        # El checkbox vuelve a mostrarse (no se da por aceptado).
+        self.assertContains(resp, 'name="terms"')
+
+        resp = self._post_login()
+        self.assertEqual(resp.status_code, 302)
+        self.perfil.refresh_from_db()
+        self.assertEqual(self.perfil.terminos_version, settings.TERMINOS_VERSION)
+
+    def test_version_actual_y_aceptada_no_repite_mensaje(self):
+        self.perfil.acepto_terminos = True
+        self.perfil.terminos_version = settings.TERMINOS_VERSION
+        self.perfil.save(update_fields=['acepto_terminos', 'terminos_version'])
+
+        resp = self._post_login(terms=None)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Debes aceptar los Términos y Condiciones')
+        self.assertNotContains(resp, 'Se actualizaron los Términos')
+
+    def test_login_muestra_seccion_12_ia(self):
+        resp = self.client.get('/login/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, '12. Uso de Inteligencia Artificial')
+        # La aceptación del T&C es el consentimiento de IA.
+        self.assertContains(resp, 'equivale a su consentimiento')
+        self.assertContains(resp, 'Google AI Studio / Gemini')
+
+    def test_login_muestra_version_vigente_en_el_modal(self):
+        resp = self.client.get('/login/')
+        self.assertContains(resp, f'Versión {settings.TERMINOS_VERSION}')

@@ -63,8 +63,8 @@
           </a>
           <form method="post" action="{% url 'documentos:enviar_documento' tipo=tipo documento_id=documento.uuid %}" style="display:inline;">
             {% csrf_token %}
-            <button type="submit" class="btn btn--success btn--sm">
-              <i class="fa-solid fa-paper-plane"></i> Enviar a Revisión
+            <button type="submit" class="btn btn--success btn--sm" data-anim="send">
+              <i class="fa-solid fa-paper-plane"></i><span class="btn-label">Enviar a Revisión</span>
             </button>
           </form>
             {% else %}
@@ -166,7 +166,7 @@
         <div class="alert-content">
           <strong>Documento aprobado</strong>
           <p style="margin: 0.25rem 0 0; font-size: 0.875rem;">
-            Aprobado por {{ solicitud_aprobacion.aprobador.get_full_name|default:solicitud_aprobacion.aprobador.username }}
+            Aprobado por {% if solicitud_aprobacion.aprobador %}{{ solicitud_aprobacion.aprobador.get_full_name|default:solicitud_aprobacion.aprobador.username }}{% else %}—{% endif %}
             el {{ solicitud_aprobacion.fecha_respuesta|date:"d/m/Y H:i" }}
           </p>
         </div>
@@ -181,6 +181,40 @@
           <p style="margin: 0.25rem 0 0; font-size: 0.875rem;">
             Motivo: {{ solicitud_aprobacion.motivo_rechazo|default:"No especificado" }}
           </p>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if aprobaciones_actuales %}
+      <div class="detail-card" style="margin-bottom: 1.5rem;">
+        <div class="detail-header"><h3><i class="fa-solid fa-stamp" style="color: var(--color-primary);"></i> Flujo de aprobación</h3></div>
+        <div class="detail-body">
+          {% for s in aprobaciones_actuales %}
+          <div class="detail-row" style="display:flex; align-items:center; justify-content:space-between; gap:.5rem; flex-wrap:wrap;">
+            <span class="detail-value" style="display:flex; align-items:center; gap:.5rem;">
+              {% if s.rol_aprobador == 'evaluador' %}
+              <span style="background:#FEF3C7;color:#92400E;padding:.15rem .5rem;border-radius:var(--radius);font-size:.75rem;white-space:nowrap;"><i class="fa-solid fa-magnifying-glass"></i> Evaluación</span>
+              {% else %}
+              <span style="background:#E0E7FF;color:#3730A3;padding:.15rem .5rem;border-radius:var(--radius);font-size:.75rem;white-space:nowrap;"><i class="fa-solid fa-stamp"></i> Autorización</span>
+              {% endif %}
+              {% if s.aprobador %}{{ s.aprobador.get_full_name|default:s.aprobador.username }}{% else %}Sin asignar{% endif %}
+            </span>
+            <span>
+              {% if s.estado == 'aprobada' %}
+              <span class="badge badge--success">Aprobada</span>
+              {% elif s.estado == 'rechazada' %}
+              <span class="badge badge--danger">Rechazada</span>
+              {% elif s.estado == 'pendiente' %}
+              <span class="badge badge--warning">Pendiente</span>
+              {% elif s.estado == 'cancelada' %}
+              <span class="badge badge--secondary">Cancelada</span>
+              {% else %}
+              <span class="badge badge--secondary">En espera</span>
+              {% endif %}
+              {% if s.fecha_respuesta %}<span style="font-size:.75rem;color:var(--color-muted);margin-left:.5rem;">{{ s.fecha_respuesta|date:"d/m/Y H:i" }}</span>{% endif %}
+            </span>
+          </div>
+          {% endfor %}
         </div>
       </div>
       {% endif %}
@@ -200,10 +234,7 @@
           {% endif %}
         </div>
         <div class="detail-body">
-          <div id="resumen-ia-loading" style="display:none; text-align:center; padding:1rem;">
-            <i class="fa-solid fa-spinner fa-spin" style="font-size:1.5rem; color: var(--color-primary);"></i>
-            <p style="margin-top:.5rem; color: var(--color-muted); font-size:.875rem;">Analizando el documento con IA...</p>
-          </div>
+          <div id="resumen-ia-loading" style="display:none;"></div>
           <div id="resumen-ia-error" class="badge badge--danger" style="display:none; white-space:normal;"></div>
           <div id="resumen-ia-content">
             {% if documento.resumen_ia %}
@@ -248,7 +279,14 @@
                 {% if r.conclusion %}<div><span class="detail-label">Conclusión</span><p style="margin:.25rem 0 0; font-size:.875rem;">{% resaltar r.conclusion r.palabras_clave %}</p></div>{% endif %}
               {% endwith %}
             {% elif documento.resumen_ia_texto %}
-              <p style="white-space: pre-line; font-size:.875rem;">{{ documento.resumen_ia_texto }}</p>
+              <p style="font-size:.8rem; color: var(--color-warning); margin-bottom:.5rem;">
+                <i class="fa-solid fa-triangle-exclamation"></i>
+                No se pudo estructurar el resumen. Pulsa <strong>Regenerar</strong> para intentarlo de nuevo.
+              </p>
+              <details>
+                <summary style="cursor:pointer; font-size:.8rem; color: var(--color-muted);">Ver texto generado</summary>
+                <pre style="white-space: pre-wrap; font-size:.75rem; margin-top:.5rem; max-height:240px; overflow:auto;">{{ documento.resumen_ia_texto }}</pre>
+              </details>
             {% elif ia_habilitada %}
               <p style="color: var(--color-muted); font-size:.875rem; margin:0;">
                 Genera un resumen automático del contenido de este documento.
@@ -277,14 +315,10 @@
         <div class="detail-body" style="padding: 0;">
           
           {% if convirtiendo %}
-            <div style="padding: 3rem; text-align: center;">
-              <i class="fa-solid fa-spinner fa-spin" style="font-size: 2rem; color: var(--color-primary);"></i>
-              <p style="margin-top: 1rem; color: var(--color-muted);">
-                Convirtiendo documento... Actualiza en unos segundos.
-              </p>
-            </div>
+            <div id="conv-progress" class="progress-loader" style="padding: 2rem;"
+                 data-url="{% url 'documentos:estado_conversion' tipo=tipo documento_id=documento.uuid %}"></div>
             
-          {% elif documento.archivo_pdf %}
+          {% elif pdf_listo %}
             <div class="pdf-controls" style="display: flex; align-items: center; gap: 0.5rem; justify-content: center; padding: 1rem; background: var(--color-bg-secondary); border-bottom: 1px solid var(--color-border);">
               <button id="btn-prev" class="btn btn--ghost btn--sm" onclick="goToPage(currentPage - 1)" disabled>← Anterior</button>
               <input type="number" id="page-input" min="1" value="1" style="width: 60px; text-align: center; padding: 0.25rem; border: 1px solid var(--color-border); border-radius: 4px;" onkeypress="if(event.key==='Enter') goToPage(this.value)">
@@ -342,6 +376,10 @@
                 <span class="badge badge--{{ documento.estado }}">{{ documento.get_estado_display }}</span>
               </div>
               <div class="detail-row">
+                <span class="detail-label">Clasificación</span>
+                <span class="badge badge--{{ documento.clasificacion_color }}">{{ documento.get_clasificacion_display }}</span>
+              </div>
+              <div class="detail-row">
                 <span class="detail-label">Versión Actual</span>
                 <span class="detail-value">{{ documento.version_actual }}</span>
               </div>
@@ -368,11 +406,6 @@
                   {% else %}
                     <span class="badge badge--success">{{ documento.fecha_vencimiento|date:"d/m/Y" }}</span>
                   {% endif %}
-                  {% if puede_renovar %}
-                  <button class="btn btn--ghost btn--sm" onclick="document.getElementById('modal-renovar').classList.add('active')" style="margin-left: 0.5rem; font-size: 0.75rem;">
-                    <i class="fa-solid fa-rotate"></i> Renovar
-                  </button>
-                  {% endif %}
                 </span>
               </div>
               {% endif %}
@@ -386,15 +419,21 @@
           </div>
 
 
-          {% if departamentos_afectados %}
+          {% if documento.afecta_todos or departamentos_afectados %}
           <div class="detail-card" style="margin-bottom: 1.5rem;">
             <div class="detail-header"><h3>Departamentos Afectados</h3></div>
             <div class="detail-body">
+              {% if documento.afecta_todos %}
+              <div class="detail-row">
+                <span class="detail-value"><i class="fa-solid fa-building" style="color: var(--color-primary); margin-right: 0.5rem;"></i><strong>Todos los departamentos</strong></span>
+              </div>
+              {% else %}
               {% for depto in departamentos_afectados %}
               <div class="detail-row">
                 <span class="detail-value"><i class="fa-solid fa-building" style="color: var(--color-primary); margin-right: 0.5rem;"></i>{{ depto.nombre }}</span>
               </div>
               {% endfor %}
+              {% endif %}
             </div>
           </div>
           {% endif %}
@@ -453,12 +492,23 @@
                 <span class="detail-value">{{ documento.fecha_vigencia|date:"d/m/Y H:i" }}</span>
               </div>
               {% endif %}
-              {% if documento.fecha_vencimiento %}
               <div class="detail-row">
                 <span class="detail-label">Fecha de Vencimiento</span>
-                <span class="detail-value">{{ documento.fecha_vencimiento|date:"d/m/Y" }}</span>
+                <span class="detail-value">
+                  {% if documento.fecha_vencimiento %}
+                    {{ documento.fecha_vencimiento|date:"d/m/Y" }}
+                    {% if documento.estado_vigencia == 'vencido' %}
+                    <span class="badge badge--danger" style="font-size:0.65rem; margin-left:.4rem;">Vencido</span>
+                    {% elif documento.estado_vigencia == 'vence_pronto' %}
+                    <span class="badge badge--warning" style="font-size:0.65rem; margin-left:.4rem;">Vence pronto</span>
+                    {% else %}
+                    <span class="badge badge--success" style="font-size:0.65rem; margin-left:.4rem;">Vigente</span>
+                    {% endif %}
+                  {% else %}
+                    <span style="color: var(--color-muted);">Sin período de vigencia</span>
+                  {% endif %}
+                </span>
               </div>
-              {% endif %}
               {% if documento.proxima_revision %}
               <div class="detail-row">
                 <span class="detail-label">Próxima Revisión</span>
@@ -468,12 +518,17 @@
               {% if documento.periodo_vigencia %}
               <div class="detail-row">
                 <span class="detail-label">Período de Vigencia</span>
-                <span class="detail-value" style="display:flex; align-items:center; gap:0.5rem;">
+                <span class="detail-value" style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
                   {{ documento.periodo_vigencia.nombre }}
                   {% if puede_establecer_vigencia %}
                   <button type="button" class="btn btn--ghost btn--sm" onclick="document.getElementById('modal-vigencia').classList.add('active')" style="font-size:0.75rem;">
                     <i class="fa-solid fa-pen"></i> Cambiar
                   </button>
+                  {% if not documento.tipo.requiere_vigencia %}
+                  <button type="button" class="btn btn--danger btn--sm" onclick="document.getElementById('modal-quitar-vigencia').classList.add('active')" style="font-size:0.75rem;">
+                    <i class="fa-solid fa-ban"></i> Quitar
+                  </button>
+                  {% endif %}
                   {% endif %}
                 </span>
               </div>
@@ -483,6 +538,16 @@
                 <span class="detail-value">
                   <button type="button" class="btn btn--primary btn--sm" onclick="document.getElementById('modal-vigencia').classList.add('active')">
                     <i class="fa-solid fa-plus"></i> Establecer vigencia
+                  </button>
+                </span>
+              </div>
+              {% endif %}
+              {% if documento.estado == 'obsoleto' and puede_renovar %}
+              <div class="detail-row">
+                <span class="detail-label">Documento vencido</span>
+                <span class="detail-value">
+                  <button type="button" class="btn btn--primary btn--sm" onclick="document.getElementById('modal-renovar').classList.add('active')">
+                    <i class="fa-solid fa-rotate"></i> Reactivar / Renovar
                   </button>
                 </span>
               </div>
@@ -671,7 +736,14 @@
                 <div class="version-item">
                   <div>
                     <span class="version-number">{{ solicitud.get_accion_solicitud_display }}</span>
-                    <span class="version-date">{{ solicitud.fecha_solicitud|date:"d/m/Y H:i" }}</span>
+                    {% if solicitud.rol_aprobador == 'evaluador' %}
+                    <span class="badge badge--warning badge--sm">Evaluación</span>
+                    {% else %}
+                    <span class="badge badge--info badge--sm">Autorización</span>
+                    {% endif %}
+                    <span class="version-date">
+                      {% if solicitud.fecha_respuesta %}{{ solicitud.fecha_respuesta|date:"d/m/Y H:i" }}{% else %}{{ solicitud.fecha_solicitud|date:"d/m/Y H:i" }}{% endif %}
+                    </span>
                   </div>
                   <div style="font-size: 0.75rem; color: var(--color-muted);">
                     por {{ solicitud.solicitante.get_full_name|default:solicitud.solicitante.username }}
@@ -679,10 +751,14 @@
                     · Versión {{ solicitud.version_a_eliminar.numero_version }}
                     {% endif %}
                     {% if solicitud.aprobador %}
+                    · {% if solicitud.rol_aprobador == 'evaluador' %}Evaluación{% else %}Autorización{% endif %}:
+                    {{ solicitud.aprobador.get_full_name|default:solicitud.aprobador.username }}
                     · <strong>{{ solicitud.get_estado_display }}</strong>
                     {% if solicitud.fecha_respuesta %}
-                    · {{ solicitud.fecha_respuesta|date:"d/m/Y H:i" }}
+                    · Solicitado {{ solicitud.fecha_solicitud|date:"d/m/Y H:i" }}
                     {% endif %}
+                    {% else %}
+                    · <strong>{{ solicitud.get_estado_display }}</strong>
                     {% endif %}
                   </div>
                 </div>
@@ -714,38 +790,63 @@
         </div>
       </div>
 
-      {% if solicitudes_cambio %}
+      {% if solicitudes_por_operacion %}
       <div class="detail-card" style="margin-top: 1.5rem;">
         <div class="detail-header">
           <h3><i class="fa-solid fa-file-circle-plus" style="margin-right:0.5rem;"></i> Formularios SGC</h3>
         </div>
+
+        {% if solicitudes_por_operacion|length > 1 %}
+        <div class="tabs">
+          {% for op in solicitudes_por_operacion %}
+          <div class="tab{% if forloop.first %} active{% endif %}" onclick="switchTab('form-{{ op.key }}')">
+            {{ op.label }} <span class="accordion-count">{{ op.count }}</span>
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+
         <div class="detail-body">
-          {% for sc in solicitudes_cambio %}
-          <div class="version-item" style="margin-bottom: 1rem; flex-direction: column; align-items: flex-start;">
-            <div style="display:flex; justify-content:space-between; width:100%; flex-wrap:wrap; gap:0.5rem; margin-bottom:0.5rem;">
-              <div>
-                <span class="version-number">{{ sc.codigo }}</span>
-                <span class="version-date">{{ sc.fecha_creacion|date:"d/m/Y H:i" }}</span>
+          {% for op in solicitudes_por_operacion %}
+          <div id="tab-form-{{ op.key }}" class="tab-content{% if forloop.first %} active{% endif %}">
+            <div class="accordion-group">
+              {% for sc in op.solicitudes %}
+              <div class="accordion{% if forloop.first %} active{% endif %}">
+                <button type="button" class="accordion-header" onclick="toggleAccordion(this)">
+                  <span class="accordion-title">
+                    {{ sc.codigo }}
+                    <span class="version-date" style="font-weight:400; margin-left:.5rem;">{{ sc.fecha_creacion|date:"d/m/Y H:i" }}</span>
+                  </span>
+                  <span class="badge {% if sc.estado == 'aprobado' %}badge--success{% elif sc.estado == 'rechazado' %}badge--danger{% elif sc.estado == 'en_revision' %}badge--warning{% else %}badge--secondary{% endif %}">
+                    {{ sc.get_estado_display }}
+                  </span>
+                  <span class="accordion-count">{{ sc.formato.codigo }}</span>
+                  <i class="fa-solid fa-chevron-down accordion-chevron"></i>
+                </button>
+                <div class="accordion-content">
+                  <div class="accordion-body">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:.5rem; margin:.75rem 0;">
+                      <span style="font-size:0.8125rem; color:var(--color-muted);">
+                        {{ sc.formato.codigo }} v{{ sc.formato.version }} · {{ sc.get_operacion_display }} · por {{ sc.solicitante.get_full_name|default:sc.solicitante.username }}
+                      </span>
+                      {% if sc_permisos|get_item:sc.uuid %}
+                      <span style="display:flex; gap:.5rem;">
+                        <a href="{% url 'documentos:descargar_solicitud_xlsx' solicitud_uuid=sc.uuid %}" class="btn btn--outline btn--sm" title="Exportar XLSX">
+                          <i class="fa-solid fa-file-excel"></i>
+                        </a>
+                        <a href="{% url 'documentos:descargar_solicitud_pdf' solicitud_uuid=sc.uuid %}" class="btn btn--outline btn--sm" title="Exportar PDF">
+                          <i class="fa-solid fa-file-pdf"></i>
+                        </a>
+                      </span>
+                      {% endif %}
+                    </div>
+                    <div style="width:100%; min-width:0;">
+                      {% include 'documentos/_formato_dinamico.html' with formato=sc.formato respuestas=sc.respuestas read_only=True %}
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div style="display:flex; flex-wrap:wrap; gap:0.5rem; align-items:center;">
-                <span class="badge {% if sc.estado == 'aprobado' %}badge--success{% elif sc.estado == 'rechazado' %}badge--danger{% elif sc.estado == 'en_revision' %}badge--warning{% else %}badge--secondary{% endif %}">
-                  {{ sc.get_estado_display }}
-                </span>
-                {% if sc_permisos|get_item:sc.uuid %}
-                <a href="{% url 'documentos:descargar_solicitud_xlsx' solicitud_uuid=sc.uuid %}" class="btn btn--outline btn--sm" title="Exportar XLSX">
-                  <i class="fa-solid fa-file-excel"></i>
-                </a>
-                <a href="{% url 'documentos:descargar_solicitud_pdf' solicitud_uuid=sc.uuid %}" class="btn btn--outline btn--sm" title="Exportar PDF">
-                  <i class="fa-solid fa-file-pdf"></i>
-                </a>
-                {% endif %}
-              </div>
-            </div>
-            <div style="font-size:0.8125rem; color:var(--color-muted); margin-bottom:0.5rem;">
-              {{ sc.formato.codigo }} v{{ sc.formato.version }} · {{ sc.get_operacion_display }} · por {{ sc.solicitante.get_full_name|default:sc.solicitante.username }}
-            </div>
-            <div style="width:100%; min-width:0;">
-              {% include 'documentos/_formato_dinamico.html' with formato=sc.formato respuestas=sc.respuestas read_only=True %}
+              {% endfor %}
             </div>
           </div>
           {% endfor %}
@@ -788,8 +889,8 @@
       </div>
       {% endif %}
 
-      <!-- Modal Renovar Vencimiento -->
-      {% if puede_renovar %}
+      <!-- Reactivación de vencimiento (solo obsoletos) -->
+      {% if puede_renovar and documento.estado == 'obsoleto' %}
       <div id="modal-renovar" class="modal">
         <div class="modal-content" style="background: var(--color-surface); border-radius: var(--radius-lg); padding: 1.5rem; max-width: 450px; width: 100%; box-shadow: var(--shadow-lg);">
           <h3 style="margin: 0 0 1rem; font-size: 1rem;">Renovar Vencimiento</h3>
@@ -848,6 +949,29 @@
             <div style="display: flex; gap: 0.75rem; justify-content: flex-end;">
               <button type="button" class="btn btn--ghost" onclick="document.getElementById('modal-vigencia').classList.remove('active')">Cancelar</button>
               <button type="submit" class="btn btn--primary">Establecer</button>
+            </div>
+          </form>
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Modal Quitar Vigencia -->
+      {% if puede_establecer_vigencia and documento.periodo_vigencia and not documento.tipo.requiere_vigencia %}
+      <div id="modal-quitar-vigencia" class="modal">
+        <div class="modal-content" style="background: var(--color-surface); border-radius: var(--radius-lg); padding: 1.5rem; max-width: 450px; width: 100%; box-shadow: var(--shadow-lg);">
+          <h3 style="margin: 0 0 1rem; font-size: 1rem;">Quitar Período de Vigencia</h3>
+          <p style="font-size: 0.875rem; color: var(--color-muted); margin-bottom: 1rem;">
+            El documento quedará sin fecha de vencimiento. El cambio quedará en el historial y en la auditoría.
+          </p>
+          <form method="post" action="{% url 'documentos:quitar_vigencia' tipo=tipo documento_id=documento.uuid %}">
+            {% csrf_token %}
+            <div class="form-group" style="margin-bottom: 1.5rem;">
+              <label class="form-label">Motivo *</label>
+              <textarea name="motivo" class="form-input" rows="3" required placeholder="Motivo para quitar la vigencia..."></textarea>
+            </div>
+            <div style="display: flex; gap: 0.75rem; justify-content: flex-end;">
+              <button type="button" class="btn btn--ghost" onclick="document.getElementById('modal-quitar-vigencia').classList.remove('active')">Cancelar</button>
+              <button type="submit" class="btn btn--danger">Quitar vigencia</button>
             </div>
           </form>
         </div>
@@ -1031,14 +1155,13 @@ function updateControls() {
 }
 
 function switchTab(tabName) {
-  document.querySelectorAll('.tab').forEach(function(tab) {
-    tab.classList.remove('active');
-  });
-  document.querySelectorAll('.tab-content').forEach(function(content) {
-    content.classList.remove('active');
-  });
-  event.target.classList.add('active');
-  document.getElementById('tab-' + tabName).classList.add('active');
+  var tab = (event.target.closest && event.target.closest('.tab')) || event.target;
+  var card = (tab.closest && tab.closest('.detail-card')) || document;
+  card.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
+  card.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
+  tab.classList.add('active');
+  var content = card.querySelector('#tab-' + tabName);
+  if (content) content.classList.add('active');
 }
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -1069,6 +1192,9 @@ function abrirModalRevocar(distId, nombre) {
 
 {% if ia_habilitada %}
 var _resumenIATimer = null;
+var _resumenIALoader = null;
+var _resumenIAIntentos = 0;
+var _resumenIAMaxIntentos = 40;
 var _resumenIAUrl = "{% url 'documentos:resumen_ia' tipo=tipo documento_id=documento.uuid %}";
 
 function _resumenIALoading(on) {
@@ -1080,25 +1206,48 @@ function _resumenIALoading(on) {
   if (btn) btn.disabled = on;
 }
 
+function _resumenIAStartLoader() {
+  if (_resumenIALoader || !window.createProgressLoader) return;
+  _resumenIALoading(true);
+  _resumenIALoader = createProgressLoader('resumen-ia-loading', [
+    { pct: 15, text: 'Analizando el documento…' },
+    { pct: 45, text: 'Extrayendo ideas clave…' },
+    { pct: 70, text: 'Redactando el resumen…' },
+    { pct: 90, text: 'Refinando detalles…' },
+  ]);
+  _resumenIALoader.start();
+}
+
 function _resumenIAError(msg) {
-  var box = document.getElementById('resumen-ia-error');
-  if (box) { box.textContent = msg; box.style.display = ''; }
-  _resumenIALoading(false);
+  if (_resumenIALoader) {
+    _resumenIALoading(true);
+    _resumenIALoader.fail(msg || 'Ocurrió un error.');
+  } else {
+    var box = document.getElementById('resumen-ia-error');
+    if (box) { box.textContent = msg; box.style.display = ''; }
+    _resumenIALoading(false);
+  }
   var btnText = document.getElementById('btn-resumen-ia-text');
   if (btnText) btnText.textContent = 'Regenerar';
 }
 
 function _resumenIAPoll() {
-  fetch(_resumenIAUrl, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+  if (_resumenIAIntentos >= _resumenIAMaxIntentos) {
+    _resumenIAError('La generación está tardando más de lo esperado. Inténtalo de nuevo.');
+    return;
+  }
+  _resumenIAIntentos += 1;
+  fetch(_resumenIAUrl + '?solo_estado=1', { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
     .then(function(r) { return r.json(); })
     .then(function(data) {
       if (data.estado === 'pendiente' || data.estado === 'procesando') {
-        _resumenIALoading(true);
+        _resumenIAStartLoader();
         _resumenIATimer = setTimeout(_resumenIAPoll, 3000);
       } else if (data.estado === 'error') {
         _resumenIAError(data.error || 'Ocurrió un error al generar el resumen.');
       } else {
-        window.location.reload();
+        if (_resumenIALoader) _resumenIALoader.finish('Resumen listo');
+        setTimeout(function () { window.location.reload(); }, 600);
       }
     })
     .catch(function() { _resumenIAError('No se pudo consultar el estado del resumen.'); });
@@ -1107,7 +1256,9 @@ function _resumenIAPoll() {
 function generarResumenIA() {
   var box = document.getElementById('resumen-ia-error');
   if (box) box.style.display = 'none';
-  _resumenIALoading(true);
+  _resumenIALoader = null;
+  _resumenIAIntentos = 0;
+  _resumenIAStartLoader();
   var btnText = document.getElementById('btn-resumen-ia-text');
   if (btnText) btnText.textContent = 'Generando...';
   fetch(_resumenIAUrl, {
@@ -1124,10 +1275,44 @@ function generarResumenIA() {
 
 {% if documento.resumen_ia_estado == 'pendiente' or documento.resumen_ia_estado == 'procesando' %}
 document.addEventListener('DOMContentLoaded', function() {
-  _resumenIALoading(true);
+  _resumenIAStartLoader();
   _resumenIAPoll();
 });
 {% endif %}
+window.addEventListener('pagehide', function() {
+  if (_resumenIATimer) { clearTimeout(_resumenIATimer); _resumenIATimer = null; }
+});
 {% endif %}
+
+// === Conversión de documento: barra de progreso + polling ===
+(function () {
+  var el = document.getElementById('conv-progress');
+  if (!el || !window.createProgressLoader) return;
+  var url = el.getAttribute('data-url');
+  var loader = createProgressLoader(el, [
+    { pct: 10, text: 'Preparando documento…' },
+    { pct: 40, text: 'Transformando documento…' },
+    { pct: 70, text: 'Convirtiendo a PDF…' },
+    { pct: 90, text: 'Refinando detalles…' },
+  ]);
+  loader.start();
+  var intentos = 0, max = 40;
+  function poll() {
+    fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.listo) {
+          loader.finish('Documento listo');
+          setTimeout(function () { window.location.reload(); }, 600);
+        } else if (++intentos < max) {
+          setTimeout(poll, 3000);
+        } else {
+          loader.fail('Está tardando más de lo esperado. Recarga la página en un momento.');
+        }
+      })
+      .catch(function() { loader.fail('No se pudo consultar el estado de la conversión.'); });
+  }
+  setTimeout(poll, 2000);
+})();
 </script>
 {% endblock %}

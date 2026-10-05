@@ -105,21 +105,33 @@
   transform: rotate(180deg);
 }
 
-/* === ACCORDION CONTENT === */
+/* === ACCORDION CONTENT ===
+   El elemento que anima (`height`) NO lleva padding/borde (no se pueden
+   colapsar); van en `.accordion-body`, un hijo interno que se recorta con
+   `overflow:hidden`. Así el contenedor padre crece/decrece suave y el estado
+   colapsado mide 0 real. Sin `display:none` (no es animable). */
 .accordion-content {
-  display: none;
-  padding: 0 1rem 1rem 1rem;
-  border-top: 1px solid var(--color-border);
+  height: 0;
+  overflow: hidden;
+  transition: height 0.3s ease;
 }
 
 .accordion.active .accordion-content {
-  display: block;
-  animation: accordionFadeIn 0.2s ease;
+  height: auto;
 }
 
-@keyframes accordionFadeIn {
-  from { opacity: 0; transform: translateY(-4px); }
-  to { opacity: 1; transform: translateY(0); }
+.accordion-body {
+  padding: 0 1rem 1rem 1rem;
+}
+
+.accordion.active .accordion-body {
+  border-top: 1px solid var(--color-border);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .accordion-content {
+    transition: none;
+  }
 }
 
 /* === RESPONSIVE === */
@@ -128,7 +140,7 @@
     padding: 0.75rem;
     font-size: 0.8125rem;
   }
-  .accordion-content {
+  .accordion-body {
     padding: 0 0.75rem 0.75rem 0.75rem;
   }
 }

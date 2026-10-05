@@ -1,0 +1,64 @@
+/* ==========================================================================
+   POLIDOC - COMPONENTE: FORMULARIO DINÁMICO
+   Estilos del partial documentos/_formato_dinamico.html.
+   Extraído a estático para no repetirlo por cada formulario embebido.
+   ========================================================================== */
+
+.formato-seccion { margin-bottom: 2rem; }
+.formato-seccion-title {
+  font-size: 0.9375rem; font-weight: 600; color: var(--color-text);
+  border-bottom: 2px solid var(--color-primary); padding-bottom: 0.5rem; margin-bottom: 1rem;
+}
+.formato-campo { margin-bottom: 1rem; }
+.formato-campo-label {
+  display: block; font-size: 0.8125rem; font-weight: 500;
+  color: var(--color-text); margin-bottom: 0.375rem;
+}
+.formato-campo-label .required { color: var(--color-danger); margin-left: 0.25rem; }
+.formato-checkbox-group { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+.formato-checkbox-item {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.5rem 0.75rem; border: 1px solid var(--color-border);
+  border-radius: var(--radius); font-size: 0.875rem; cursor: pointer;
+  transition: all var(--transition);
+}
+.formato-checkbox-item:has(input:checked) {
+  border-color: var(--color-primary); background: var(--color-primary-light);
+}
+.formato-checkbox-item input[type="checkbox"] { accent-color: var(--color-primary); }
+.formato-tabla-container { overflow-x: auto; max-width: 100%; -webkit-overflow-scrolling: touch; }
+.formato-tabla {
+  width: 100%; border-collapse: collapse; font-size: 0.8125rem;
+}
+.formato-tabla th {
+  background: var(--color-bg-alt); padding: 0.5rem;
+  text-align: left; font-weight: 600; border: 1px solid var(--color-border);
+  font-size: 0.75rem;
+}
+.formato-tabla td { padding: 0.25rem; border: 1px solid var(--color-border); }
+.formato-tabla input, .formato-tabla textarea {
+  width: 100%; border: none; background: transparent; font-size: 0.8125rem;
+  padding: 0.375rem; font-family: inherit; resize: vertical;
+}
+.formato-tabla input:focus, .formato-tabla textarea:focus {
+  outline: none; background: var(--color-primary-light);
+}
+.formato-tabla .btn-remove-row {
+  background: none; border: none; color: var(--color-danger); cursor: pointer;
+  font-size: 0.75rem; padding: 0.25rem;
+}
+.formato-tabla-footer { margin-top: 0.5rem; }
+.formato-readonly-value {
+  padding: 0.5rem 0.75rem; border: 1px solid var(--color-border);
+  border-radius: var(--radius); background: var(--color-bg);
+  font-size: 0.875rem; min-height: 1.5rem;
+}
+.formato-auto-value {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+  padding: 0.5rem 0.75rem; border: 1px dashed var(--color-border);
+  border-radius: var(--radius); background: var(--color-bg-alt);
+  font-size: 0.875rem; min-height: 2.25rem;
+}
+.formato-auto-placeholder { color: var(--color-muted); font-style: italic; }
+.formato-auto-field { display: flex; align-items: center; gap: 0.5rem; }
+.formato-auto-input { background: var(--color-bg-alt); cursor: not-allowed; opacity: 0.8; }

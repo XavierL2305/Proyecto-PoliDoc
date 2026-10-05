@@ -51,7 +51,9 @@
 
     <div class="confirm-actions">
       <a href="{% url 'documentos:detalle' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost">Cancelar</a>
-      <button type="submit" class="btn btn--danger">Confirmar Eliminación</button>
+      <button type="submit" class="btn btn--danger" data-anim="delete">
+        <i class="fa-solid fa-trash"></i><span class="btn-label">Confirmar Eliminación</span>
+      </button>
     </div>
   </form>
 </div>

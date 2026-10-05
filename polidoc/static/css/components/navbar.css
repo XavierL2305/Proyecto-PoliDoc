@@ -122,6 +122,14 @@
   text-overflow: ellipsis;
 }
 
+.result-relacionado {
+  font-size: 0.7rem;
+  color: var(--color-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .result-badge {
   flex-shrink: 0;
   font-size: 0.7rem;

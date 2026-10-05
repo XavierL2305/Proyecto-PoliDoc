@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
 from pathlib import Path
+from datetime import timedelta
 from dotenv import load_dotenv
 import os
 import sys
@@ -100,6 +101,7 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
+                'polidoc.context_processors.static_versions',
             ],
         },
     },
@@ -241,6 +243,16 @@ IA_RESUMEN_SINCRONO = os.getenv('IA_RESUMEN_SINCRONO', 'True').lower() in ('true
 IA_RESUMEN_REINTENTOS = int(os.getenv('IA_RESUMEN_REINTENTOS', '4'))
 GEMINI_MODEL_FALLBACK = os.getenv('GEMINI_MODEL_FALLBACK', 'gemini-3.7-flash')
 IA_RESUMEN_LIMITE_DIARIO = int(os.getenv('IA_RESUMEN_LIMITE_DIARIO', '20'))
+IA_RESUMEN_MAX_TOKENS = int(os.getenv('IA_RESUMEN_MAX_TOKENS', '4096'))
+# Minutos tras los cuales un resumen IA en 'pendiente'/'procesando' se considera
+# colgado (worker/celery caído o tarea perdida) y se marca como error/listo para
+# que la UI deje de sondear.
+IA_RESUMEN_TIMEOUT_MIN = int(os.getenv('IA_RESUMEN_TIMEOUT_MIN', '5'))
+
+# TÉRMINOS Y CONDICIONES DE USO
+# Versión vigente del texto aceptado en el login. Si cambia, cada usuario
+# debe volver a aceptarlos (PerfilUsuario.terminos_version).
+TERMINOS_VERSION = os.getenv('TERMINOS_VERSION', '1.0')
 
 # CONFIGURACIÓN DE CELERY (RabbitMQ & Redis)
 
@@ -267,6 +279,58 @@ CELERY_TIMEZONE = TIME_ZONE
 # Expiración de los resultados guardados en Redis (en segundos: ej. 1 día)
 CELERY_RESULT_EXPIRES = 86400
 
+# Barrido de planillas SGC-FOR-001 pendientes (services/planillas.py).
+# Red de seguridad: si la tarea del encolado no se ejecutó (worker caído),
+# este barrido la genera. Mínimo 1.
+PLANILLAS_BARRIDO_MINUTOS = max(1, int(os.getenv('PLANILLAS_BARRIDO_MINUTOS', '15')))
+PLANILLAS_BARRIDO_LOTE = max(1, int(os.getenv('PLANILLAS_BARRIDO_LOTE', '100')))
+
+# Tamaño de papel con el que se convierten los documentos office subidos a PDF
+# (services/conversion_pdf.py). El código es el de OOXML ST_PaperSize, que es
+# lo que declare la hoja del XLSX/DOCX original por defecto. Se usa para
+# forzar un tamaño distinto al de origen (p.ej. el contenido se desbordaba
+# de la A4 y las tablas se partían entre páginas).
+#
+# Se pasa de Folio (8.5"x13") a A4: el oficio daba páginas tan altas que el
+# contenido de una página se descolocaba con el de la siguiente. A4 recupera
+# el paginado normal y los márgenes inferiores/superiores de abajo compensan
+# el alto perdido (el formulario sigue cabiendo en 1 página, ver §23.4).
+PAPEL_PDF_CONVERSION = os.getenv('PAPEL_PDF_CONVERSION', 'A4')
+
+
+def _margen_env(nombre, defecto):
+    """Margen en pulgadas desde el entorno; cadena vacía → None (no tocar)."""
+    valor = os.getenv(nombre, str(defecto)).strip()
+    if not valor:
+        return None
+    try:
+        return float(valor)
+    except ValueError:
+        return defecto
+
+
+# Márgenes superior/inferior del PDF (pulgadas). Se parchean en la copia
+# temporal junto al tamaño de papel; izquierdo/derecho se respetan.
+MARGEN_SUPERIOR_PDF_CONVERSION = _margen_env('MARGEN_SUPERIOR_PDF_CONVERSION', 0.4)
+MARGEN_INFERIOR_PDF_CONVERSION = _margen_env('MARGEN_INFERIOR_PDF_CONVERSION', 0.4)
+
+# QA del PDF y reparación adaptativa (ver services/pdf_qa.py y pdf_adaptativo.py).
+# Tras convertir se inspecciona el PDF; si hay un logo recortado o un título
+# huérfano se encola la reparación (o se hace en línea si no hay broker).
+PDF_QA_ADAPTATIVO = os.getenv('PDF_QA_ADAPTATIVO', 'True').lower() in ('true', '1', 't')
+PDF_REPARAR_EN_CELERY = os.getenv('PDF_REPARAR_EN_CELERY', 'True').lower() in ('true', '1', 't')
+PDF_QA_TEXTO_SOLAPE = os.getenv('PDF_QA_TEXTO_SOLAPE', 'True').lower() in ('true', '1', 't')
+PDF_SALTO_DOCX = os.getenv('PDF_SALTO_DOCX', 'True').lower() in ('true', '1', 't')
+try:
+    PDF_MAX_INTENTOS = int(os.getenv('PDF_MAX_INTENTOS', '3'))
+except ValueError:
+    PDF_MAX_INTENTOS = 3
+
+# Vigencia (días) de una autorización de descarga aprobada. Pasado el plazo, o
+# si el documento cambia de versión, hay que volver a solicitarla (ISO 9001
+# §7.5.3: control de distribución y acceso).
+DESCARGA_VIGENCIA_DIAS = int(os.getenv('DESCARGA_VIGENCIA_DIAS', '30'))
+
 # Tareas periódicas (Celery Beat)
 CELERY_BEAT_SCHEDULE = {
     'verificar-vencimientos-diario': {
@@ -276,6 +340,10 @@ CELERY_BEAT_SCHEDULE = {
     'escalar-aprobaciones-vencidas': {
         'task': 'documentos.tasks.escalar_aprobaciones_vencidas',
         'schedule': crontab(minute=0),  # cada hora
+    },
+    'generar-planillas-pendientes': {
+        'task': 'documentos.tasks.generar_planillas_pendientes',
+        'schedule': timedelta(minutes=PLANILLAS_BARRIDO_MINUTOS),
     },
 }
 
@@ -293,6 +361,8 @@ CACHES = {
 
 # Horas sin respuesta antes de escalar una aprobación a administración
 APROBACION_ESCALADO_HORAS = int(os.getenv('APROBACION_ESCALADO_HORAS', '48'))
+# Departamento cuyo jefe evalúa documentos creados por el jefe de GG
+APROBACION_EVALUADOR_DEPTO_GG = os.getenv('APROBACION_EVALUADOR_DEPTO_GG', 'SGC')
 
 # =============================================================================
 # CONFIGURACIÓN DE APROBACIÓN DE DOCUMENTOS

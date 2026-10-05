@@ -40,8 +40,8 @@ class PeriodoAdmin(admin.ModelAdmin):
 
 @admin.register(Documento)
 class DocumentoAdmin(admin.ModelAdmin):
-    list_display = ['codigo', 'nombre', 'tipo', 'departamento', 'propietario', 'estado', 'version_actual']
-    list_filter = ['estado', 'tipo', 'departamento']
+    list_display = ['codigo', 'nombre', 'tipo', 'departamento', 'propietario', 'estado', 'version_actual', 'afecta_todos']
+    list_filter = ['estado', 'tipo', 'departamento', 'afecta_todos']
     search_fields = ['nombre', 'codigo']
     filter_horizontal = ['departamentos_afectados', 'documentos_relacionados']
 
@@ -152,3 +152,4 @@ class SolicitudCambioAdmin(admin.ModelAdmin):
     list_filter = ['operacion', 'estado', 'formato']
     search_fields = ['codigo', 'solicitante__username', 'documento__codigo']
     raw_id_fields = ['formato', 'documento', 'solicitante', 'departamento']
+    readonly_fields = ['planilla_xlsx', 'planilla_pdf']

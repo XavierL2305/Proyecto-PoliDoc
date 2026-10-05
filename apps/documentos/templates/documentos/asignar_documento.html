@@ -23,6 +23,25 @@
             Documento: <strong>{{ documento.nombre }}</strong> ({{ documento.codigo }})
           </p>
 
+          {% if not hay_asignables %}
+          <div class="alert alert--warning" style="margin-bottom: 1rem;">
+            <span class="alert-icon"><i class="fa-solid fa-circle-exclamation"></i></span>
+            <div class="alert-content">
+              {% if documento.departamento %}
+              No hay coordinadores ni trabajadores en el departamento
+              <strong>{{ documento.departamento.nombre }}</strong> para asignar.
+              Agrega un usuario a ese departamento (o asígnale el rol de coordinador)
+              para poder delegar permisos.
+              {% else %}
+              Este documento no tiene departamento asignado; no se pueden listar
+              usuarios para asignar.
+              {% endif %}
+            </div>
+          </div>
+          <div class="form-card-footer">
+            <a href="{% url 'documentos:detalle' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost">Volver</a>
+          </div>
+          {% else %}
           <form method="post">
             {% csrf_token %}
             <div class="form-group" style="margin-bottom: 1rem;">
@@ -54,6 +73,7 @@
               <button type="submit" class="btn btn--primary">Asignar</button>
             </div>
           </form>
+          {% endif %}
         </div>
       </div>
 {% endblock %}

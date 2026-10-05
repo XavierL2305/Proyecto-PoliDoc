@@ -1,0 +1,488 @@
+/* ==========================================================================
+   POLIDOC - COMPONENTE: BUTTON ANIMATIONS
+   Micro-animaciones de acción (se activan desde JS, no desde el HTML):
+     - .btn--anim-saving   "sello"     → Guardar Borrador
+     - .btn--anim-saved    "check"     → fin del sello (icono cambiado)
+     - .btn--anim-sending  "vuelo"     → Enviar a Revisión
+   La "papelera" (data-anim="delete") NO tiene clase CSS propia: la construye
+   js/button-animations.js en DOM (.trash-anim) al confirmar la eliminación.
+   Origen: js/button-animations.js (marca data-anim="save|send|delete").
+   Todas se ejecutan EN el propio botón (sin modales ni fondos) y solo
+   retrasan el envío real lo que dura la animación.
+
+   IMPORTANTE: la espera del envío vive en DUR{} de button-animations.js y
+   DEBE ser mayor que la duración total de cada bloque de @keyframes de aquí
+   (cada uno indica con qué DUR debe cuadrar), o la navegación corta la
+   animación a la mitad.
+   ========================================================================== */
+
+/* === BASE === */
+.btn--animating {
+  position: relative;
+  pointer-events: none;
+}
+
+.btn-label {
+  display: inline-block;
+  white-space: nowrap;
+}
+
+/* ============================================================
+   1. SELLO - Guardar Borrador
+   El icono se "estampa", aparece un anillo verde y luego el check.
+   ============================================================ */
+/* 0.45s → termina a los 450 ms (cabe en DUR.save = 900 ms) */
+.btn--anim-saving > i {
+  display: inline-block;
+  animation: btnAnimSaveDrop 0.45s cubic-bezier(0.3, 0, 0.4, 1) forwards;
+}
+
+@keyframes btnAnimSaveDrop {
+  0% {
+    transform: translateY(0) scale(1);
+  }
+  45% {
+    transform: translateY(5px) scale(0.82);
+  }
+  75% {
+    transform: translateY(-4px) scale(1.12);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Anillo que se expande desde el botón (verde "guardado").
+   0.45s + delay 0.2s → termina a los 650 ms (cabe en DUR.save = 900 ms). */
+.btn--anim-saving::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  outline: 0 solid var(--color-success);
+  outline-offset: 0;
+  animation: btnAnimSaveRing 0.45s ease-out 0.2s forwards;
+}
+
+@keyframes btnAnimSaveRing {
+  0% {
+    outline-width: 0;
+    opacity: 1;
+  }
+  100% {
+    outline-width: 14px;
+    opacity: 0;
+  }
+}
+
+/* Check verde con rebote (cambia el icono de disquete a check).
+   El JS lo dispara a los 430 ms → termina a los 830 ms (cabe en DUR.save). */
+.btn--anim-saved > i {
+  color: var(--color-success);
+  animation: btnAnimSaveCheck 0.4s cubic-bezier(0.3, 1.6, 0.5, 1) both;
+}
+
+@keyframes btnAnimSaveCheck {
+  0% {
+    transform: scale(0.4) rotate(-25deg);
+  }
+  100% {
+    transform: scale(1) rotate(0);
+  }
+}
+
+/* ============================================================
+   2. VUELO - Enviar a Revisión
+   El avión se desprende, vuela en arco con estela punteada y el
+   botón hace un "pop".
+   Recorrido ACOTADO: .page-content tiene overflow-x:hidden y los botones
+   de acción están alineados a la derecha (form-card-footer → flex-end), así
+   que un vuelo largo se cortaría contra el borde del contenedor. El icono
+   desvanece (opacity → 0) ANTES de llegar a ese borde.
+   ============================================================ */
+.btn--anim-sending {
+  animation: btnAnimSendPop 0.6s cubic-bezier(0.3, 1.4, 0.5, 1);
+}
+
+@keyframes btnAnimSendPop {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(0.93);
+  }
+  70% {
+    transform: scale(1.05);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* El icono se va volando (solo transform: el hueco del layout no salta).
+   0.9s → termina a los 900 ms (cabe en DUR.send = 1100 ms) */
+.btn--anim-sending > i {
+  display: inline-block;
+  animation: btnAnimSendFly 0.9s cubic-bezier(0.4, 0, 0.6, 1) forwards;
+}
+
+@keyframes btnAnimSendFly {
+  0% {
+    transform: translate(0, 0) rotate(0) scale(1);
+    opacity: 1;
+  }
+  22% {
+    transform: translate(3px, -9px) rotate(-8deg) scale(1.06);
+    opacity: 1;
+  }
+  60% {
+    transform: translate(30px, -36px) rotate(16deg) scale(0.6);
+    opacity: 0.35;
+  }
+  100% {
+    transform: translate(52px, -58px) rotate(22deg) scale(0.2);
+    opacity: 0;
+  }
+}
+
+/* Estela: arco punteado que se dibuja hacia donde vuela el avión.
+   Ancho acotado (70px) para que tampoco se recorte contra el borde derecho
+   del contenedor. 0.9s + delay 0.05s → termina a los 950 ms (< DUR.send). */
+.btn--anim-sending::after {
+  content: '';
+  position: absolute;
+  left: 10%;
+  top: 4%;
+  width: 70px;
+  height: 50px;
+  border-top: 2px dashed var(--color-primary);
+  border-right: 2px dashed transparent;
+  border-radius: 50%;
+  transform: rotate(-24deg);
+  transform-origin: left bottom;
+  opacity: 0;
+  pointer-events: none;
+  animation: btnAnimSendTrail 0.9s ease-out 0.05s forwards;
+}
+
+@keyframes btnAnimSendTrail {
+  0% {
+    opacity: 0;
+    clip-path: inset(0 100% 0 0);
+  }
+  25% {
+    opacity: 0.75;
+  }
+  70% {
+    opacity: 0.5;
+    clip-path: inset(0 0 0 0);
+  }
+  100% {
+    opacity: 0;
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+/* ============================================================
+   3. PAPELERA - Confirmar Eliminación
+   El botón se ARRUGA en una bolita de papel mientras aparece el bote:
+   mide el MISMO alto que el botón (no se agranda); la tapa — más ANCHA
+   que el bote (112%, con vuelo por los lados) — se abre, la bolita
+   entra y la tapa se cierra (con un pequeño rebote). Recién ahí se
+   envía el formulario. El bote en sí NO se mueve jamás (sin gulp: ni
+   se ensancha ni se achata) y NADA más crece en los 1000ms del bloque:
+   la tapa solo gira y la bolita únicamente SE ENCOGE (209×41 → Ø29).
+   El DOM lo crea button-animations.js (.trash-anim) — no hay clase
+   .btn--anim-deleting. Todo el bloque dura 1s = DUR.delete.
+   Tamaños que inyecta el JS (derivados SOLO del alto del botón):
+     --trash-can-h = h × 1.0        --trash-can-w = can-h × 0.9
+     --trash-ball-sx = (h × 0.7) / ancho      --trash-ball-sy = (h × 0.7) / h
+     --trash-fly-y = boca del bote (borde del cuerpo, 8px por encima)
+                     - centro del botón
+   El bote fija font-size = --trash-can-h → 1em = alto del bote, así
+   TODA su geometría interna escala con un solo valor (antes estaba
+   en px fijos y salía 1.85× el botón, exagerado).
+   La tapa va al 112% del ancho del bote (de 37px a ~41px): a
+   `width:100%` quedaba a ras de la boca y se leía como una línea
+   puesta encima, no como una tapa.
+   Va con position:fixed, por lo que NO lo recorta .page-content
+   (overflow-x:hidden).
+   ============================================================ */
+.trash-anim {
+  position: fixed;
+  z-index: 300;
+  pointer-events: none;
+  /* defaults; el JS los sobreescribe con los del botón real */
+  --trash-can-h: 41px;
+  --trash-can-w: 37px;
+  --trash-fly-x: 0px;
+  --trash-fly-y: -56px;
+  --trash-ball-sx: 0.139;
+  --trash-ball-sy: 0.707;
+}
+
+.trash-anim__can {
+  position: absolute;
+  left: calc(50% - var(--trash-can-w) / 2);
+  bottom: calc(100% + 8px);
+  width: var(--trash-can-w);
+  height: var(--trash-can-h);
+  font-size: var(--trash-can-h);
+  z-index: 2;
+  animation: trashCan 0.15s ease-out forwards;
+}
+
+/* Cuerpo de la papelera (trapecio con rayas) — todo en em para que
+   escale con el font-size del bote (1em = alto del bote). */
+.trash-anim__body {
+  position: absolute;
+  bottom: 0;
+  left: 0.05em;
+  right: 0.05em;
+  height: 0.84em;
+  background:
+    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.16) 0 0.05em, transparent 0.05em 0.2em),
+    var(--color-danger);
+  clip-path: polygon(0 0, 100% 0, 88% 100%, 12% 100%);
+  box-shadow: 0 0.08em 0.21em rgba(0, 0, 0, 0.28);
+}
+
+/* Borde interior de la boca */
+.trash-anim__body::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 0.12em;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* Tapa con bisagra a la izquierda — MÁS ANCHA que el bote: 112% del
+   ancho, con ~2.2px de vuelo por lado (cae con "aire" sobre la boca). */
+.trash-anim__lid {
+  position: absolute;
+  left: -6%;
+  top: 0.05em;
+  width: 112%;
+  height: 0.16em;
+  background: var(--color-danger);
+  border-radius: 0.08em;
+  box-shadow: 0 0.04em 0.09em rgba(0, 0, 0, 0.3);
+  transform-origin: 0.05em center;
+  transform: rotate(0deg);
+  animation: trashLid 1s ease-in-out forwards;
+}
+
+/* Manija de la tapa */
+.trash-anim__lid::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -0.12em;
+  width: 0.32em;
+  height: 0.12em;
+  margin-left: -0.16em;
+  background: var(--color-danger);
+  border-radius: 0.05em 0.05em 0 0;
+}
+
+/* Abre 0-250ms, aguanta abierta hasta 630ms (entra la bolita),
+   cierra 630-820ms con rebote. Bloque total 1000ms = DUR.delete. */
+@keyframes trashLid {
+  0% {
+    transform: rotate(0deg);
+  }
+  8% {
+    transform: rotate(0deg);
+  }
+  25% {
+    transform: rotate(-118deg);
+  }
+  63% {
+    transform: rotate(-118deg);
+  }
+  74% {
+    transform: rotate(5deg);
+  }
+  82% {
+    transform: rotate(-8deg);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
+/* Aparición por fundido (0-150ms). El bote NO cambia de tamaño nunca:
+   se queda con el que le dio el JS; el único movimiento es la tapa. */
+@keyframes trashCan {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+/* Polvo al cerrar la tapa — TAMAÑO FIJO: solo opacidad, nunca se agranda */
+.trash-anim__can::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0.08em;
+  width: 0.58em;
+  height: 0.58em;
+  margin-left: -0.29em;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0) 70%);
+  opacity: 0;
+  animation: trashPuff 1s ease-out forwards;
+}
+
+@keyframes trashPuff {
+  0%,
+  70% {
+    opacity: 0;
+  }
+  76% {
+    opacity: 0.7;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Clon del botón: se ARRUGA en una bolita de papel (0-200ms), vuela
+   hacia la boca del bote (200-630ms), cae DETRÁS del borde en 630ms
+   (z-index 3 → 1) y se hunde mientras la tapa cierra encima.
+   La bolita SOLO SE ENCOGE (209×41 → Ø29): nunca crece, por eso el
+   keyframe 10% usa el mismo scale que el 20% (sin sobrepico).
+   IMPORTANTE: rotate() va ANTES de scale() en la lista de transform:
+   así la escala no uniforme (0.14 / 0.71) no deforma la rotación y la
+   bola sale redonda en vez de una gota alargada.
+   clip-path arranca como rectángulo completo: la intersección con
+   border-radius deja el botón redondeado tal cual en el primer frame
+   (sin "pop"), y a los 200ms ya es el polígono irregular. */
+.trash-anim__flying {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 3;
+  transform-origin: center center;
+  animation: trashCrumple 1s ease-in-out forwards;
+}
+
+/* Icono y texto del clon se apagan durante el arrugado */
+.trash-anim__flying > i,
+.trash-anim__flying > .btn-label {
+  animation: trashHide 0.2s ease-out forwards;
+}
+
+@keyframes trashHide {
+  to {
+    opacity: 0;
+  }
+}
+
+/* Arrugas + brillo del papel (solo opacity: no choca con transform) */
+.trash-anim__flying::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  background:
+    linear-gradient(115deg, rgba(0, 0, 0, 0) 44%, rgba(0, 0, 0, 0.16) 46%, rgba(0, 0, 0, 0) 48%),
+    linear-gradient(40deg, rgba(0, 0, 0, 0) 52%, rgba(0, 0, 0, 0.13) 54%, rgba(0, 0, 0, 0) 56%),
+    radial-gradient(circle at 34% 30%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0) 55%);
+  animation: trashCreases 0.2s ease-out forwards;
+}
+
+@keyframes trashCreases {
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes trashCrumple {
+  0% {
+    transform: translate(0, 0) rotate(0deg) scale(1, 1);
+    border-radius: var(--radius);
+    clip-path: polygon(
+      50% 0%, 74.1% 0%, 100% 10.1%, 100% 38.6%, 100% 61.4%, 100% 89.9%,
+      74.1% 100%, 50% 100%, 25.9% 100%, 0% 89.9%, 0% 61.4%, 0% 38.6%,
+      0% 10.1%, 25.9% 0%
+    );
+    background-color: var(--color-danger);
+    z-index: 3;
+  }
+  10% {
+    transform: translate(0, -0.12em) rotate(-14deg)
+      scale(var(--trash-ball-sx), var(--trash-ball-sy));
+    border-radius: 30%;
+    z-index: 3;
+  }
+  20% {
+    transform: translate(0, -0.18em) rotate(-8deg)
+      scale(var(--trash-ball-sx), var(--trash-ball-sy));
+    border-radius: 50%;
+    clip-path: polygon(
+      50% 2.5%, 67.8% 13.1%, 86.4% 21%, 89% 41.1%, 94.8% 60.2%, 82.8% 76.2%,
+      70.6% 92.8%, 50% 90.5%, 30.5% 90.5%, 16.4% 76.8%, 4.2% 60.5%, 9.5% 40.8%,
+      14.4% 21.6%, 31.6% 11.7%
+    );
+    background-color: #e4e4e7;
+    z-index: 3;
+  }
+  63% {
+    transform: translate(var(--trash-fly-x), var(--trash-fly-y)) rotate(14deg)
+      scale(var(--trash-ball-sx), var(--trash-ball-sy));
+    z-index: 3;
+    opacity: 1;
+  }
+  /* 945ms: pasa POR DETRÁS del borde del bote → "entró" */
+  63.01% {
+    z-index: 1;
+    opacity: 1;
+  }
+  74% {
+    transform: translate(var(--trash-fly-x), calc(var(--trash-fly-y) + 14px))
+      rotate(14deg) scale(var(--trash-ball-sx), var(--trash-ball-sy));
+    z-index: 1;
+    opacity: 1;
+  }
+  86%,
+  100% {
+    transform: translate(var(--trash-fly-x), calc(var(--trash-fly-y) + 20px))
+      rotate(14deg) scale(var(--trash-ball-sx), var(--trash-ball-sy));
+    z-index: 1;
+    opacity: 0;
+  }
+}
+
+/* ============================================================
+   ACCESIBILIDAD: sin animaciones si el usuario las pide reducidas.
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  .btn--anim-saving,
+  .btn--anim-saving > i,
+  .btn--anim-saving::before,
+  .btn--anim-saved > i,
+  .btn--anim-sending,
+  .btn--anim-sending > i,
+  .btn--anim-sending::after,
+  .trash-anim,
+  .trash-anim__can,
+  .trash-anim__can::after,
+  .trash-anim__lid,
+  .trash-anim__flying,
+  .trash-anim__flying > i,
+  .trash-anim__flying > .btn-label,
+  .trash-anim__flying::before {
+    animation: none !important;
+  }
+}

@@ -5,17 +5,26 @@ from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Q, Count, Value, CharField
 from django.utils import timezone
-from .models import Documento, Departamento, SolicitudAccesoDocumento, SolicitudAprobacionDocumento, PlanillaCambios, AprobacionPlanilla, VersionDocumento, AsignacionDocumento, TipoDocumento
+from .models import Documento, Departamento, SolicitudAccesoDocumento, SolicitudAprobacionDocumento, PlanillaCambios, AprobacionPlanilla, AsignacionDocumento, TipoDocumento
 from .permissions import (
     obtener_documento, puede_editar, puede_descargar,
     puede_inhabilitar, puede_transferir, documentos_usuario,
-    puede_ver_documento
+    puede_ver_documento, q_documentos_visibles
 )
+from .services.planillas import aplicar_planilla_al_documento
+from auditoria.services import registrar_aprobacion_planilla, registrar_rechazo_planilla
 
 
 @login_required(login_url='/login/')
 def buscar_sugerencias(request):
-    """API: Autocomplete — retorna hasta 8 sugerencias por nombre, código o propietario"""
+    """API: Autocomplete — hasta 8 sugerencias.
+
+    Busca por nombre, código y propietario, además de por documentos
+    relacionados (M2M `documentos_relacionados`) y por referencias pendientes
+    (`ReferenciaDocumento.codigo_destino`, que pueden existir sin registro del
+    destino). Respeta la visibilidad del usuario tanto en el documento como en
+    el relacionado.
+    """
     q = request.GET.get('q', '').strip()
     try:
         limit = min(int(request.GET.get('limit', 8)), 20)
@@ -25,36 +34,26 @@ def buscar_sugerencias(request):
     if len(q) < 2:
         return JsonResponse({'sugerencias': []})
 
-    user = request.user
-    perfil = getattr(user, 'perfil', None)
+    from .services.busqueda import buscar_documentos_visibles
 
-    # Scope de permisos a nivel ORM
-    # Públicos: solo estado='activo'; propios: cualquier estado
-    solo_activos = Q(es_publico=True, estado='activo')
-    if perfil and perfil.es_administrador:
-        permiso = Q()  # Admin ve todo
-    elif perfil and perfil.es_jefe:
-        depto = perfil.departamento
-        permiso = Q(departamento=depto) | Q(propietario=user) | solo_activos if depto else Q(propietario=user) | solo_activos
-    elif perfil and perfil.es_coordinador:
-        permiso = Q(propietario=user) | solo_activos
-        from .models import AsignacionDocumento
-        permiso |= Q(asignaciones__coordinador=user, asignaciones__activa=True)
-    else:
-        permiso = Q(propietario=user) | solo_activos
+    queryset, target_ids = buscar_documentos_visibles(request.user, q)
+    documentos = list(queryset[:limit])
 
-    documentos = Documento.objects.filter(
-        permiso & (
-            Q(nombre__icontains=q) |
-            Q(codigo__icontains=q) |
-            Q(propietario__first_name__icontains=q) |
-            Q(propietario__last_name__icontains=q) |
-            Q(propietario__username__icontains=q)
-        )
-    ).select_related('departamento', 'propietario').distinct()[:limit]
+    sugerencias = []
+    for d in documentos:
+        relacionado_con = None
+        if target_ids:
+            rel = d.documentos_relacionados.filter(id__in=target_ids).first()
+            if rel:
+                relacionado_con = rel.codigo
+        if not relacionado_con:
+            ref = d.referencias_salientes.filter(
+                codigo_destino__icontains=q
+            ).first()
+            if ref:
+                relacionado_con = ref.codigo_destino
 
-    return JsonResponse({
-        'sugerencias': [{
+        sugerencias.append({
             'tipo': d.tipo_id,
             'id': str(d.uuid),
             'nombre': d.nombre,
@@ -62,9 +61,14 @@ def buscar_sugerencias(request):
             'estado': d.estado,
             'tipo_display': d.tipo.codigo if d.tipo_id else '',
             'propietario': d.propietario.get_full_name() or d.propietario.username,
+            'clasificacion': d.clasificacion,
+            'clasificacion_display': d.get_clasificacion_display(),
+            'clasificacion_color': d.clasificacion_color,
             'fecha_vencimiento': d.fecha_vencimiento.isoformat() if d.fecha_vencimiento else None,
-        } for d in documentos]
-    })
+            'relacionado_con': relacionado_con,
+        })
+
+    return JsonResponse({'sugerencias': sugerencias})
 
 
 @login_required(login_url='/login/')
@@ -196,15 +200,15 @@ def transferir_propiedad(request, tipo, doc_id):
             {'error': 'El nuevo propietario debe pertenecer al mismo departamento del documento'},
             status=400
         )
-    doc.propietario = nuevo_propietario
-    doc.save(update_fields=['propietario'])
-    from autenticacion.models import Notificacion
-    Notificacion.objects.create(
-        usuario=nuevo_propietario, titulo='Propiedad transferida',
-        mensaje=f'Se le ha asignado la propiedad del documento "{doc.nombre}" ({doc.codigo})',
-        tipo='propiedad_transferida', url_accion='/documentos/',
-        departamento=doc.departamento,
-        documento=doc
+    if nuevo_propietario.id == doc.propietario_id:
+        return JsonResponse(
+            {'error': 'El nuevo propietario debe ser distinto al actual'},
+            status=400
+        )
+    from .services.transferencia import transferir_propiedad_documento
+    from auditoria.middleware import resolver_ip_cliente
+    transferir_propiedad_documento(
+        doc, nuevo_propietario, user, ip_address=resolver_ip_cliente(request),
     )
     return JsonResponse({'success': True, 'mensaje': f'Propiedad transferida a {nuevo_propietario.get_full_name() or nuevo_propietario.username}'})
 
@@ -259,12 +263,34 @@ def contadores_documentos(request):
 
 @login_required(login_url='/login/')
 def usuarios_departamento(request):
+    """Usuarios candidatos a nuevo propietario.
+
+    Con `tipo` y `doc_id` usa el departamento DEL DOCUMENTO (necesario para el
+    admin, que no tiene departamento) y excluye al propietario actual. Sin
+    parámetros, usa el departamento del solicitante (comportamiento previo).
+    """
     user = request.user
-    depto = user.perfil.departamento
+    doc_tipo = request.GET.get('tipo', '').strip()
+    doc_id = request.GET.get('doc_id', '').strip()
+
+    if doc_tipo and doc_id:
+        documento = obtener_documento(doc_tipo, doc_id)
+        if not documento:
+            return JsonResponse({'error': 'Documento no encontrado'}, status=404)
+        puede, _ = puede_transferir(user, documento)
+        if not puede:
+            return JsonResponse({'error': 'Sin permisos'}, status=403)
+        depto = documento.departamento
+        excluir_id = documento.propietario_id
+    else:
+        depto = user.perfil.departamento
+        excluir_id = user.id
+
     if not depto:
         return JsonResponse({'usuarios': []})
+
     from django.contrib.auth.models import User
-    usuarios = User.objects.filter(perfil__departamento=depto).exclude(id=user.id).values(
+    usuarios = User.objects.filter(perfil__departamento=depto).exclude(id=excluir_id).values(
         'id', 'username', 'first_name', 'last_name'
     )
     lista = [{'id': u['id'], 'nombre': f"{u['first_name']} {u['last_name']}".strip() or u['username']} for u in usuarios]
@@ -283,7 +309,7 @@ def documentos_por_departamento(request):
     # Limitar a lo visible para el usuario: su propio departamento o documentos públicos.
     perfil = getattr(request.user, 'perfil', None)
     mi_depto_id = perfil.departamento_id if perfil else None
-    visible = Q(es_publico=True)
+    visible = Q(clasificacion='publico')
     if mi_depto_id:
         visible |= Q(departamento_id=mi_depto_id)
     qs = qs.filter(visible)
@@ -306,7 +332,7 @@ def documentos_por_departamentos(request):
     # Borradores solo del propio departamento; de otros departamentos solo públicos activos.
     perfil = getattr(request.user, 'perfil', None)
     mi_depto_id = perfil.departamento_id if perfil else None
-    visible = Q(es_publico=True, estado='activo')
+    visible = Q(clasificacion='publico', estado='activo')
     if mi_depto_id:
         visible |= Q(departamento_id=mi_depto_id)
     qs = qs.filter(visible)
@@ -318,41 +344,57 @@ def documentos_por_departamentos(request):
 
 @login_required(login_url='/login/')
 def documentos_referenciables(request):
-    """API: Documentos accesibles para referencias (Variante A).
-    Mismo depto: activo. Otros deptos: activo y es_publico.
-    Excluye el documento actual (si se pasa ?exclude_id=).
+    """API: Documentos accesibles para asociar/relacionar (búsqueda libre).
+
+    Universo por defecto: propio departamento + públicos activos. Parámetros:
+      - ``buscar``: filtra por nombre/código.
+      - ``exclude_id``: excluye el documento actual.
+      - ``departamentos``: ids extra (p. ej. afectados por una planilla).
+      - ``incluir_borradores=1``: permite borrador en propio depto y en los
+        departamentos extra (los públicos de otros siguen solo activos).
+      - ``todos=1``: incluye documentos activos de todos los departamentos.
     """
     user = request.user
     perfil = getattr(user, 'perfil', None)
     buscar = request.GET.get('buscar', '').strip()
     exclude_id = request.GET.get('exclude_id', '')
+    depto_ids = [d for d in request.GET.getlist('departamentos') if d.isdigit()]
+    incluir_borradores = request.GET.get('incluir_borradores') in ('1', 'true', 'True')
+    todos = request.GET.get('todos') in ('1', 'true', 'True')
+    mi_depto_id = perfil.departamento_id if perfil else None
 
-    qs = Documento.objects.filter(estado='activo')
-    if perfil and perfil.departamento_id:
-        qs = qs.filter(
-            Q(departamento_id=perfil.departamento_id) |
-            Q(es_publico=True)
-        )
+    qs = Documento.objects.all()
+    if todos:
+        qs = qs.filter(estado='activo')
     else:
-        qs = qs.filter(es_publico=True)
+        dep_ids = set(depto_ids)
+        if mi_depto_id:
+            dep_ids.add(mi_depto_id)
+        estados = ['borrador', 'activo'] if incluir_borradores else ['activo']
+        cond = Q(clasificacion='publico', estado='activo')
+        if dep_ids:
+            cond |= Q(departamento_id__in=dep_ids, estado__in=estados)
+        qs = qs.filter(cond)
+
     if exclude_id:
         qs = qs.exclude(id=exclude_id)
     if buscar:
         qs = qs.filter(Q(nombre__icontains=buscar) | Q(codigo__icontains=buscar))
-    docs = qs.select_related('tipo').values(
-        'id', 'uuid', 'nombre', 'codigo', 'tipo', 'departamento_id',
+    docs = qs.select_related('tipo').distinct().values(
+        'id', 'uuid', 'nombre', 'codigo', 'estado', 'tipo', 'departamento_id',
     )[:30]
-    result = []
-    for d in docs:
-        depto_mismo = d['departamento_id'] == (perfil.departamento_id if perfil else None)
-        result.append({
+    result = [
+        {
             'id': d['id'],
             'uuid': str(d['uuid']),
             'nombre': d['nombre'],
             'codigo': d['codigo'],
+            'estado': d['estado'],
             'tipo': d['tipo'],
-            'accesible': depto_mismo or True,
-        })
+            'departamento_id': d['departamento_id'],
+        }
+        for d in docs
+    ]
     return JsonResponse({'documentos': result, 'total': len(result)})
 
 
@@ -532,7 +574,15 @@ def aprobar_creacion_documento(request, tipo, documento_id):
     solicitud.aprobar(observaciones=observaciones)
     if es_final:
         from .models import SolicitudCambio
+        from .services.planillas import OPERACIONES_CON_PLANILLA, encolar_generacion_planilla
+        solicitudes_planilla = list(SolicitudCambio.objects.filter(
+            documento=solicitud.documento,
+            estado='en_revision',
+            operacion__in=OPERACIONES_CON_PLANILLA,
+        ))
         SolicitudCambio.objects.filter(documento=solicitud.documento, estado='en_revision').update(estado='aprobado')
+        for sc in solicitudes_planilla:
+            encolar_generacion_planilla(sc)
         from autenticacion.models import Notificacion
         usuario_a_notificar = solicitud.propietario or solicitud.solicitante
         Notificacion.objects.create(
@@ -636,26 +686,11 @@ def aprobar_planilla(request, planilla_uuid):
         if planilla.solicitud_cambio:
             planilla.solicitud_cambio.estado = 'aprobado'
             planilla.solicitud_cambio.save(update_fields=['estado'])
-        doc = planilla.documento
+        doc, cambios = aplicar_planilla_al_documento(planilla, usuario=user)
         if doc:
-            if planilla.nombre_propuesto:
-                doc.nombre = planilla.nombre_propuesto
-            if planilla.descripcion_propuesta is not None:
-                doc.descripcion = planilla.descripcion_propuesta
-            if planilla.departamento_propuesto:
-                doc.departamento = planilla.departamento_propuesto
-            if planilla.archivo_propuesto:
-                doc.archivo = planilla.archivo_propuesto
-            nueva_version = doc.proxima_version()
-            doc.version_actual = nueva_version
-            doc.estado = 'activo'
-            doc.fecha_vigencia = timezone.now()
-            doc.save()
-            VersionDocumento.objects.create(
-                documento=doc, numero_version=nueva_version,
-                archivo=planilla.archivo_propuesto if planilla.archivo_propuesto else doc.archivo,
-                cambios=f'Planilla de Cambios {planilla.codigo}: {planilla.justificacion}',
-                creado_por=planilla.responsable
+            registrar_aprobacion_planilla(
+                usuario=user, planilla=planilla, documento=doc,
+                cambios=cambios, observaciones=observaciones,
             )
         from autenticacion.models import Notificacion
         Notificacion.objects.create(
@@ -719,6 +754,9 @@ def rechazar_planilla(request, planilla_uuid):
     if doc:
         doc.estado = 'activo'
         doc.save(update_fields=['estado'])
+    registrar_rechazo_planilla(
+        usuario=user, planilla=planilla, documento=doc, observaciones=motivo,
+    )
     from autenticacion.models import Notificacion
     Notificacion.objects.create(
         usuario=planilla.responsable, titulo='Planilla de Cambios rechazada',

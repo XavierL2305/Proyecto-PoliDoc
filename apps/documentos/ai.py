@@ -220,6 +220,18 @@ def _es_transitorio(exc):
     return 'UNAVAILABLE' in texto or 'HIGH DEMAND' in texto or 'OVERLOADED' in texto
 
 
+def _finish_reason(response):
+    """Devuelve el finish_reason de la primera respuesta (o None)."""
+    try:
+        candidates = getattr(response, 'candidates', None) or []
+        if candidates:
+            fr = getattr(candidates[0], 'finish_reason', None)
+            return str(fr) if fr is not None else None
+    except Exception:
+        pass
+    return None
+
+
 def _mensaje_error(exc):
     """Mensaje de error genérico para el usuario.
 
@@ -252,6 +264,7 @@ def estado_configuracion():
         'modelo': getattr(settings, 'GEMINI_MODEL', ''),
         'modelo_fallback': getattr(settings, 'GEMINI_MODEL_FALLBACK', ''),
         'reintentos': getattr(settings, 'IA_RESUMEN_REINTENTOS', 4),
+        'max_tokens': getattr(settings, 'IA_RESUMEN_MAX_TOKENS', 4096),
         'max_mb': getattr(settings, 'IA_RESUMEN_MAX_MB', 20),
         'sdk_version': _sdk_version(),
     }
@@ -407,7 +420,10 @@ def generar_resumen(documento):
     if not getattr(settings, 'GEMINI_API_KEY', ''):
         return {'ok': False, 'error': 'Falta configurar GEMINI_API_KEY.'}
 
-    archivo = documento.archivo_pdf or documento.archivo
+    from .services.documentos_pdf import pdf_disponible
+    # archivo_pdf puede tener una ruta huérfana (PDF borrado del disco):
+    # en ese caso se analiza el origen en su lugar.
+    archivo = documento.archivo_pdf if pdf_disponible(documento) else documento.archivo
     if not archivo:
         return {'ok': False, 'error': 'El documento no tiene archivo para analizar.'}
 
@@ -456,7 +472,7 @@ def generar_resumen(documento):
         system_instruction=SYSTEM_PROMPT,
         temperature=0.2,
         top_p=0.9,
-        max_output_tokens=1500,
+        max_output_tokens=int(getattr(settings, 'IA_RESUMEN_MAX_TOKENS', 4096)),
         response_mime_type='application/json',
         response_schema=RESUMEN_SCHEMA,
     )
@@ -485,6 +501,13 @@ def generar_resumen(documento):
 
     if response is None:
         return {'ok': False, 'error': _mensaje_error(ultimo_error)}
+
+    if 'MAX_TOKENS' in (_finish_reason(response) or '').upper():
+        return {
+            'ok': False,
+            'error': ('El resumen quedó incompleto (límite de tokens). '
+                      'Aumenta IA_RESUMEN_MAX_TOKENS o usa un documento más corto.'),
+        }
 
     texto = (getattr(response, 'text', '') or '').strip()
     if not texto:

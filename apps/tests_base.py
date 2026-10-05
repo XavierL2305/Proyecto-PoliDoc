@@ -121,7 +121,7 @@ class BaseDocumentosTest(TestCase):
         cls.doc_activo = Documento.objects.create(
             tipo=cls.tipo_procedimiento, nombre='Procedimiento de Prueba',
             codigo='TI-PRG-001', estado='activo', propietario=cls.user_jefe_ti,
-            departamento=cls.depto_ti, es_publico=False, version_actual='1.0',
+            departamento=cls.depto_ti, clasificacion='interno', version_actual='1.0',
             fecha_vencimiento=date.today() + timedelta(days=30),
         )
         cls.doc_borrador = Documento.objects.create(
@@ -142,7 +142,7 @@ class BaseDocumentosTest(TestCase):
         cls.doc_publico = Documento.objects.create(
             tipo=cls.tipo_formulario, nombre='Formulario Publico',
             codigo='TI-FOR-003', estado='activo', propietario=cls.user_jefe_ti,
-            departamento=cls.depto_ti, es_publico=True, version_actual='1.0',
+            departamento=cls.depto_ti, clasificacion='publico', version_actual='1.0',
         )
         cls.doc_th = Documento.objects.create(
             tipo=cls.tipo_formulario, nombre='Formulario TH',

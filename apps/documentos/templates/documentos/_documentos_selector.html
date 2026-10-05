@@ -1,0 +1,40 @@
+{# Selector reutilizable de documentos (búsqueda libre por nombre/código). #}
+{# Uso: {% include 'documentos/_documentos_selector.html' with selector=cfg %} #}
+{# cfg: {id, search_url, exclude_id, placeholder, info_text, payload_mode, #}
+{#       hidden_name, json_name, permite_pendiente, initial_items, #}
+{#       extra_dept_selector, afecta_todos_id} #}
+{% load formato_extras %}
+<div class="documentos-selector"
+     id="{{ selector.id }}"
+     data-search-url="{{ selector.search_url|default:'/documentos/api/referenciables/' }}"
+     data-exclude-id="{{ selector.exclude_id|default:'' }}"
+     data-payload-mode="{{ selector.payload_mode|default:'inputs' }}"
+     data-hidden-name="{{ selector.hidden_name|default:'' }}"
+     data-json-name="{{ selector.json_name|default:'' }}"
+     data-permite-pendiente="{% if selector.permite_pendiente %}1{% else %}0{% endif %}"
+     data-extra-dept-selector="{{ selector.extra_dept_selector|default:'' }}"
+     data-afecta-todos-id="{{ selector.afecta_todos_id|default:'' }}">
+  <input type="text" class="form-input js-ds-search" autocomplete="off"
+         placeholder="{{ selector.placeholder|default:'Buscar por nombre o código...' }}">
+  <select class="form-input form-select js-ds-select" style="margin-top: 0.5rem;">
+    <option value="">Escriba para buscar...</option>
+  </select>
+  {% if selector.permite_pendiente %}
+  <div style="display: flex; gap: 0.5rem; margin-top: 0.75rem;">
+    <input type="text" class="form-input js-ds-code"
+           placeholder="O escriba el código (ej. SGC-FOR-012)" style="flex: 1;">
+    <button type="button" class="btn btn--primary btn--sm js-ds-add-code">
+      <i class="fa-solid fa-plus"></i> Agregar
+    </button>
+  </div>
+  {% endif %}
+  <div class="depto-tags js-ds-tags"></div>
+  <div class="js-ds-hidden"></div>
+  <input type="hidden" class="js-ds-json" name="{{ selector.json_name|default:'' }}" value="">
+  {% if selector.info_text %}
+  <div class="js-ds-info" style="font-size: 0.75rem; color: var(--color-muted); margin-top: 0.5rem;">
+    <i class="fa-solid fa-info-circle"></i> {{ selector.info_text }}
+  </div>
+  {% endif %}
+  <script type="application/json" class="js-ds-initial">{{ selector.initial_items|to_json }}</script>
+</div>

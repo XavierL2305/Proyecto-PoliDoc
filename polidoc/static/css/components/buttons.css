@@ -56,6 +56,15 @@
   background-color: #DC2626;
 }
 
+.btn--success {
+  background-color: var(--color-success);
+  color: #FFFFFF;
+}
+
+.btn--success:hover {
+  background-color: #059669;
+}
+
 .btn--ghost {
   background-color: transparent;
   color: var(--color-text);

@@ -152,6 +152,22 @@
               <span class="form-error">{{ form.descripcion_propuesta.errors.0 }}</span>
               {% endif %}
             </div>
+            {% if documento %}
+            <div class="form-group form-group-full">
+              <label class="form-label">Clasificación</label>
+              <div style="display:flex; align-items:center; gap:.75rem; flex-wrap:wrap;">
+                <span class="badge badge--{{ documento.clasificacion_color }}"
+                      title="Clasificación actual">
+                  Actual: {{ documento.get_clasificacion_display }}
+                </span>
+                {{ form.clasificacion_propuesta }}
+              </div>
+              <small class="form-help">"Público" hace el documento visible para todos los departamentos.</small>
+              {% if form.clasificacion_propuesta.errors %}
+              <span class="form-error">{{ form.clasificacion_propuesta.errors.0 }}</span>
+              {% endif %}
+            </div>
+            {% endif %}
             <div class="form-group form-group-full">
               <label class="form-label">Archivo Propuesto</label>
               <div class="file-upload-wrapper">
@@ -172,6 +188,10 @@
         <div class="form-card">
           <div class="form-card-header"><h3><i class="fa-solid fa-building"></i> Departamentos Afectados</h3></div>
           <div class="form-card-body">
+            <label style="display:flex; align-items:center; gap:.5rem; margin-bottom:.75rem; font-size:.875rem; font-weight:600;">
+              {{ form.afecta_todos }}
+              Todos los departamentos
+            </label>
             <select id="depto-select" class="form-input form-select" onchange="addDepto(this)">
               <option value="">Seleccione un departamento...</option>
               {% for depto in departamentos_disponibles %}
@@ -225,35 +245,12 @@
         {% if 'documentos_asociados_json' in form.fields %}
         <div class="form-card">
           <div class="form-card-header">
-            <h3>
-              <i class="fa-solid fa-link"></i> Documentos Asociados
-              {% if tipo_documento == 'proceso' %}
-                <span style="font-size: 0.75rem; color: var(--color-muted); margin-left: 0.5rem;">(Procedimientos)</span>
-              {% elif tipo_documento == 'procedimiento' %}
-                <span style="font-size: 0.75rem; color: var(--color-muted); margin-left: 0.5rem;">(Formularios)</span>
-              {% else %}
-                <span style="font-size: 0.75rem; color: var(--color-muted); margin-left: 0.5rem;">(Documentos relacionados)</span>
-              {% endif %}
-            </h3>
+            <h3><i class="fa-solid fa-link"></i> Documentos Asociados</h3>
           </div>
           <div class="form-card-body">
-            <select id="asociado-select" class="form-input form-select" onchange="addAsociado(this)">
-              <option value="">Seleccione un documento...</option>
-            </select>
-            <div id="asociado-tags" class="depto-tags"></div>
-            <div id="asociado-hidden"></div>
-            <div id="asociado-info" style="font-size: 0.75rem; color: var(--color-muted); margin-top: 0.5rem;">
-              {% if tipo_documento == 'proceso' %}
-                <i class="fa-solid fa-info-circle"></i> Seleccione un departamento para ver sus procedimientos disponibles.
-              {% elif tipo_documento == 'procedimiento' %}
-                <i class="fa-solid fa-info-circle"></i> Seleccione un departamento para ver sus formularios disponibles.
-              {% else %}
-                <i class="fa-solid fa-info-circle"></i> Seleccione un departamento para ver documentos disponibles.
-              {% endif %}
-            </div>
+            {% include 'documentos/_documentos_selector.html' with selector=selector_asociados %}
           </div>
         </div>
-        <input type="hidden" name="documentos_asociados_json" id="documentos-asociados-json" value="">
         {% endif %}
 
         <div class="form-card">
@@ -294,16 +291,17 @@
         <div class="form-card">
           <div class="form-card-footer">
             <a href="{% if documento %}{% url 'documentos:detalle' tipo=tipo_documento documento_id=documento.uuid %}{% else %}{% url 'documentos:mis_documentos' %}{% endif %}" class="btn btn--ghost">Cancelar</a>
-            <button type="submit" name="accion" value="borrador" class="btn btn--ghost" formnovalidate>
-              <i class="fa-solid fa-save"></i> Guardar Borrador
+            <button type="submit" name="accion" value="borrador" class="btn btn--ghost" formnovalidate data-anim="save">
+              <i class="fa-solid fa-save"></i><span class="btn-label">Guardar Borrador</span>
             </button>
-            <button type="submit" name="accion" value="enviar" class="btn btn--primary">
-              <i class="fa-solid fa-paper-plane"></i> Enviar a Revisión
+            <button type="submit" name="accion" value="enviar" class="btn btn--primary" data-anim="send">
+              <i class="fa-solid fa-paper-plane"></i><span class="btn-label">Enviar a Revisión</span>
             </button>
           </div>
         </div>
       </form>
 
+      <script src="{% static 'js/documentos-selector.js' %}"></script>
       <script>
         // === Departamentos Afectados (tags) ===
         const selectedDeptos = {};
@@ -315,15 +313,11 @@
           selectedDeptos[id] = nombre;
           renderDeptos();
           select.value = '';
-          // Actualizar documentos asociados cuando cambian los departamentos
-          actualizarDocumentosAsociados();
         }
 
         function removeDepto(id) {
           delete selectedDeptos[id];
           renderDeptos();
-          // Actualizar documentos asociados cuando cambian los departamentos
-          actualizarDocumentosAsociados();
         }
 
         function renderDeptos() {
@@ -338,6 +332,17 @@
           }
         }
 
+        function toggleAfectaTodos(cb) {
+          const select = document.getElementById('depto-select');
+          if (cb.checked) {
+            for (const id in selectedDeptos) delete selectedDeptos[id];
+            renderDeptos();
+            if (select) { select.value = ''; select.disabled = true; }
+          } else if (select) {
+            select.disabled = false;
+          }
+        }
+
         // Pre-poblar tags en edición
         document.addEventListener('DOMContentLoaded', function() {
           var deptoSelect = document.getElementById('depto-select');
@@ -346,105 +351,8 @@
           deptoSelect.value = '{{ depto_id }}';
           addDepto(deptoSelect);
           {% endfor %}
-        });
-
-        // === Documentos Asociados (tags) ===
-        const selectedAsociados = {};
-        const tipoDocumento = '{{ tipo_documento|default:"" }}';
-
-        function addAsociado(select) {
-          const uuid = select.value;
-          const codigo = select.options[select.selectedIndex].dataset.codigo;
-          const nombre = select.options[select.selectedIndex].dataset.nombre;
-          const estado = select.options[select.selectedIndex].dataset.estado;
-          const tipo = select.options[select.selectedIndex].dataset.tipo;
-          if (!uuid || selectedAsociados[uuid]) { select.value = ''; return; }
-          selectedAsociados[uuid] = { codigo, nombre, estado, tipo };
-          renderAsociados();
-          select.value = '';
-        }
-
-        function removeAsociado(uuid) {
-          delete selectedAsociados[uuid];
-          renderAsociados();
-        }
-
-        function renderAsociados() {
-          const tags = document.getElementById('asociado-tags');
-          const hidden = document.getElementById('asociado-hidden');
-          const jsonInput = document.getElementById('documentos-asociados-json');
-          if (!tags || !hidden) return;
-          tags.innerHTML = '';
-          hidden.innerHTML = '';
-          const jsonArray = [];
-          for (const [uuid, doc] of Object.entries(selectedAsociados)) {
-            const estadoBadge = doc.estado === 'activo' ? 'Activo' : 'Borrador';
-            tags.innerHTML += '<span class="depto-tag">' + escapeHtml(doc.codigo) + ' - ' + escapeHtml(doc.nombre) + ' <small>(' + estadoBadge + ')</small><button type="button" class="depto-tag-remove" onclick="removeAsociado(\'' + escapeAttrJs(uuid) + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
-            jsonArray.push({ uuid, codigo: doc.codigo, nombre: doc.nombre, estado: doc.estado, tipo: doc.tipo });
-          }
-          if (jsonInput) {
-            jsonInput.value = JSON.stringify(jsonArray);
-          }
-        }
-
-        function actualizarDocumentosAsociados() {
-          const select = document.getElementById('asociado-select');
-          if (!select) return;
-          select.innerHTML = '<option value="">Cargando...</option>';
-          
-          const deptoIds = Object.keys(selectedDeptos);
-          
-          if (deptoIds.length === 0) {
-            select.innerHTML = '<option value="">Seleccione un departamento primero...</option>';
-            return;
-          }
-
-          const params = new URLSearchParams();
-          deptoIds.forEach(id => params.append('departamentos', id));
-
-          fetch('/documentos/api/procedimientos-por-departamentos/?' + params.toString())
-            .then(response => response.json())
-            .then(data => {
-              select.innerHTML = '<option value="">Seleccione un documento...</option>';
-              const docs = data.documentos;
-              if (docs && docs.length > 0) {
-                docs.forEach(doc => {
-                  const option = document.createElement('option');
-                  option.value = doc.uuid;
-                  option.textContent = doc.codigo + ' - ' + doc.nombre;
-                  option.dataset.codigo = doc.codigo;
-                  option.dataset.nombre = doc.nombre;
-                  option.dataset.estado = doc.estado;
-                  option.dataset.tipo = doc.tipo;
-                  select.appendChild(option);
-                });
-              } else {
-                select.innerHTML = '<option value="">No hay documentos disponibles</option>';
-              }
-            })
-            .catch(error => {
-              console.error('Error:', error);
-              select.innerHTML = '<option value="">Error al cargar documentos</option>';
-            });
-        }
-
-        // Pre-poblar documentos asociados en edición
-        document.addEventListener('DOMContentLoaded', function() {
-          var asociadoSelect = document.getElementById('asociado-select');
-          if (!asociadoSelect) return;
-          
-          {% for doc in documentos_asociados_iniciales %}
-          selectedAsociados['{{ doc.uuid }}'] = {
-            codigo: '{{ doc.codigo }}',
-            nombre: '{{ doc.nombre }}',
-            estado: '{{ doc.estado }}',
-            tipo: '{{ doc.tipo_id }}'
-          };
-          {% endfor %}
-          
-          renderAsociados();
-          
-          actualizarDocumentosAsociados();
+          var afectaCb = document.getElementById('id_afecta_todos');
+          if (afectaCb && afectaCb.checked) toggleAfectaTodos(afectaCb);
         });
 
         // === Responsables Propuestos (tags) ===

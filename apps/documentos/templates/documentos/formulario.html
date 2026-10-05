@@ -211,23 +211,7 @@
           <div class="form-card-body">
             <div class="form-row">
               {% for field in form %}
-                {% if field.name != 'procedimientos' and field.name != 'departamentos_afectados' and field.name != 'documentos_relacionados' and field.name != 'responsables' and field.name != 'participantes' %}
-                  {% if field.name == 'es_publico' %}
-              <div class="form-group form-group-full">
-                <label class="form-checkbox-wrapper">
-                  {{ field }}
-                  <span class="form-checkbox-label">{{ field.label }}</span>
-                  {% if field.help_text %}
-                  <span class="form-label-help"
-                     data-tooltip="{{ field.help_text }}" data-tooltip-position="right"
-                     tabindex="0" aria-label="{{ field.help_text }}"><i class="fa-solid fa-circle-info" aria-hidden="true"></i></span>
-                  {% endif %}
-                </label>
-                {% if field.errors %}
-                <span class="form-error">{{ field.errors.0 }}</span>
-                {% endif %}
-              </div>
-                  {% else %}
+                {% if field.name != 'procedimientos' and field.name != 'departamentos_afectados' and field.name != 'documentos_relacionados' and field.name != 'responsables' and field.name != 'participantes' and field.name != 'afecta_todos' %}
               <div class="form-group {% if field.field.widget.input_type == 'textarea' or field.field.widget.input_type == 'file' %}form-group-full{% endif %}">
                 <label class="form-label">{{ field.label }}{% if field.help_text %}<span class="form-label-help" data-tooltip="{{ field.help_text }}" data-tooltip-position="right" tabindex="0" aria-label="{{ field.help_text }}"><i class="fa-solid fa-circle-info" aria-hidden="true"></i></span>{% endif %}</label>
                 {% if field.field.widget.input_type == 'file' %}
@@ -247,8 +231,7 @@
                 {% if field.errors %}
                 <span class="form-error">{{ field.errors.0 }}</span>
                 {% endif %}
-              </div>
-                  {% endif %}
+               </div>
                 {% endif %}
               {% endfor %}
             </div>
@@ -261,6 +244,11 @@
         <div class="form-card">
           <div class="form-card-header"><h3>Departamentos Afectados</h3></div>
           <div class="form-card-body">
+            <div style="display:flex; align-items:center; gap:.5rem; margin-bottom:.75rem;">
+              {{ form.afecta_todos }}
+              <label for="id_afecta_todos" style="font-size:.875rem; font-weight:600;">Todos los departamentos</label>
+              <span class="form-label-help" data-tooltip="Si está marcado, el documento aplica a todas las áreas (incluye automáticamente los departamentos futuros)." data-tooltip-position="right" tabindex="0" aria-label="Si está marcado, el documento aplica a todas las áreas (incluye automáticamente los departamentos futuros)."><i class="fa-solid fa-circle-info" aria-hidden="true"></i></span>
+            </div>
             <select id="depto-select" class="form-input form-select" onchange="addDepto(this)">
               <option value="">Seleccione un departamento...</option>
               {% for depto in form.departamentos_afectados.field.queryset %}
@@ -314,31 +302,10 @@
         {% endwith %}
 
         {% if 'documentos_relacionados' in form.fields %}
-        {% with doc_tipo=documento.tipo_id|default:tipo %}
         <div class="form-card">
           <div class="form-card-header"><h3>Documentos Relacionados</h3></div>
           <div class="form-card-body">
-            {% if auto_departamento_nombre %}
-            <div class="depto-info">
-              <i class="fa-solid fa-building"></i>
-              <span>Departamento: <strong>{{ auto_departamento_nombre }}</strong></span>
-            </div>
-            {% endif %}
-            <input type="text" id="docrel-search" class="form-input"
-                   placeholder="Buscar por nombre o código..." oninput="searchDocRel(this)">
-            <select id="docrel-select" class="form-input form-select" onchange="addDocRel(this)" style="margin-top: 0.5rem;">
-              <option value="">Escriba para buscar...</option>
-            </select>
-            <div style="display: flex; gap: 0.5rem; margin-top: 0.75rem;">
-              <input type="text" id="docrel-codigo" class="form-input"
-                     placeholder="O escriba el código (ej. FS-PRE-012)" style="flex: 1;">
-              <button type="button" class="btn btn--primary btn--sm" onclick="addDocRelByCodigo()">
-                <i class="fa-solid fa-plus"></i> Agregar
-              </button>
-            </div>
-            <div id="docrel-tags" class="depto-tags"></div>
-            <div id="docrel-hidden"></div>
-            <input type="hidden" name="referencias_pendientes_json" id="referencias-pendientes-json" value="">
+            {% include 'documentos/_documentos_selector.html' with selector=selector_relacionados %}
             {% if form.documentos_relacionados.errors %}
             <div class="form-error" style="margin-top: 0.5rem;">
               <i class="fa-solid fa-circle-exclamation"></i> {{ form.documentos_relacionados.errors }}
@@ -346,7 +313,6 @@
             {% endif %}
           </div>
         </div>
-        {% endwith %}
         {% endif %}
 
         {% if formato_dinamico %}
@@ -394,17 +360,18 @@
               <i class="fa-solid fa-save"></i> Guardar Cambios
             </button>
             {% else %}
-            <button type="submit" name="accion" value="borrador" class="btn btn--ghost" formnovalidate>
-              <i class="fa-solid fa-save"></i> Guardar Borrador
+            <button type="submit" name="accion" value="borrador" class="btn btn--ghost" formnovalidate data-anim="save">
+              <i class="fa-solid fa-save"></i><span class="btn-label">Guardar Borrador</span>
             </button>
-            <button type="submit" name="accion" value="enviar" class="btn btn--primary">
-              <i class="fa-solid fa-paper-plane"></i> Enviar a Revisión
+            <button type="submit" name="accion" value="enviar" class="btn btn--primary" data-anim="send">
+              <i class="fa-solid fa-paper-plane"></i><span class="btn-label">Enviar a Revisión</span>
             </button>
             {% endif %}
           </div>
         </div>
       </form>
 
+      <script src="{% static 'js/documentos-selector.js' %}"></script>
       <script>
         // === Procedimientos (tags) ===
         const selectedProcs = {};
@@ -493,98 +460,15 @@
           }
         }
 
-        // === Documentos Relacionados (tags) ===
-        const selectedDocsRel = {};
-        const pendingRefs = [];
-
-        function addDocRel(select) {
-          const id = select.value;
-          const nombre = select.options[select.selectedIndex].dataset.nombre;
-          if (!id || selectedDocsRel[id]) { select.value = ''; return; }
-          selectedDocsRel[id] = nombre;
-          renderDocsRel();
-          select.value = '';
-        }
-
-        function removeDocRel(id) {
-          delete selectedDocsRel[id];
-          renderDocsRel();
-        }
-
-        function addDocRelByCodigo() {
-          const input = document.getElementById('docrel-codigo');
-          if (!input) return;
-          const codigo = input.value.trim().toUpperCase();
-          if (!codigo) return;
-          if (pendingRefs.includes(codigo) || Object.values(selectedDocsRel).some(function(v) { return v.includes(codigo); })) {
-            input.value = '';
-            return;
+        function toggleAfectaTodos(cb) {
+          const select = document.getElementById('depto-select');
+          if (cb.checked) {
+            for (const id in selectedDeptos) delete selectedDeptos[id];
+            renderDeptos();
+            if (select) { select.value = ''; select.disabled = true; }
+          } else if (select) {
+            select.disabled = false;
           }
-          pendingRefs.push(codigo);
-          renderDocsRel();
-          input.value = '';
-        }
-
-        function removePendingRef(codigo) {
-          const idx = pendingRefs.indexOf(codigo);
-          if (idx !== -1) pendingRefs.splice(idx, 1);
-          renderDocsRel();
-        }
-
-        function renderDocsRel() {
-          const tags = document.getElementById('docrel-tags');
-          const hidden = document.getElementById('docrel-hidden');
-          const jsonInput = document.getElementById('referencias-pendientes-json');
-          if (!tags || !hidden) return;
-          tags.innerHTML = '';
-          hidden.innerHTML = '';
-          for (const [id, nombre] of Object.entries(selectedDocsRel)) {
-            tags.innerHTML += '<span class="depto-tag">' + escapeHtml(nombre) + '<button type="button" class="depto-tag-remove" onclick="removeDocRel(\'' + id + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
-            hidden.innerHTML += '<input type="hidden" name="documentos_relacionados" value="' + id + '">';
-          }
-          for (const codigo of pendingRefs) {
-            tags.innerHTML += '<span class="depto-tag depto-tag--pendiente" title="Documento aún no creado. Se enlazará automáticamente cuando sea aprobado.">' + escapeHtml(codigo) + ' <span class="badge badge--warning" style="font-size: 0.65rem; margin-left: 0.25rem;">Pendiente</span><button type="button" class="depto-tag-remove" onclick="removePendingRef(\'' + escapeAttrJs(codigo) + '\')"><i class="fa-solid fa-xmark"></i></button></span>';
-          }
-          if (jsonInput) jsonInput.value = JSON.stringify(pendingRefs);
-        }
-
-        // === Búsqueda AJAX de documentos relacionados ===
-        let docrelTimeout = null;
-
-        function searchDocRel(input) {
-          clearTimeout(docrelTimeout);
-          const buscar = input.value.trim();
-          docrelTimeout = setTimeout(function() {
-            fetchDocRel(buscar);
-          }, 300);
-        }
-
-        function fetchDocRel(buscar) {
-          const docrelSelect = document.getElementById('docrel-select');
-          if (!docrelSelect) return;
-
-          let url = '/documentos/api/referenciables/';
-          const excludeId = '{{ documento.id|default:"" }}';
-          if (excludeId) url += '?exclude_id=' + excludeId;
-          if (buscar) url += (excludeId ? '&' : '?') + 'buscar=' + encodeURIComponent(buscar);
-
-          fetch(url)
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-              docrelSelect.innerHTML = '';
-              if (data.total === 0) {
-                docrelSelect.innerHTML = '<option value="">Sin resultados</option>';
-              } else {
-                docrelSelect.innerHTML = '<option value="">Seleccione un documento...</option>';
-                data.documentos.forEach(function(d) {
-                  var opt = document.createElement('option');
-                  opt.value = d.id;
-                  opt.textContent = d.codigo + ' - ' + d.nombre;
-                  opt.dataset.nombre = d.codigo + ' - ' + d.nombre;
-                  docrelSelect.appendChild(opt);
-                });
-              }
-            });
         }
 
         // === Cargar datos vía AJAX y pre-poblar ===
@@ -641,6 +525,8 @@
             addDepto(deptoSelect);
             {% endfor %}
           }
+          var afectaCb = document.getElementById('id_afecta_todos');
+          if (afectaCb && afectaCb.checked) toggleAfectaTodos(afectaCb);
 
           // Pre-poblar procedimientos en edición
           if (procSelect) {
@@ -658,11 +544,6 @@
             {% endfor %}
           }
 
-          // Pre-poblar documentos relacionados en edición
-          {% for doc in documentos_relacionados_seleccionados %}
-          selectedDocsRel['{{ doc.id }}'] = '{{ doc }}';
-          {% endfor %}
-          renderDocsRel();
         });
 
         // === Responsables (tags) ===

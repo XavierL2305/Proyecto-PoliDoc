@@ -49,6 +49,9 @@
   <link rel="stylesheet" href="{% static 'css/components/toasts.css' %}">
   <link rel="stylesheet" href="{% static 'css/components/notifications.css' %}">
   <link rel="stylesheet" href="{% static 'css/components/accordion.css' %}">
+  <link rel="stylesheet" href="{% static 'css/components/formato-dinamico.css' %}">
+  <link rel="stylesheet" href="{% static 'css/components/progress.css' %}">
+  <link rel="stylesheet" href="{% static 'css/components/button-animations.css' %}?v={{ static_versions.button_css }}">
 
   {% block extra_css %}{% endblock %}
 </head>
@@ -63,6 +66,8 @@
     
     <!-- Notifications JS -->
     <script src="{% static 'js/notifications.js' %}"></script>
+    <script src="{% static 'js/progress-loader.js' %}"></script>
+    <script src="{% static 'js/button-animations.js' %}?v={{ static_versions.button_js }}"></script>
     
     {% block extra_js %}{% endblock %}
   </body>

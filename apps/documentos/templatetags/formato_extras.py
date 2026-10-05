@@ -86,3 +86,13 @@ def opt_shape(option):
     if isinstance(option, dict):
         return option.get('shape', '')
     return ''
+
+
+@register.filter(name='a_lista')
+def a_lista(value):
+    """Normaliza a lista: un string pasa a [string] (evita iterar por carácter)."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value else []
+    return value

@@ -48,7 +48,7 @@
             {% if aprobador %}
             <div class="alert alert--success" style="margin-top: 1rem; padding: 0.75rem 1rem; border-radius: var(--radius); font-size: 0.8125rem;">
               <i class="fa-solid fa-circle-check"></i>
-              Se ha encontrado un {{ aprobador_tipo }} aprobador: <strong>{{ aprobador.get_full_name|default:aprobador.username }}</strong>.
+              Se ha encontrado un {% if aprobador_tipo == 'autorizador' %}admin{% else %}{{ aprobador_tipo }}{% endif %} aprobador: <strong>{{ aprobador.get_full_name|default:aprobador.username }}</strong>{% if aprobadores|length > 1 %}, y se requerirá además la autorización del administrador{% endif %}.
               Tu solicitud será enviada para su aprobación.
             </div>
             {% else %}
