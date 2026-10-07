@@ -1099,6 +1099,53 @@ class TareaConversionTest(BaseDocumentosTest):
         ):
             self.assertIsNone(convertir_a_pdf_sync(origen))
 
+    def _convertir_con_pdf_falso(self, origen):
+        """Falso conversor que escribe un PDF al lado del origen."""
+
+        def falso_convertir(archivo, papel=None, outdir=None, timeout=180,
+                            margenes=None):
+            pdf = os.path.splitext(archivo)[0] + '.pdf'
+            with open(pdf, 'wb') as f:
+                f.write(b'%PDF-1.4 fake')
+            return pdf
+
+        return patch(
+            'documentos.services.conversion_pdf.convertir_office_a_pdf',
+            side_effect=falso_convertir,
+        )
+
+    def test_convertir_a_pdf_sync_repara_en_linea_si_se_pide(self):
+        """``reparar_sincrono`` repara aquí mismo: la exportación al vuelo
+        borra su XLSX temporal, así que una reparación en Celery se perdería."""
+        origen = os.path.join(self._media_dir, 'planillas', 'export.xlsx')
+        os.makedirs(os.path.dirname(origen), exist_ok=True)
+        xlsx_real(origen)
+
+        with self._convertir_con_pdf_falso(origen), \
+                patch('documentos.services.pdf_adaptativo.reparar_en_linea') as mock_reparar, \
+                patch('documentos.services.pdf_adaptativo.verificar') as mock_verificar:
+            ruta = convertir_a_pdf_sync(origen, reparar_sincrono=True)
+
+        self.assertTrue(ruta)
+        mock_reparar.assert_called_once()
+        self.assertEqual(mock_reparar.call_args.args[0], origen)
+        mock_verificar.assert_not_called()
+
+    def test_convertir_a_pdf_sync_por_defecto_encola_la_reparacion(self):
+        """Sin la bandera el comportamiento sigue siendo el de siempre."""
+        origen = os.path.join(self._media_dir, 'planillas', 'encolado.xlsx')
+        os.makedirs(os.path.dirname(origen), exist_ok=True)
+        xlsx_real(origen)
+
+        with self._convertir_con_pdf_falso(origen), \
+                patch('documentos.services.pdf_adaptativo.reparar_en_linea') as mock_reparar, \
+                patch('documentos.services.pdf_adaptativo.verificar') as mock_verificar:
+            ruta = convertir_a_pdf_sync(origen)
+
+        self.assertTrue(ruta)
+        mock_verificar.assert_called_once()
+        mock_reparar.assert_not_called()
+
     def test_convertir_planilla_a_pdf_usa_el_mismo_conversor(self):
         doc = self._crear_documento('TI-FOR-CONV-3')
         planilla = PlanillaCambios.objects.create(

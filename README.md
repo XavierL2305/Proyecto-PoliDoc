@@ -4,6 +4,13 @@ Sistema de gestión documental para la Policlínica Táchira, orientado a normas
 ISO (9001, 27001, 15489): control de versiones, aprobaciones, vigencia,
 clasificación de seguridad, descargas trazables y auditoría inmutable.
 
+## Documentación
+
+- [Manual de usuario](docs/manual-usuario/README.md) — guía de uso por roles
+  (acceso, búsqueda, creación, aprobaciones, descargas). Tomo 1 (MVP).
+- [`CONTEXT.txt`](CONTEXT.txt) — documentación técnica y de decisiones
+  (fuente de verdad del proyecto).
+
 ## Tecnologías
 
 | Capa | Tecnología |
@@ -87,6 +94,7 @@ apps/
     services/      # conversión/QA de PDF, planillas, búsqueda, caché, ...
   auditoria/       # registro ISO en MongoDB, circuit breaker y buffer
 polidoc/           # settings, URLs, Celery, estáticos y plantillas base
+docs/manual-usuario/ # manual de usuario (guía de uso por roles)
 CONTEXT.txt        # documentación técnica y de decisiones (fuente de verdad)
 ```
 

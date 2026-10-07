@@ -413,13 +413,13 @@ def _procesar_asociados_planilla(planilla, request, permitido, documento, usuari
 def formularios(request):
     user = request.user
     dept = user.perfil.departamento
-    docs = Documento.objects.filter(tipo='formulario', estado='activo').select_related('departamento', 'propietario')
-    if user.perfil.es_administrador:
-        pass
-    elif user.perfil.es_jefe:
-        docs = docs.filter(Q(propietario=user) | Q(departamento=dept) | Q(clasificacion='publico'))
-    else:
-        docs = docs.filter(Q(departamento=dept) | Q(clasificacion='publico'))
+    # Catálogo de formularios (tipo FOR): se listan TODOS los activos con
+    # independencia de su clasificación. La tarjeta solo expone metadatos y el
+    # botón corresponde (Descargar / Solicitar): el contenido sigue protegido
+    # por `puede_ver_documento(..., requerir_aprobada=True)` en el visor.
+    docs = Documento.objects.filter(
+        tipo='formulario', estado='activo',
+    ).select_related('departamento', 'propietario')
 
     from .permissions import descarga_autorizada, puede_descargar
 
@@ -532,8 +532,18 @@ def mis_documentos(request):
                 'documentos': page,
             })
 
+    # Borradores de planilla propios: permiten retomarlos desde la tarjeta en
+    # vez de crear un segundo borrador para el mismo documento.
+    planillas_borrador = {
+        doc_id: str(pl_uuid)
+        for doc_id, pl_uuid in PlanillaCambios.objects.filter(
+            responsable=user, estado='borrador', documento__isnull=False,
+        ).values_list('documento_id', 'uuid').order_by('id')
+    }
+
     return render(request, 'documentos/mis_documentos.html', {
         'tipos_documento': tipos_documento,
+        'planillas_borrador': planillas_borrador,
         'buscar': buscar,
         'estado_filter': estado_filter,
         'clasificacion_filter': clasificacion_filter,
@@ -563,7 +573,7 @@ def buscar(request):
 @login_required(login_url='/login/')
 def bandeja_aprobaciones(request):
     perfil = request.user.perfil
-    if not perfil.es_jefe:
+    if not (perfil.es_jefe or perfil.es_administrador):
         messages.error(request, 'No tienes permisos para acceder a esta sección.')
         return redirect('documentos:mis_documentos')
     filtro_estado = request.GET.get('estado', 'pendiente')
@@ -1274,8 +1284,15 @@ def detalle_documento(request, tipo, documento_id):
                     'puede_ver': puede_ver_documento(request.user, rel),
                 }
 
+    # Borrador de planilla propio de este documento: permite retomarlo desde la
+    # ficha en vez de crear un segundo borrador (ver crear_planilla).
+    planilla_borrador = PlanillaCambios.objects.filter(
+        documento=documento, estado='borrador', responsable=request.user,
+    ).first()
+
     return render(request, 'documentos/detalle.html', {
         'documento': documento,
+        'planilla_borrador': planilla_borrador,
         'tipo': tipo,
         'codigos_relacionados': codigos_relacionados,
         'versiones': versiones,
@@ -2465,28 +2482,54 @@ def transferir_propiedad(request, tipo, documento_id):
 def crear_planilla(request):
     tipo_doc = request.GET.get('tipo') or request.POST.get('tipo_documento')
     doc_uuid = request.GET.get('doc_uuid') or request.POST.get('documento_uuid')
-    if request.method == 'GET' and not (tipo_doc and doc_uuid):
+    planilla_uuid = request.GET.get('planilla_uuid') or request.POST.get('planilla_uuid')
+
+    # Retomar una planilla propia en borrador: el mismo formulario la edita en
+    # vez de crear otra (evita borradores duplicados para el mismo documento).
+    planilla_existente = None
+    if planilla_uuid:
+        planilla_existente = PlanillaCambios.objects.filter(
+            uuid=planilla_uuid, estado='borrador', responsable=request.user,
+        ).select_related('documento', 'solicitud_cambio', 'solicitud_cambio__formato').first()
+        if not planilla_existente:
+            messages.error(
+                request,
+                'No se encontró una planilla en borrador tuya con ese identificador.',
+            )
+            return redirect('documentos:mis_documentos')
+
+    if request.method == 'GET' and not planilla_existente and not (tipo_doc and doc_uuid):
         messages.error(request, 'Esta funcionalidad solo está disponible desde la edición de un documento existente.')
         return redirect('documentos:mis_documentos')
+
     documento = None
-    if tipo_doc and doc_uuid:
+    if planilla_existente:
+        documento = planilla_existente.documento
+        if not documento:
+            messages.error(request, 'La planilla no tiene documento asociado.')
+            return redirect('documentos:mis_documentos')
+        tipo_doc = documento.tipo_id
+        doc_uuid = str(documento.uuid)
+    elif tipo_doc and doc_uuid:
         try:
             documento = get_documento(tipo_doc, doc_uuid)
         except Http404:
             messages.error(request, 'Documento no encontrado.')
             return redirect('documentos:mis_documentos')
+
+    if documento:
         if documento.estado == 'obsoleto':
             messages.error(request, 'No se puede editar un documento obsoleto. Cree un nuevo documento.')
             return redirect('documentos:mis_documentos')
         if documento.estado == 'en_revision':
             messages.error(request, 'El documento está en revisión. Espere a que se apruebe o rechace.')
-            return redirect('documentos:detalle', tipo=tipo_doc, documento_id=documento.uuid)
+            return redirect('documentos:detalle', tipo=documento.tipo_id, documento_id=documento.uuid)
         # Exigir permiso de edición sobre el documento en TODOS los tipos, no solo
         # en descripción de procesos. Evita que cualquier usuario someta una planilla
         # sobre un documento ajeno y lo bloquee en estado 'en_revision'.
         if not puede_editar_documento(request.user, documento):
             messages.error(request, 'No tienes permisos para editar este documento.')
-            return redirect('documentos:detalle', tipo=tipo_doc, documento_id=documento.uuid)
+            return redirect('documentos:detalle', tipo=documento.tipo_id, documento_id=documento.uuid)
 
     respuestas_formato = {}
 
@@ -2495,12 +2538,18 @@ def crear_planilla(request):
         form = PlanillaCambiosForm(
             request.POST, request.FILES,
             tipo_documento=tipo_doc, documento=documento,
+            instance=planilla_existente,
         )
         permitir_asociados = 'documentos_asociados_json' in form.fields
 
-        formato_dinamico = Formato.objects.filter(
-            activo=True, aplica_modificacion=True
-        ).order_by('codigo').first()
+        # Al retomar un borrador se valida contra el formato de su solicitud de
+        # cambio original, no contra el formato activo del momento.
+        if planilla_existente and planilla_existente.solicitud_cambio_id:
+            formato_dinamico = planilla_existente.solicitud_cambio.formato
+        else:
+            formato_dinamico = Formato.objects.filter(
+                activo=True, aplica_modificacion=True
+            ).order_by('codigo').first()
 
         respuestas_formato = {}
         errores_formato = []
@@ -2512,11 +2561,14 @@ def crear_planilla(request):
 
         if form.is_valid() and not errores_formato:
             planilla = form.save(commit=False)
-            planilla.justificacion = (
+            nueva_justificacion = (
                 respuestas_formato.get('descripcion_cambio')
                 or respuestas_formato.get('proposito_cambio')
                 or ''
             )
+            if nueva_justificacion or not planilla_existente:
+                # Sin respuestas nuevas (edición) se conserva la justificación previa.
+                planilla.justificacion = nueva_justificacion
             planilla.responsable = request.user
             planilla.tipo_cambio = 'modificacion'
             if documento:
@@ -2527,20 +2579,29 @@ def crear_planilla(request):
                 archivo = request.FILES.get('archivo_propuesto')
                 if archivo:
                     planilla.archivo_propuesto = archivo
-                planilla.codigo = f"PC-{timezone.now().strftime('%Y%m%d-%H%M%S')}"
+                if not planilla_existente:
+                    planilla.codigo = f"PC-{timezone.now().strftime('%Y%m%d-%H%M%S')}"
 
             if formato_dinamico:
-                codigo_sol = f"SC-{timezone.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6].upper()}"
-                sol_cambio = SolicitudCambio.objects.create(
-                    codigo=codigo_sol,
-                    formato=formato_dinamico,
-                    operacion='modificacion',
-                    documento=documento,
-                    solicitante=request.user,
-                    departamento=getattr(documento, 'departamento', None),
-                    respuestas=respuestas_formato,
-                    estado='borrador' if accion == 'borrador' else 'en_revision',
-                )
+                sol_cambio = planilla.solicitud_cambio
+                if sol_cambio:
+                    # Reutiliza la solicitud de cambio del borrador: solo se
+                    # actualizan sus respuestas (no se genera un SC- nuevo).
+                    sol_cambio.respuestas = respuestas_formato
+                    sol_cambio.estado = 'borrador' if accion == 'borrador' else 'en_revision'
+                    sol_cambio.save(update_fields=['respuestas', 'estado'])
+                else:
+                    codigo_sol = f"SC-{timezone.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6].upper()}"
+                    sol_cambio = SolicitudCambio.objects.create(
+                        codigo=codigo_sol,
+                        formato=formato_dinamico,
+                        operacion='modificacion',
+                        documento=documento,
+                        solicitante=request.user,
+                        departamento=getattr(documento, 'departamento', None),
+                        respuestas=respuestas_formato,
+                        estado='borrador' if accion == 'borrador' else 'en_revision',
+                    )
                 planilla.solicitud_cambio = sol_cambio
 
             if accion == 'borrador':
@@ -2593,15 +2654,22 @@ def crear_planilla(request):
         else:
             messages.warning(request, 'Por favor corrija los errores en el formulario.')
     else:
-        initial_data = {}
-        if documento:
-            initial_data = {
-                'nombre_propuesto': documento.nombre,
-                'descripcion_propuesta': documento.descripcion,
-                'participantes_propuestos': documento.participantes,
-                'clasificacion_propuesta': documento.clasificacion,
-            }
-        form = PlanillaCambiosForm(initial=initial_data, tipo_documento=tipo_doc, documento=documento)
+        if planilla_existente:
+            # Retomar borrador: el ModelForm precarga desde la instancia.
+            form = PlanillaCambiosForm(
+                instance=planilla_existente,
+                tipo_documento=tipo_doc, documento=documento,
+            )
+        else:
+            initial_data = {}
+            if documento:
+                initial_data = {
+                    'nombre_propuesto': documento.nombre,
+                    'descripcion_propuesta': documento.descripcion,
+                    'participantes_propuestos': documento.participantes,
+                    'clasificacion_propuesta': documento.clasificacion,
+                }
+            form = PlanillaCambiosForm(initial=initial_data, tipo_documento=tipo_doc, documento=documento)
 
     proxima_version = ''
     version_actual = ''
@@ -2612,6 +2680,31 @@ def crear_planilla(request):
     if documento:
         proxima_version = calcular_proxima_version(documento)
         version_actual = documento.version_actual
+
+    if planilla_existente:
+        # Los tags del formulario se precargan desde la planilla, no del documento.
+        departamentos_seleccionados = [
+            str(d.pk) for d in planilla_existente.departamentos_afectados.all()
+        ]
+        nombres_depto = {d.pk: d.nombre for d in departamentos_disponibles}
+        responsables_seleccionados = [
+            (d.pk, nombres_depto.get(d.pk, str(d.pk)))
+            for d in planilla_existente.responsables_propuestos.all()
+        ]
+        documentos_asociados_iniciales = [
+            {
+                'uuid': str(a.documento.uuid), 'codigo': a.documento.codigo,
+                'nombre': a.documento.nombre, 'estado': a.documento.estado,
+                'tipo': a.documento.tipo_id,
+            }
+            for a in planilla_existente.documentos_asociados.select_related('documento').all()
+            if a.documento_id
+        ]
+        documentos_asociados_iniciales += [
+            {'codigo': codigo, 'pendiente': True}
+            for codigo in (planilla_existente.referencias_pendientes or [])
+        ]
+    elif documento:
         departamentos_seleccionados = [str(d.pk) for d in documento.departamentos_afectados.all()]
         responsables_seleccionados = [(str(d.pk), d.nombre) for d in documento.responsables.all()]
         documentos_asociados_iniciales = [
@@ -2622,13 +2715,32 @@ def crear_planilla(request):
             for d in documento.documentos_relacionados.all()
         ]
 
-    formato_dinamico = Formato.objects.filter(
-        activo=True, aplica_modificacion=True
-    ).order_by('codigo').first()
+    if request.method == 'GET':
+        # En POST estos dos valores vienen de la validación de arriba.
+        formato_dinamico = Formato.objects.filter(
+            activo=True, aplica_modificacion=True
+        ).order_by('codigo').first()
+        if planilla_existente and planilla_existente.solicitud_cambio_id:
+            sol = planilla_existente.solicitud_cambio
+            formato_dinamico = sol.formato or formato_dinamico
+            respuestas_formato = sol.respuestas or {}
+    else:
+        formato_dinamico = Formato.objects.filter(
+            activo=True, aplica_modificacion=True
+        ).order_by('codigo').first()
+        if planilla_existente and planilla_existente.solicitud_cambio_id:
+            formato_dinamico = (
+                planilla_existente.solicitud_cambio.formato or formato_dinamico
+            )
 
     return render(request, 'documentos/formulario_planilla.html', {
         'form': form,
-        'titulo': 'Nueva Planilla de Cambios' if not documento else f'Editar {documento.nombre}',
+        'planilla_existente': planilla_existente,
+        'titulo': (
+            f'Retomar planilla {planilla_existente.codigo}'
+            if planilla_existente else
+            ('Nueva Planilla de Cambios' if not documento else f'Editar {documento.nombre}')
+        ),
         'documento': documento,
         'tipo_documento': tipo_doc,
         'edicion': bool(documento),
@@ -4274,6 +4386,19 @@ def descargar_solicitud_xlsx(request, solicitud_uuid):
     if not _puede_ver_solicitud(request.user, solicitud):
         messages.error(request, 'No tienes permisos para descargar esta solicitud.')
         return redirect('documentos:mis_documentos')
+    # Un borrador puede haberse editado desde la última descarga: se regenera.
+    borrador = solicitud.estado == 'borrador'
+    if borrador or not solicitud.planilla_xlsx:
+        if not solicitud.formato or not solicitud.formato.plantilla_xlsx:
+            messages.error(request, 'No hay plantilla Excel disponible para exportar.')
+            return redirect('documentos:mis_documentos')
+        from .services.planillas import guardar_planilla_solicitud
+        resultado = guardar_planilla_solicitud(solicitud, forzar=borrador, con_pdf=False)
+        if not resultado.get('success'):
+            logger.warning(
+                f"No se pudo persistir la planilla XLSX de {solicitud.codigo}: "
+                f"{resultado.get('error')}"
+            )
     if solicitud.planilla_xlsx:
         try:
             return FileResponse(
@@ -4306,6 +4431,20 @@ def descargar_solicitud_pdf(request, solicitud_uuid):
     if not _puede_ver_solicitud(request.user, solicitud):
         messages.error(request, 'No tienes permisos para descargar esta solicitud.')
         return redirect('documentos:mis_documentos')
+    # Mismo criterio que el XLSX: el borrador se regenera, lo demás se sirve
+    # ya persistido (y ya reparado por la conversión).
+    borrador = solicitud.estado == 'borrador'
+    if borrador or not solicitud.planilla_pdf:
+        if not solicitud.formato or not solicitud.formato.plantilla_xlsx:
+            messages.error(request, 'No hay plantilla Excel disponible para exportar.')
+            return redirect('documentos:mis_documentos')
+        from .services.planillas import guardar_planilla_solicitud
+        resultado = guardar_planilla_solicitud(solicitud, forzar=borrador)
+        if not resultado.get('pdf'):
+            logger.warning(
+                f"No se pudo persistir la planilla PDF de {solicitud.codigo}: "
+                f"{resultado.get('error') or 'sin PDF (¿LibreOffice?)'}"
+            )
     if solicitud.planilla_pdf:
         try:
             return FileResponse(

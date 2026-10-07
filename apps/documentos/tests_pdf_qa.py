@@ -300,6 +300,95 @@ class VerificarTest(TestCase):
         self.assertEqual(ConversionPDFDiagnostico.objects.count(), 0)
 
 
+class RepararEnLineaTest(TestCase):
+    """``reparar_en_linea``: QA + reparación sin pasar por Celery.
+
+    Es el camino de ``exportar_pdf``: su XLSX temporal se borra en cuanto se
+    sirve la respuesta, de modo que una reparación encolada se perdería.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix='polidoc-en-linea-')
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+        self.pdf = os.path.join(self.dir, 'doc.pdf')
+        with open(self.pdf, 'wb') as f:
+            f.write(b'%PDF-1.4')
+        self.origen = os.path.join(self.dir, 'doc.xlsx')
+        with open(self.origen, 'wb') as f:
+            f.write(b'xlsx')
+
+    @override_settings(PDF_QA_ADAPTATIVO=True)
+    def test_con_defectos_repara_y_no_encola(self):
+        defectuoso = pdf_qa.Diagnostico(paginas=3, defectos=[_defecto(2)])
+        reparado = pdf_qa.Diagnostico(paginas=3)
+
+        with patch.object(pa, 'diagnosticar', return_value=defectuoso), \
+                patch.object(pa, 'reparar', return_value=reparado) as mock_reparar, \
+                patch.object(pa, 'programar_reparacion') as mock_encolar:
+            resultado = pa.reparar_en_linea(self.origen, self.pdf)
+
+        mock_reparar.assert_called_once()
+        self.assertEqual(mock_reparar.call_args.args, (self.origen, self.pdf, defectuoso))
+        mock_encolar.assert_not_called()
+        self.assertTrue(resultado.limpio)
+
+    @override_settings(PDF_QA_ADAPTATIVO=True)
+    def test_pdf_limpio_no_repara(self):
+        with patch.object(pa, 'diagnosticar', return_value=pdf_qa.Diagnostico(paginas=3)), \
+                patch.object(pa, 'reparar') as mock_reparar:
+            resultado = pa.reparar_en_linea(self.origen, self.pdf)
+
+        mock_reparar.assert_not_called()
+        self.assertTrue(resultado.limpio)
+        self.assertEqual(ConversionPDFDiagnostico.objects.get().estado, 'ok')
+
+    @override_settings(PDF_QA_ADAPTATIVO=False)
+    def test_desactivado_no_hace_nada(self):
+        with patch.object(pa, 'diagnosticar') as mock:
+            self.assertIsNone(pa.reparar_en_linea(self.origen, self.pdf))
+        mock.assert_not_called()
+
+    def test_pdf_inexistente_no_hace_nada(self):
+        with patch.object(pa, 'diagnosticar') as mock:
+            self.assertIsNone(
+                pa.reparar_en_linea(self.origen, os.path.join(self.dir, 'no.pdf'))
+            )
+        mock.assert_not_called()
+
+
+class QaVerificarExportacionTest(TestCase):
+    """QA que informa ``verificar_exportacion`` al generar un PDF."""
+
+    def test_pdf_limpio(self):
+        from documentos.management.commands.verificar_exportacion import qa_pdf
+
+        with patch.object(pa, 'diagnosticar',
+                          return_value=pdf_qa.Diagnostico(paginas=2)):
+            limpio, resumen = qa_pdf('/tmp/x.pdf')
+
+        self.assertTrue(limpio)
+        self.assertEqual(resumen, 'ok')
+
+    def test_pdf_con_defectos(self):
+        from documentos.management.commands.verificar_exportacion import qa_pdf
+
+        defectuoso = pdf_qa.Diagnostico(paginas=2, defectos=[_defecto(1)])
+        with patch.object(pa, 'diagnosticar', return_value=defectuoso):
+            limpio, resumen = qa_pdf('/tmp/x.pdf')
+
+        self.assertFalse(limpio)
+        self.assertIn('imagen_recortada@p1', resumen)
+
+    def test_fallo_del_analizador_no_se_esconde(self):
+        from documentos.management.commands.verificar_exportacion import qa_pdf
+
+        with patch.object(pa, 'diagnosticar', side_effect=RuntimeError('boom')):
+            limpio, resumen = qa_pdf('/tmp/x.pdf')
+
+        self.assertFalse(limpio)
+        self.assertIn('boom', resumen)
+
+
 class TareaRepararTest(TestCase):
 
     def test_tarea_llama_a_reparar(self):

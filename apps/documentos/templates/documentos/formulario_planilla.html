@@ -105,6 +105,9 @@
         {% csrf_token %}
         <input type="hidden" name="tipo_documento" value="{{ tipo_documento }}">
         <input type="hidden" name="documento_uuid" value="{{ documento.uuid|default:'' }}">
+        {% if planilla_existente %}
+        <input type="hidden" name="planilla_uuid" value="{{ planilla_existente.uuid }}">
+        {% endif %}
 
         {% if documento %}
         <div class="form-card">

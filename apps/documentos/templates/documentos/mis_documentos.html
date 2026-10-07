@@ -1,5 +1,5 @@
 {% extends 'base_app.html' %}
-{% load static %}
+{% load static formato_extras %}
 
 {% block title %}Mis Documentos - POLIDOC{% endblock %}
 
@@ -209,7 +209,13 @@
                   {% if doc.estado == 'borrador' %}
                 <a href="{% url 'documentos:editar_borrador' tipo=tipo.key documento_id=doc.uuid %}" class="btn btn--ghost btn--sm"><i class="fa-solid fa-pen-to-square"></i> Editar Borrador</a>
                   {% else %}
+                    {% with planilla_borrador=planillas_borrador|get_item:doc.id %}
+                      {% if planilla_borrador %}
+                <a href="{% url 'documentos:detalle_planilla' planilla_uuid=planilla_borrador %}" class="btn btn--ghost btn--sm"><i class="fa-solid fa-file-signature"></i> Planilla de Cambios (borrador)</a>
+                      {% else %}
                 <a href="{% url 'documentos:editar' tipo=tipo.key documento_id=doc.uuid %}" class="btn btn--ghost btn--sm"><i class="fa-solid fa-file-signature"></i> Planilla de Cambios</a>
+                      {% endif %}
+                    {% endwith %}
                   {% endif %}
                 {% endif %}
               {% endif %}

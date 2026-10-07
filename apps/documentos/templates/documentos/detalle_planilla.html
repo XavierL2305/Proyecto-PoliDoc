@@ -34,11 +34,19 @@
           <i class="fa-solid fa-info-circle" style="color: var(--color-primary); margin-right: 0.5rem;"></i>
           <span style="font-weight: 500;">Esta planilla está como borrador. El documento no ha sido bloqueado aún.</span>
         </div>
-        <a href="{% url 'documentos:enviar_planilla' planilla_uuid=planilla.uuid %}" 
-           class="btn btn--primary"
-           onclick="return confirm('¿Está seguro de enviar esta planilla a revisión? El documento cambiará a estado \"En Revisión\".')">
-          <i class="fa-solid fa-paper-plane"></i> Enviar a Revisión
-        </a>
+        <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+          {% if planilla.documento %}
+          <a href="{% url 'documentos:crear_planilla' %}?tipo={{ planilla.documento.tipo_id }}&doc_uuid={{ planilla.documento.uuid }}&planilla_uuid={{ planilla.uuid }}"
+             class="btn btn--ghost">
+            <i class="fa-solid fa-pen-to-square"></i> Continuar edición
+          </a>
+          {% endif %}
+          <a href="{% url 'documentos:enviar_planilla' planilla_uuid=planilla.uuid %}" 
+             class="btn btn--primary"
+             onclick="return confirm('¿Está seguro de enviar esta planilla a revisión? El documento cambiará a estado \"En Revisión\".')">
+            <i class="fa-solid fa-paper-plane"></i> Enviar a Revisión
+          </a>
+        </div>
       </div>
       {% endif %}
 

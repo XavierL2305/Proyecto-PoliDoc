@@ -147,14 +147,20 @@ def generar_planilla_solicitud_task(self, solicitud_uuid):
         self.retry(exc=exc, countdown=60)
 
 
-def convertir_a_pdf_sync(archivo_path):
+def convertir_a_pdf_sync(archivo_path, reparar_sincrono=False):
     """
     Convierte un archivo office a PDF (síncrono) usando el mismo conversor que
     los documentos: papel de ``settings.PAPEL_PDF_CONVERSION``, márgenes
     ``settings.MARGEN_{SUPERIOR,INFERIOR}_PDF_CONVERSION`` y saneo de la copia
     temporal (salto de página del encabezado repetido). Después corre el QA del
-    PDF; si detecta maquetación rota, programa la reparación adaptativa (ver
+    PDF; si detecta maquetación rota, repara la maquetación (ver
     services/pdf_adaptativo.py).
+
+    Con ``reparar_sincrono=True`` la reparación ocurre **antes de volver a
+    llamar**, sin depender de Celery: es lo que usa la exportación al vuelo,
+    cuyo XLSX temporal se borra en cuanto se sirve la respuesta. Con el valor
+    por defecto la reparación se encola (los archivos viven en Media y
+    persisten; no hay prisa).
 
     Retorna la ruta del PDF generado relativa a ``MEDIA_ROOT`` (o la absoluta
     si el origen vive fuera de Media) o None si falla. Nunca lanza excepciones.
@@ -172,8 +178,12 @@ def convertir_a_pdf_sync(archivo_path):
             return None
 
         try:
-            from .services.pdf_adaptativo import verificar
-            verificar(archivo_path, pdf_path)
+            if reparar_sincrono:
+                from .services.pdf_adaptativo import reparar_en_linea
+                reparar_en_linea(archivo_path, pdf_path)
+            else:
+                from .services.pdf_adaptativo import verificar
+                verificar(archivo_path, pdf_path)
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"QA del PDF falló para {pdf_path}: {exc}")
 

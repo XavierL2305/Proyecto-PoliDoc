@@ -644,6 +644,113 @@ class VistasPlanillaTest(BaseDocumentosTest):
         )
         self.assertEqual(resp.status_code, 302)
 
+    # --- retomar un borrador de planilla ------------------------------------
+    def _url_retomar(self, extra=''):
+        return (
+            '/documentos/planilla-cambios/nueva/'
+            f'?tipo={self.doc_activo.tipo_id}&doc_uuid={self.doc_activo.uuid}'
+            f'&planilla_uuid={self.planilla.uuid}{extra}'
+        )
+
+    def test_retomar_borrador_get(self):
+        """El formulario se abre en modo edición con la planilla cargada."""
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.get(self._url_retomar())
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['planilla_existente'], self.planilla)
+        self.assertEqual(resp.context['form'].instance.pk, self.planilla.pk)
+        self.assertContains(resp, str(self.planilla.uuid))
+
+    def test_retomar_borrador_get_sin_tipo_y_doc(self):
+        """Los parámetros tipo/doc_uuid se derivan de la propia planilla."""
+        self.client.login(username='jefe_ti', password='testpass123')
+        url = f'/documentos/planilla-cambios/nueva/?planilla_uuid={self.planilla.uuid}'
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['planilla_existente'], self.planilla)
+
+    def test_retomar_borrador_post_no_duplica(self):
+        """El POST conserva el id y el código: no crea una segunda planilla."""
+        self.client.login(username='jefe_ti', password='testpass123')
+        antes = PlanillaCambios.objects.count()
+        resp = self.client.post(self._url_retomar(), {
+            'tipo_documento': self.doc_activo.tipo_id,
+            'documento_uuid': str(self.doc_activo.uuid),
+            'planilla_uuid': str(self.planilla.uuid),
+            'nombre_propuesto': 'Nombre retomado',
+            'descripcion_propuesta': 'Descripción retomada',
+            'clasificacion_propuesta': '',
+            'departamentos_afectados': str(self.depto_ti.id),
+            'accion': 'borrador',
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(PlanillaCambios.objects.count(), antes)
+        self.planilla.refresh_from_db()
+        self.assertEqual(self.planilla.codigo, 'PC-TI-VIEW-001')
+        self.assertEqual(self.planilla.estado, 'borrador')
+        self.assertEqual(self.planilla.nombre_propuesto, 'Nombre retomado')
+        self.assertEqual(self.planilla.responsable_id, self.user_jefe_ti.id)
+
+    def test_retomar_borrador_ajeno_denegado(self):
+        """Solo el responsable puede retomar su borrador."""
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get(self._url_retomar())
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn('/documentos/mis-documentos/', resp['Location'])
+
+    def test_retomar_planilla_no_borrador_denegado(self):
+        """Una planilla enviada a revisión ya no se puede retomar."""
+        PlanillaCambios.objects.filter(pk=self.planilla.pk).update(estado='en_revision')
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.get(self._url_retomar())
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn('/documentos/mis-documentos/', resp['Location'])
+
+    def test_detalle_borrador_muestra_continuar_edicion(self):
+        """El detalle del borrador ofrece 'Continuar edición'."""
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.get(f'/documentos/planilla-cambios/{self.planilla.uuid}/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Continuar edición')
+        self.assertContains(resp, 'planilla_uuid=')
+
+    def test_detalle_borrador_oculto_para_otro_usuario(self):
+        """El botón no aparece para quien no es el responsable."""
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get(f'/documentos/planilla-cambios/{self.planilla.uuid}/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotContains(resp, 'Continuar edición')
+
+    def test_ficha_enlaza_borrador_de_planilla(self):
+        """La ficha del documento enlaza el borrador en vez de crear otro."""
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.get(
+            f'/documentos/{self.doc_activo.tipo_id}/{self.doc_activo.uuid}/'
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Planilla de Cambios (borrador)')
+        self.assertContains(
+            resp, f'/documentos/planilla-cambios/{self.planilla.uuid}/',
+        )
+
+    def test_ficha_sin_borrador_mantiene_boton_normal(self):
+        """Sin borrador propio, la ficha sigue enlazando la creación."""
+        PlanillaCambios.objects.filter(pk=self.planilla.pk).delete()
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.get(
+            f'/documentos/{self.doc_activo.tipo_id}/{self.doc_activo.uuid}/'
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Planilla de Cambios')
+        self.assertNotContains(resp, 'Planilla de Cambios (borrador)')
+
+    def test_mis_documentos_enlaza_borrador_de_planilla(self):
+        """Mis Documentos enlaza el borrador para retomarlo."""
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.get('/documentos/mis-documentos/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Planilla de Cambios (borrador)')
+
 
 # =============================================================================
 # VISTAS: CONFIGURACIÓN (CRUD TIPOS DE DOCUMENTO)
@@ -1251,6 +1358,46 @@ class FormulariosDescargaTest(BaseDocumentosTest):
         resp = self.client.get('/documentos/')
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, 'Descargar')
+
+    def test_catalogo_muestra_for_de_otro_depto(self):
+        """Un FOR interno de otro depto se lista en el catálogo para solicitar."""
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get('/documentos/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(
+            resp, f'/documentos/formulario/{self.doc_th.uuid}/solicitar-descarga/',
+        )
+        self.assertNotContains(
+            resp, f'/documentos/formulario/{self.doc_th.uuid}/descargar/',
+        )
+
+    def test_catalogo_muestra_for_restringido_de_otro_depto(self):
+        """Un FOR restringido también se lista: expone metadatos y Solicitar."""
+        from documentos.models import Documento
+        doc = Documento.objects.create(
+            tipo=self.tipo_formulario, nombre='Formulario Restringido',
+            codigo='TH-FOR-900', estado='activo', propietario=self.user_jefe_th,
+            departamento=self.depto_th, clasificacion='restringido',
+            version_actual='1.0',
+        )
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get('/documentos/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(
+            resp, f'/documentos/formulario/{doc.uuid}/solicitar-descarga/',
+        )
+        self.assertNotContains(
+            resp, f'/documentos/formulario/{doc.uuid}/descargar/',
+        )
+
+    def test_catalogo_solo_muestra_activos(self):
+        """Borradores y documentos obsoletos no aparecen en el catálogo."""
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get('/documentos/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Formulario Publico')
+        self.assertNotContains(resp, 'Formulario Borrador')
+        self.assertNotContains(resp, 'Formulario Obsoleto')
 
 
 # =============================================================================

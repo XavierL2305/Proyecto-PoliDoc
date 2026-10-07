@@ -8,6 +8,7 @@ sirven el archivo guardado en lugar de exportar al vuelo.
 
 import io
 import json
+import os
 import shutil
 import tempfile
 import zipfile
@@ -25,6 +26,7 @@ from documentos.services.planillas import (
     OPERACIONES_CON_PLANILLA,
     encolar_generacion_planilla,
     generar_planilla_solicitud,
+    guardar_planilla_solicitud,
 )
 from documentos.tasks import generar_planilla_solicitud_task, generar_planillas_pendientes
 
@@ -384,6 +386,7 @@ class DescargaPlanillaGuardadaTest(BasePlanillasTest):
         self.assertEqual(b''.join(resp.streaming_content), b'%PDF-1.4 GUARDADO')
 
     def test_descarga_xlsx_exporta_al_vuelo_si_no_esta_guardado(self):
+        """Sin archivo persistido lo genera, lo persiste y lo sirve."""
         self.solicitud.planilla_xlsx.delete(save=True)
         self.solicitud.refresh_from_db()
 
@@ -396,6 +399,195 @@ class DescargaPlanillaGuardadaTest(BasePlanillasTest):
         mock_export.assert_called_once()
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(b''.join(resp.streaming_content), b'GENERADO AL VUELO')
+        self.solicitud.refresh_from_db()
+        self.assertTrue(self.solicitud.planilla_xlsx)
+
+
+# =============================================================================
+# PERSISTENCIA DEL RESULTADO EN LA SOLICITUD
+# =============================================================================
+
+class GuardarPlanillaSolicitudTest(BasePlanillasTest):
+    """``guardar_planilla_solicitud``: exporta, persiste y reutiliza."""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.formato = cls.crear_formato()
+        cls.solicitud = cls.crear_solicitud(cls.formato)
+
+    def test_persiste_modificacion_tambien(self):
+        """La operación que `generar_planilla_solicitud` rechaza sí se persiste."""
+        solicitud = self.crear_solicitud(
+            self.formato, codigo='SC-PERSIST-MOD', operacion='modificacion',
+        )
+
+        with patch('documentos.tasks.convertir_a_pdf_sync', return_value=None):
+            resultado = guardar_planilla_solicitud(solicitud)
+
+        self.assertTrue(resultado['success'], resultado)
+        solicitud.refresh_from_db()
+        self.assertTrue(solicitud.planilla_xlsx)
+        self.assertFalse(solicitud.planilla_pdf)
+        # El flujo automático no se amplía: el barrido sigue sin tocarla.
+        self.assertNotIn(solicitud.operacion, OPERACIONES_CON_PLANILLA)
+
+    def test_es_idempotente(self):
+        with patch('documentos.tasks.convertir_a_pdf_sync', return_value=None):
+            guardar_planilla_solicitud(self.solicitud)
+            self.solicitud.refresh_from_db()
+            nombre = self.solicitud.planilla_xlsx.name
+
+            with patch('documentos.services.exportacion.exportar_xlsx') as mock_export:
+                resultado = guardar_planilla_solicitud(self.solicitud)
+
+        mock_export.assert_not_called()
+        self.assertTrue(resultado['success'])
+        self.solicitud.refresh_from_db()
+        self.assertEqual(self.solicitud.planilla_xlsx.name, nombre)
+
+    def test_forzar_regenera_los_archivos(self):
+        with patch('documentos.tasks.convertir_a_pdf_sync', return_value=None):
+            guardar_planilla_solicitud(self.solicitud)
+            self.solicitud.refresh_from_db()
+            with patch('documentos.services.exportacion.exportar_xlsx') as mock_export:
+                mock_export.return_value = b'REGENERADO'
+                resultado = guardar_planilla_solicitud(self.solicitud, forzar=True)
+
+        self.assertTrue(resultado['success'])
+        mock_export.assert_called_once()
+        self.solicitud.refresh_from_db()
+        with self.solicitud.planilla_xlsx.open('rb') as f:
+            self.assertEqual(f.read(), b'REGENERADO')
+
+    def test_con_pdf_false_no_intenta_convertir(self):
+        """La descarga de XLSX no exige LibreOffice."""
+        with patch('documentos.tasks.convertir_a_pdf_sync') as mock_convertir:
+            resultado = guardar_planilla_solicitud(
+                self.solicitud, con_pdf=False,
+            )
+
+        mock_convertir.assert_not_called()
+        self.assertTrue(resultado['success'])
+        self.assertIsNone(resultado['pdf'])
+
+    def test_sin_plantilla_devuelve_error(self):
+        formato = self.crear_formato(codigo='SGC-SIN-PLANTILLA-PERSIST')
+        formato.plantilla_xlsx = ''
+        formato.save(update_fields=['plantilla_xlsx'])
+        solicitud = self.crear_solicitud(formato, codigo='SC-PERSIST-SP')
+
+        resultado = guardar_planilla_solicitud(solicitud)
+
+        self.assertFalse(resultado['success'])
+        self.assertIn('plantilla', resultado['error'])
+        self.assertFalse(solicitud.planilla_xlsx)
+
+
+class DescargaPersistePlanillaTest(BasePlanillasTest):
+    """La vista de descarga persiste el resultado y la reutiliza después."""
+
+    #: ruta relativa a MEDIA_ROOT que devuelve el falso conversor
+    PDF_RELATIVO = 'solicitudes_cambio/planillas/2026/10/SC-persist.pdf'
+
+    def setUp(self):
+        super().setUp()
+        self.client = Client()
+        self.formato = self.crear_formato()
+        self.solicitud = self.crear_solicitud(
+            self.formato, codigo='SC-PERSIST', operacion='modificacion',
+            estado='en_revision',
+        )
+        self.client.login(username='trab01', password='testpass123')
+
+    def _falso_convertir(self, archivo_path, reparar_sincrono=False):
+        """Escribe el PDF en Media (como haría LibreOffice) y devuelve la ruta."""
+        ruta = os.path.join(self._media_dir, self.PDF_RELATIVO)
+        os.makedirs(os.path.dirname(ruta), exist_ok=True)
+        with open(ruta, 'wb') as f:
+            f.write(b'%PDF-1.4 PERSISTIDO')
+        return self.PDF_RELATIVO
+
+    def test_pdf_persiste_el_resultado_en_la_solicitud(self):
+        with patch('documentos.tasks.convertir_a_pdf_sync',
+                   side_effect=self._falso_convertir) as mock:
+            resp = self.client.get(
+                f'/documentos/solicitud/{self.solicitud.uuid}/exportar/pdf/'
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(b''.join(resp.streaming_content), b'%PDF-1.4 PERSISTIDO')
+        # La reparación debe ser en línea: el XLSX temporal se borra al servir.
+        self.assertTrue(mock.call_args.kwargs.get('reparar_sincrono'))
+        self.solicitud.refresh_from_db()
+        self.assertEqual(self.solicitud.planilla_pdf.name, self.PDF_RELATIVO)
+        self.assertTrue(self.solicitud.planilla_xlsx)
+
+    def test_pdf_se_sirve_guardado_sin_regenerar(self):
+        with patch('documentos.tasks.convertir_a_pdf_sync',
+                   side_effect=self._falso_convertir):
+            self.client.get(
+                f'/documentos/solicitud/{self.solicitud.uuid}/exportar/pdf/'
+            )
+
+        with patch('documentos.tasks.convertir_a_pdf_sync') as mock, \
+                patch('documentos.services.exportacion.exportar_pdf') as mock_export:
+            resp = self.client.get(
+                f'/documentos/solicitud/{self.solicitud.uuid}/exportar/pdf/'
+            )
+
+        mock.assert_not_called()
+        mock_export.assert_not_called()
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(b''.join(resp.streaming_content), b'%PDF-1.4 PERSISTIDO')
+
+    def test_pdf_de_borrador_se_regenera(self):
+        """Un borrador puede cambiar: no se sirve el PDF de una versión previa."""
+        self.solicitud.estado = 'borrador'
+        self.solicitud.save(update_fields=['estado'])
+        self.solicitud.planilla_xlsx.save('previo.xlsx', ContentFile(b'PREVIO'), save=True)
+
+        with patch('documentos.tasks.convertir_a_pdf_sync',
+                   side_effect=self._falso_convertir) as mock:
+            resp = self.client.get(
+                f'/documentos/solicitud/{self.solicitud.uuid}/exportar/pdf/'
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        mock.assert_called_once()
+        self.solicitud.refresh_from_db()
+        self.assertEqual(self.solicitud.planilla_pdf.name, self.PDF_RELATIVO)
+
+    def test_xlsx_de_borrador_se_regenera(self):
+        self.solicitud.estado = 'borrador'
+        self.solicitud.save(update_fields=['estado'])
+        self.solicitud.planilla_xlsx.save('previo.xlsx', ContentFile(b'PREVIO'), save=True)
+
+        with patch('documentos.services.exportacion.exportar_xlsx') as mock_export:
+            mock_export.return_value = b'RESPUESTAS ACTUALIZADAS'
+            resp = self.client.get(
+                f'/documentos/solicitud/{self.solicitud.uuid}/exportar/xlsx/'
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        mock_export.assert_called_once()
+        self.assertEqual(
+            b''.join(resp.streaming_content), b'RESPUESTAS ACTUALIZADAS',
+        )
+        self.solicitud.refresh_from_db()
+        with self.solicitud.planilla_xlsx.open('rb') as f:
+            self.assertEqual(f.read(), b'RESPUESTAS ACTUALIZADAS')
+
+    def test_xlsx_persistido_sin_borrador_no_se_regenera(self):
+        self.solicitud.planilla_xlsx.save('listo.xlsx', ContentFile(b'LISTO'), save=True)
+
+        with patch('documentos.services.exportacion.exportar_xlsx') as mock_export:
+            resp = self.client.get(
+                f'/documentos/solicitud/{self.solicitud.uuid}/exportar/xlsx/'
+            )
+
+        mock_export.assert_not_called()
+        self.assertEqual(b''.join(resp.streaming_content), b'LISTO')
 
 
 # =============================================================================

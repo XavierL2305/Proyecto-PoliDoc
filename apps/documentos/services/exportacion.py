@@ -270,6 +270,11 @@ def _patch_drawing1(drawing_data, formato, respuestas):
 def exportar_pdf(solicitud):
     """Genera PDF a partir del XLSX lleno usando LibreOffice.
 
+    El XLSX vive en un temporal que se borra al salir, así que la maquetación
+    se repara **en línea** (``reparar_sincrono=True``): una reparación en
+    Celery se perdería. No toca la base de datos (también lo usa
+    ``verificar_exportacion``).
+
     Returns:
         str: Ruta del PDF generado, o None si falla.
     """
@@ -282,7 +287,7 @@ def exportar_pdf(solicitud):
         tmp_path = tmp.name
 
     try:
-        pdf_path = convertir_a_pdf_sync(tmp_path)
+        pdf_path = convertir_a_pdf_sync(tmp_path, reparar_sincrono=True)
         return pdf_path
     finally:
         try:

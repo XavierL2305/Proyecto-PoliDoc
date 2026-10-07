@@ -1456,6 +1456,33 @@ class VistasCatalogoTest(BaseDocumentosTest):
         resp = self.client.get('/documentos/bandeja-aprobaciones/')
         self.assertEqual(resp.status_code, 200)
 
+    def test_bandeja_aprobaciones_admin(self):
+        self.client.login(username='admin01', password='testpass123')
+        resp = self.client.get('/documentos/bandeja-aprobaciones/')
+        self.assertEqual(resp.status_code, 200)
+
+    def test_bandeja_aprobaciones_trabajador_redirigido(self):
+        resp = self.client.get('/documentos/bandeja-aprobaciones/')
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn('/documentos/mis-documentos/', resp['Location'])
+
+    def test_catalogo_enlaza_bandeja_jefe(self):
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.get('/documentos/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn(b'bandeja-aprobaciones', resp.content)
+
+    def test_catalogo_sin_bandeja_para_trabajador(self):
+        resp = self.client.get('/documentos/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotIn(b'bandeja-aprobaciones', resp.content)
+
+    def test_departamento_enlaza_bandeja(self):
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.get('/documentos/departamento/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn(b'bandeja-aprobaciones', resp.content)
+
     def test_documentos_departamento_jefe(self):
         self.client.login(username='jefe_ti', password='testpass123')
         resp = self.client.get('/documentos/departamento/')

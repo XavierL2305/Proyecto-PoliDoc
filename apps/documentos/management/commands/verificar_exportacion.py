@@ -8,10 +8,27 @@ from django.conf import settings
 from django.core.management.base import BaseCommand
 
 
+def qa_pdf(ruta):
+    """QA de maquetación de un PDF recién generado (logo recortado, texto
+    tapado, título huérfano).
+
+    Devuelve ``(limpio, resumen)``. Nunca lanza: un fallo del analizador se
+    reporta como defecto, no se esconde.
+    """
+    from documentos.services.pdf_adaptativo import diagnosticar
+
+    try:
+        diagnostico = diagnosticar(ruta)
+    except Exception as exc:  # noqa: BLE001
+        return False, f'el QA no pudo analizar el PDF: {exc}'
+    return bool(diagnostico.limpio), diagnostico.resumen()
+
+
 class Command(BaseCommand):
     help = (
-        'Verifica la exportación XLSX/PDF de un formato (requiere LibreOffice). '
-        'No guarda nada en la base de datos.'
+        'Verifica la exportación XLSX/PDF de un formato (requiere LibreOffice) '
+        'incluyendo el QA de maquetación del PDF. No guarda solicitudes ni '
+        'documentos: solo registra el diagnóstico del PDF.'
     )
 
     def add_arguments(self, parser):
@@ -143,6 +160,16 @@ class Command(BaseCommand):
             if tamano <= 0:
                 raise ValueError('El PDF está vacío')
             self.stdout.write(self.style.SUCCESS(f'PDF OK ({tamano} bytes)'))
+            limpio, resumen = qa_pdf(ruta)
+            if limpio:
+                self.stdout.write(self.style.SUCCESS(
+                    'QA del PDF: maquetación limpia (sin logos recortados)'
+                ))
+            else:
+                self.stdout.write(self.style.ERROR(
+                    f'QA del PDF: DEFECTOS -> {resumen}'
+                ))
+                todo_ok = False
             if dir_salida:
                 destino = os.path.join(dir_salida, f'{formato.codigo}_prueba.pdf')
                 shutil.copy2(ruta, destino)

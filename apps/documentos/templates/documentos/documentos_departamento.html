@@ -45,6 +45,11 @@
           </p>
         </div>
         <div style="display: flex; gap: 0.5rem;">
+          {% if user.perfil.es_jefe or user.perfil.es_administrador %}
+          <a href="{% url 'documentos:bandeja_aprobaciones' %}" class="btn btn--primary btn--sm">
+            <i class="fa-solid fa-stamp"></i> Bandeja de Aprobaciones
+          </a>
+          {% endif %}
           <a href="{% url 'documentos:gestionar_asignaciones' %}" class="btn btn--ghost btn--sm">
             <i class="fa-solid fa-users"></i> Gestionar Asignaciones
           </a>

@@ -11,6 +11,10 @@ para que el worker vea la solicitud ya aprobada) e **idempotente**: repetir la
 operación no duplica archivos. Si el broker no responde, se degrada a
 generación en línea y, en último extremo, las descargas siguen exportando al
 vuelo.
+
+Las descargas de la planilla (XLSX/PDF) persisten el resultado en esos mismos
+campos con :func:`guardar_planilla_solicitud`, que también cubre las
+operaciones sin planilla automática (`modificacion`).
 """
 
 import logging
@@ -77,6 +81,46 @@ def generar_planilla_solicitud(solicitud, force=False):
         'success': True,
         'xlsx': solicitud.planilla_xlsx.name,
         'pdf': pdf,
+    }
+
+
+def guardar_planilla_solicitud(solicitud, forzar=False, con_pdf=True):
+    """Genera y **persiste** la planilla de una solicitud para su descarga.
+
+    A diferencia de :func:`generar_planilla_solicitud` no restringe la
+    operación: sirve también para `modificacion` (el botón XLSX/PDF de la
+    planilla exportaba siempre al vuelo, sin cachear nada). Idempotente salvo
+    ``forzar=True``. Nunca lanza.
+
+    Args:
+        solicitud: instancia de ``SolicitudCambio``.
+        forzar: regenera aunque ya existan archivos (borrador: sus respuestas
+            pueden haber cambiado desde la última descarga).
+        con_pdf: solo el XLSX (lo usa la descarga de XLSX para no exigir
+            LibreOffice cuando el usuario no pide el PDF).
+
+    Returns:
+        ``{'success': bool, 'xlsx': str|None, 'pdf': str|None, 'error': str}``
+        Donde ``success`` significa que el XLSX está persistido.
+    """
+    if not solicitud.formato or not solicitud.formato.plantilla_xlsx:
+        return {'success': False, 'xlsx': None, 'pdf': None,
+                'error': 'El formato no tiene plantilla XLSX'}
+
+    if forzar:
+        _limpiar_planillas(solicitud)
+
+    if not solicitud.planilla_xlsx and not _guardar_xlsx(solicitud):
+        return {'success': False, 'xlsx': None, 'pdf': None,
+                'error': 'No se pudo generar el XLSX de la planilla'}
+
+    if con_pdf and not solicitud.planilla_pdf:
+        _guardar_pdf(solicitud)
+
+    return {
+        'success': True,
+        'xlsx': solicitud.planilla_xlsx.name or None,
+        'pdf': solicitud.planilla_pdf.name or None,
     }
 
 
@@ -157,7 +201,9 @@ def _guardar_pdf(solicitud):
     if not solicitud.planilla_xlsx:
         return None
     try:
-        ruta = convertir_a_pdf_sync(solicitud.planilla_xlsx.path)
+        ruta = convertir_a_pdf_sync(
+            solicitud.planilla_xlsx.path, reparar_sincrono=True,
+        )
     except Exception as exc:
         logger.error('Error convirtiendo planilla de %s: %s', solicitud_codigo(solicitud), exc)
         return None

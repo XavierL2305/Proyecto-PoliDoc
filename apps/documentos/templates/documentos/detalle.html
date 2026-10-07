@@ -68,9 +68,15 @@
             </button>
           </form>
             {% else %}
+              {% if planilla_borrador %}
+          <a href="{% url 'documentos:detalle_planilla' planilla_uuid=planilla_borrador.uuid %}" class="btn btn--primary btn--sm">
+            <i class="fa-solid fa-file-signature"></i> Planilla de Cambios (borrador)
+          </a>
+              {% else %}
           <a href="{% url 'documentos:editar' tipo=tipo documento_id=documento.uuid %}" class="btn btn--primary btn--sm">
             <i class="fa-solid fa-file-signature"></i> Planilla de Cambios
           </a>
+              {% endif %}
             {% endif %}
           {% endif %}
           {% if puede_eliminar %}

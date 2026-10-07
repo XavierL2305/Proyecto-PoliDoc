@@ -132,6 +132,32 @@ def programar_reparacion(archivo, pdf):
         return reparar(archivo, pdf)
 
 
+def reparar_en_linea(archivo, pdf):
+    """QA del PDF y, si hay defectos, reparación **síncrona**.
+
+    Igual que :func:`verificar`, pero la reparación ocurre aquí mismo en vez de
+    encolarse: es el camino de la exportación al vuelo (``exportar_pdf``), cuyo
+    XLSX temporal se borra en cuanto se sirve la respuesta, de modo que una
+    reparación asíncrona se perdería siempre.
+
+    Devuelve el :class:`Diagnostico` o ``None`` si el QA está desactivado.
+    Nunca lanza.
+    """
+    if not getattr(settings, 'PDF_QA_ADAPTATIVO', True):
+        return None
+    if not pdf or not os.path.exists(pdf):
+        return None
+    diagnostico = diagnosticar(pdf)
+    if diagnostico.limpio:
+        registrar_diagnostico(archivo, pdf, diagnostico, 'ok')
+        return diagnostico
+    logger.warning(
+        'PDF con defectos de maquetación en %s; reparando en línea: %s',
+        archivo, diagnostico.resumen(),
+    )
+    return reparar(archivo, pdf, diagnostico)
+
+
 def verificar(archivo, pdf):
     """QA del PDF recién generado; programa la reparación si hay defectos.
 
