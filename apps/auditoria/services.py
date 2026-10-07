@@ -3,6 +3,8 @@ import hashlib
 import hmac
 import json
 import os
+import pickle
+import time
 from datetime import datetime, timedelta
 from uuid import uuid4
 from pymongo import MongoClient, ASCENDING, DESCENDING, ReturnDocument
@@ -65,6 +67,131 @@ def get_mongo_client():
         db_name = getattr(settings, 'MONGO_SETTINGS', {}).get('DB_NAME', 'polidoc_audit_logs')
         _db = _client[db_name]
     return _db
+
+
+# =============================================================================
+# CIRCUIT BREAKER + BUFFER DE AUDITORÍA
+#
+# Si MongoDB no responde, el timeout de selección del servidor
+# (``serverSelectionTimeoutMS``) penaliza CADA evento (guardado, señal, etc.)
+# con ~2 s. Para que eso no bloquee la request:
+# - al primer fallo se abre un "circuito" (flag en caché compartida + variable
+#   de proceso) durante ``AUDIT_MONGO_DOWN_SEGUNDOS``;
+# - mientras esté abierto, y para eventos NO críticos (fail_closed=False), el
+#   registro se serializa a un buffer local en disco y se devuelve sin tocar la
+#   red. Una tarea periódica lo reenvía cuando Mongo vuelve.
+# - Las acciones críticas (fail_closed=True: visor/descarga) NO se cortocircuitan:
+#   siguen intentando Mongo para preservar la garantía ISO de trazabilidad.
+# =============================================================================
+
+_mongo_down_until = 0.0
+_MONGO_DOWN_CACHE_KEY = 'audit:mongo_down'
+
+
+def _audit_mongo_down_segundos():
+    try:
+        return int(getattr(settings, 'AUDIT_MONGO_DOWN_SEGUNDOS', 60))
+    except (TypeError, ValueError):
+        return 60
+
+
+def _mongo_circuit_open():
+    global _mongo_down_until
+    ahora = time.monotonic()
+    if ahora < _mongo_down_until:
+        return True
+    try:
+        from django.core.cache import cache
+        if cache.get(_MONGO_DOWN_CACHE_KEY):
+            _mongo_down_until = ahora + _audit_mongo_down_segundos()
+            return True
+    except Exception:  # noqa: BLE001 - caché no disponible no debe romper la auditoría
+        pass
+    return False
+
+
+def _abrir_circuito_mongo():
+    global _mongo_down_until
+    _mongo_down_until = time.monotonic() + _audit_mongo_down_segundos()
+    try:
+        from django.core.cache import cache
+        cache.set(_MONGO_DOWN_CACHE_KEY, True, _audit_mongo_down_segundos())
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _cerrar_circuito_mongo():
+    global _mongo_down_until
+    _mongo_down_until = 0.0
+    try:
+        from django.core.cache import cache
+        cache.delete(_MONGO_DOWN_CACHE_KEY)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _audit_buffer_dir():
+    base = getattr(settings, 'AUDIT_BUFFER_DIR', None)
+    if not base:
+        base = os.path.join(str(settings.BASE_DIR), 'data', 'audit_buffer')
+    os.makedirs(base, exist_ok=True)
+    return base
+
+
+def _encolar_log_buffer(payload):
+    """Serializa el payload de un log a disco para reenviarlo luego."""
+    try:
+        nombre = f'log_{int(time.time() * 1000)}_{uuid4().hex}.pkl'
+        ruta = os.path.join(_audit_buffer_dir(), nombre)
+        with open(ruta, 'wb') as fh:
+            pickle.dump(payload, fh)
+        logger.warning("Auditoría bufferizada (Mongo no disponible): %s", nombre)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("No se pudo bufferizar el log de auditoría: %s", exc)
+
+
+def reprocesar_buffer(limite=200):
+    """Reenvía a Mongo los logs bufferizados. Devuelve un resumen.
+
+    Se ejecuta desde Celery Beat. Si Mongo sigue caído, se detiene tras el
+    primer fallo y deja los ficheros para el siguiente intento.
+    """
+    from django.contrib.auth.models import User
+
+    carpeta = _audit_buffer_dir()
+    try:
+        nombres = sorted(f for f in os.listdir(carpeta) if f.endswith('.pkl'))[:limite]
+    except OSError:
+        return {'enviados': 0, 'fallidos': 0, 'pendientes': 0}
+
+    _cerrar_circuito_mongo()  # forzar un intento real contra Mongo
+    enviados = fallidos = 0
+    for nombre in nombres:
+        ruta = os.path.join(carpeta, nombre)
+        try:
+            with open(ruta, 'rb') as fh:
+                payload = pickle.load(fh)
+        except Exception as exc:  # noqa: BLE001 - fichero corrupto: descartar
+            logger.error("Buffer de auditoría corrupto (%s): %s", nombre, exc)
+            os.remove(ruta)
+            fallidos += 1
+            continue
+
+        usuario_id = payload.pop('usuario_id', None)
+        usuario = User.objects.filter(pk=usuario_id).first() if usuario_id else None
+        try:
+            log_id = registrar_log_iso(usuario=usuario, _no_buffer=True, **payload)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Replay de auditoría falló (%s): %s", nombre, exc)
+            fallidos += 1
+            break
+        if log_id:
+            os.remove(ruta)
+            enviados += 1
+        else:
+            fallidos += 1
+            break
+    return {'enviados': enviados, 'fallidos': fallidos, 'pendientes': len(nombres) - enviados}
 
 
 # =============================================================================
@@ -200,7 +327,8 @@ def registrar_log_iso(usuario, accion_tipo, accion_categoria,
                       estado_posterior=None, detalles=None,
                       resultado_exitoso=True, resultado_mensaje='',
                       correlation_id=None, ip_address=None,
-                      user_agent=None, sesion_id=None, fail_closed=False):
+                      user_agent=None, sesion_id=None, fail_closed=False,
+                      _no_buffer=False):
     """
     Registra un log de auditoría con estructura completa ISO 15489/27001.
 
@@ -241,6 +369,33 @@ def registrar_log_iso(usuario, accion_tipo, accion_categoria,
     sesion_id : str
         ID de sesión del usuario
     """
+    # Payload serializable para el buffer (se reenvía tal cual al recuperar
+    # Mongo). `usuario` no se picklea: se guarda solo su id.
+    payload = {
+        'accion_tipo': accion_tipo,
+        'accion_categoria': accion_categoria,
+        'recurso_tipo': recurso_tipo,
+        'recurso_id': recurso_id,
+        'recurso_codigo': recurso_codigo,
+        'recurso_nombre': recurso_nombre,
+        'recurso_version': recurso_version,
+        'estado_anterior': estado_anterior,
+        'estado_posterior': estado_posterior,
+        'detalles': detalles,
+        'resultado_exitoso': resultado_exitoso,
+        'resultado_mensaje': resultado_mensaje,
+        'correlation_id': correlation_id,
+        'ip_address': ip_address,
+        'user_agent': user_agent,
+        'sesion_id': sesion_id,
+        'usuario_id': getattr(usuario, 'id', None),
+    }
+
+    # Circuito abierto y evento no crítico: bufferizar sin tocar la red.
+    if not _no_buffer and not fail_closed and _mongo_circuit_open():
+        _encolar_log_buffer(payload)
+        return None
+
     try:
         db = get_mongo_client()
         # BSON almacena datetime con precisión de MILISEGUNDOS. Truncamos 'now'
@@ -322,6 +477,7 @@ def registrar_log_iso(usuario, accion_tipo, accion_categoria,
 
         # Insertar en MongoDB
         db.audit_logs.insert_one(log_entry)
+        _cerrar_circuito_mongo()
         logger.debug(f"Audit log ISO registrado: {log_id} - {accion_tipo} por {usuario}")
         return log_id
 
@@ -332,6 +488,10 @@ def registrar_log_iso(usuario, accion_tipo, accion_categoria,
             f"usuario={getattr(usuario, 'username', usuario)} fail_closed={fail_closed}: {e}",
             exc_info=True,
         )
+        _abrir_circuito_mongo()
+        if not _no_buffer:
+            # No perder el registro: se guarda en disco para reenviarlo luego.
+            _encolar_log_buffer(payload)
         if fail_closed:
             # Acción sensible (descarga/visor): NO continuar sin trazabilidad.
             raise

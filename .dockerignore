@@ -1,0 +1,43 @@
+# El Dockerfile hace COPY . /app/ — excluir secretos, datos y artefactos
+# para no hornearlos en la imagen.
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+
+# Bases de datos
+*.sqlite3
+*.sqlite3-*
+*.db
+db_data/
+data/
+
+# Media / subidas (documentos y fotos sensibles)
+polidoc/media/
+fotos/
+
+# Estáticos recopilados / bundles de compressor
+staticfiles/
+polidoc/staticfiles/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+venv/
+.venv/
+env/
+ENV/
+
+# Celery / logs / IDE
+celerybeat-schedule
+celerybeat.pid
+*.log
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

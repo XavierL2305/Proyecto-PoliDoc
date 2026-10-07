@@ -1,12 +1,16 @@
 import logging
-from django.db.models.signals import post_save, pre_save
+from django.db.models.signals import post_save, post_delete, pre_save
 from django.dispatch import receiver
 
 from .models import (
     Documento, SolicitudDescarga, AprobacionDescarga,
     AsignacionDocumento, SolicitudAccesoDocumento,
     PlanillaCambios, AprobacionPlanilla,
-    Departamento, DistribucionDocumento
+    Departamento, DistribucionDocumento,
+    TipoDocumento, Periodo,
+)
+from .cache_utils import (
+    invalidar_tipos, invalidar_periodos, invalidar_departamentos,
 )
 from auditoria.services import (
     registrar_creacion_documento,
@@ -20,36 +24,33 @@ from auditoria.services import (
 
 logger = logging.getLogger(__name__)
 
-_estado_anterior = {}
-
-
 # =============================================================================
 # SIGNALS PARA CREACIÓN/EDICIÓN DE DOCUMENTOS
 # =============================================================================
 
-def track_estado_anterior(sender, instance, created, **kwargs):
-    if not created and instance.pk:
-        try:
-            old_instance = sender.objects.get(pk=instance.pk)
-            _estado_anterior[instance.id] = old_instance.estado
-        except sender.DoesNotExist:
-            pass
-
-
-_clasificacion_anterior = {}
-
-
 @receiver(pre_save, sender=Documento)
-def capturar_clasificacion_anterior(sender, instance, **kwargs):
-    """Guarda la clasificación previa para poder auditarla en el post_save."""
+def capturar_estado_previo(sender, instance, **kwargs):
+    """Guarda estado y clasificación previos en la propia instancia para
+    auditarlos en el post_save.
+
+    Antes había dos handlers (un pre_save para la clasificación y un post_save
+    para el estado) que hacían DOS SELECT por cada guardado. Ahora un único
+    SELECT alimenta ambos valores, y ya no se usan diccionarios globales (que
+    retenían referencias a instancias entre peticiones).
+    """
     if not instance.pk:
         return
     try:
-        _clasificacion_anterior[instance.pk] = (
-            sender.objects.get(pk=instance.pk).clasificacion
+        previo = (
+            sender.objects.filter(pk=instance.pk)
+            .values('estado', 'clasificacion')
+            .first()
         )
-    except sender.DoesNotExist:
-        pass
+    except Exception:  # noqa: BLE001 - nunca romper el guardado por auditar
+        previo = None
+    if previo:
+        instance._estado_anterior = previo['estado']
+        instance._clasificacion_anterior = previo['clasificacion']
 
 
 def documento_creado_o_editado(sender, instance, created, **kwargs):
@@ -65,8 +66,8 @@ def documento_creado_o_editado(sender, instance, created, **kwargs):
             )
             logger.debug(f"Signal creación: {instance.tipo_id} #{instance.id}")
         else:
-            estado_anterior = _estado_anterior.pop(instance.id, None)
-            clasificacion_anterior = _clasificacion_anterior.pop(instance.pk, None)
+            estado_anterior = getattr(instance, '_estado_anterior', None)
+            clasificacion_anterior = getattr(instance, '_clasificacion_anterior', None)
             cambios = {'estado': instance.estado}
             valores_anteriores = {}
             if (clasificacion_anterior is not None
@@ -91,7 +92,6 @@ def documento_creado_o_editado(sender, instance, created, **kwargs):
 
 
 post_save.connect(documento_creado_o_editado, sender=Documento)
-post_save.connect(track_estado_anterior, sender=Documento)
 
 
 # =============================================================================
@@ -355,6 +355,39 @@ def resolver_referencias(documento):
 
 @receiver(post_save, sender=Documento)
 def documento_referencia_resuelta(sender, instance, created, **kwargs):
-    """Resuelve referencias pendientes cuando un documento pasa a activo."""
-    if instance.estado == 'activo':
-        resolver_referencias(instance)
+    """Resuelve referencias pendientes cuando un documento PASA a activo.
+
+    Se ejecuta solo en la transición (creación ya activo, o cambio a activo),
+    no en cada guardado de un documento que ya estaba activo: antes cada save
+    lanzaba una consulta a ReferenciaDocumento innecesaria.
+    """
+    if instance.estado != 'activo':
+        return
+    if not created and getattr(instance, '_estado_anterior', None) == 'activo':
+        return
+    resolver_referencias(instance)
+
+
+# =============================================================================
+# INVALIDACIÓN DE CACHÉ DE CATÁLOGOS
+# =============================================================================
+
+def _invalidar_cache_tipos(sender, instance, **kwargs):
+    invalidar_tipos()
+
+
+def _invalidar_cache_periodos(sender, instance, **kwargs):
+    invalidar_periodos()
+
+
+def _invalidar_cache_departamentos(sender, instance, **kwargs):
+    invalidar_departamentos()
+
+
+for _sender, _handler in (
+    (TipoDocumento, _invalidar_cache_tipos),
+    (Periodo, _invalidar_cache_periodos),
+    (Departamento, _invalidar_cache_departamentos),
+):
+    post_save.connect(_handler, sender=_sender)
+    post_delete.connect(_handler, sender=_sender)

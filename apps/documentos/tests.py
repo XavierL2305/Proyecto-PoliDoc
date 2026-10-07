@@ -2865,6 +2865,7 @@ class CeleryBeatScheduleTest(TestCase):
         from django.conf import settings
         from polidoc.celery import app as celery_app
         import documentos.tasks  # noqa: F401  (asegura registro de tareas)
+        import auditoria.tasks  # noqa: F401  (buffer de auditoría)
 
         self.assertTrue(settings.CELERY_BEAT_SCHEDULE)
         for cfg in settings.CELERY_BEAT_SCHEDULE.values():
@@ -3975,10 +3976,10 @@ class EstadoConversionTest(BaseDocumentosTest):
 class LoaderDetalleTest(BaseDocumentosTest):
     """El detalle renderiza el componente de progreso donde corresponde."""
 
-    @patch('documentos.services.conversion_pdf.convertir_office_a_pdf',
-           return_value=None)
-    def test_detalle_convierte_en_linea_sin_loader(self, mock_conv):
-        """La conversión a PDF es SÍNCRONA: no hay loader ni polling."""
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=False)
+    @patch('documentos.tasks.convertir_documento_a_pdf.delay')
+    def test_detalle_encola_conversion_con_loader(self, mock_delay):
+        """La conversión es ASÍNCRONA: se encola y el detalle muestra el loader."""
         doc = Documento.objects.create(
             tipo=self.tipo_formulario, nombre='Doc DOCX', codigo='TI-FOR-900',
             estado='activo', propietario=self.user_trabajador,
@@ -3988,11 +3989,8 @@ class LoaderDetalleTest(BaseDocumentosTest):
         self.client.login(username='trab01', password='testpass123')
         resp = self.client.get(f'/documentos/{doc.tipo_id}/{doc.uuid}/')
         self.assertEqual(resp.status_code, 200)
-        mock_conv.assert_called_once()
-        self.assertNotContains(resp, 'id="conv-progress"')
-        # Sin PDF y sin conversión, el detalle lo explica en lugar de romperse
-        self.assertContains(resp, 'No se pudo generar la vista previa en PDF')
-        self.assertContains(resp, 'Vista previa no disponible')
+        mock_delay.assert_called_once_with(str(doc.uuid))
+        self.assertContains(resp, 'id="conv-progress"')
 
     @override_settings(IA_RESUMEN_HABILITADO=True, GEMINI_API_KEY='k')
     def test_detalle_muestra_loader_ia(self):

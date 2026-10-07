@@ -27,7 +27,10 @@
   <!-- Font Awesome 6 -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 
-  <!-- CSS Propio -->
+  <!-- CSS Propio — agrupado y minificado por django-compressor. En DEBUG se
+       sirven los mismos archivos sin tocar; en producción, un único bundle. -->
+  {% load compress %}
+  {% compress css %}
   <link rel="stylesheet" href="{% static 'css/style.css' %}">
   <link rel="stylesheet" href="{% static 'css/utilities/responsive.css' %}">
   <link rel="stylesheet" href="{% static 'css/utilities/display.css' %}">
@@ -51,24 +54,20 @@
   <link rel="stylesheet" href="{% static 'css/components/accordion.css' %}">
   <link rel="stylesheet" href="{% static 'css/components/formato-dinamico.css' %}">
   <link rel="stylesheet" href="{% static 'css/components/progress.css' %}">
-  <link rel="stylesheet" href="{% static 'css/components/button-animations.css' %}?v={{ static_versions.button_css }}">
+  <link rel="stylesheet" href="{% static 'css/components/button-animations.css' %}">
+  {% endcompress %}
 
   {% block extra_css %}{% endblock %}
 </head>
   <body>
     {% block content %}{% endblock %}
 
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
-    
-    <!-- Theme JS -->
-    <script src="{% static 'js/theme.js' %}"></script>
-    
-    <!-- Notifications JS -->
-    <script src="{% static 'js/notifications.js' %}"></script>
-    <script src="{% static 'js/progress-loader.js' %}"></script>
-    <script src="{% static 'js/button-animations.js' %}?v={{ static_versions.button_js }}"></script>
-    
+    <!-- Scripts propios (diferidos: no bloquean el render) -->
+    <script src="{% static 'js/theme.js' %}" defer></script>
+    <script src="{% static 'js/notifications.js' %}" defer></script>
+    <script src="{% static 'js/progress-loader.js' %}" defer></script>
+    <script src="{% static 'js/button-animations.js' %}" defer></script>
+
     {% block extra_js %}{% endblock %}
   </body>
 </html>

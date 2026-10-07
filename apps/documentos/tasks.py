@@ -72,6 +72,50 @@ def convertir_planilla_a_pdf(self, planilla_id):
         self.retry(exc=exc, countdown=60)
 
 
+def convertir_formato_a_pdf_sync(formato):
+    """Genera y persiste el PDF de preview de un ``Formato`` (síncrono).
+
+    Idempotente: si ya hay ``plantilla_pdf`` o no hay plantilla XLSX, no hace
+    nada. Devuelve la ruta persistida o None. Nunca lanza.
+    """
+    import os
+    from django.conf import settings
+    from .models import Formato
+
+    if not formato.plantilla_xlsx or formato.plantilla_pdf:
+        return None
+    try:
+        pdf_path = convertir_a_pdf_sync(formato.plantilla_xlsx.path)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Error generando PDF de formato %s: %s", formato.codigo, exc)
+        return None
+    if not pdf_path:
+        return None
+    media_root = str(os.path.dirname(formato.plantilla_xlsx.path))
+    rel = os.path.relpath(pdf_path, media_root) if pdf_path.startswith(media_root) else pdf_path
+    if not os.path.isabs(pdf_path) and not os.path.exists(pdf_path):
+        pdf_path = os.path.join(settings.MEDIA_ROOT, pdf_path)
+    Formato.objects.filter(pk=formato.pk).update(plantilla_pdf=rel)
+    return rel
+
+
+@shared_task(bind=True, max_retries=3)
+def convertir_formato_a_pdf(self, formato_id):
+    """Genera el PDF de preview de un Formato (encolado desde ``Formato.save``)."""
+    from .models import Formato
+
+    try:
+        formato = Formato.objects.get(pk=formato_id)
+    except Formato.DoesNotExist:
+        return {'success': False, 'error': 'Formato no encontrado'}
+
+    rel = convertir_formato_a_pdf_sync(formato)
+    if not rel:
+        return {'success': False, 'error': 'No se generó el PDF'}
+    logger.info("PDF de formato generado: %s", formato.codigo)
+    return {'success': True, 'pdf_path': rel}
+
+
 @shared_task(bind=True, max_retries=3)
 def generar_planilla_solicitud_task(self, solicitud_uuid):
     """
@@ -171,49 +215,52 @@ def verificar_vencimientos(self):
     envía avisos de vencimiento próximo (7 días).
     """
     from datetime import date, timedelta
-    from .models import Documento
+    from .models import Documento, _sumar_meses
     from autenticacion.models import Notificacion
 
     hoy = date.today()
     vencidos = 0
     avisos = 0
+    notifs = []
 
     # 1. Documentos activos con vencimiento vencido → obsoleto
-    docs_vencidos = Documento.objects.filter(
-        fecha_vencimiento__lte=hoy,
-        estado='activo',
-        fecha_vencimiento__isnull=False,
+    docs_vencidos = list(
+        Documento.objects.filter(
+            fecha_vencimiento__lte=hoy,
+            estado='activo',
+            fecha_vencimiento__isnull=False,
+        ).select_related('propietario', 'departamento', 'departamento__jefe', 'periodo_retencion')
     )
     for doc in docs_vencidos:
-        doc.estado = 'obsoleto'
-        update_fields = ['estado']
+        # update() no dispara los post_save: evita la auditoría Mongo por
+        # documento (que se registra abajo de forma explícita) y el resto de
+        # señales. Con muchos vencidos esto quita cientos de consultas/red.
+        campos = {'estado': 'obsoleto'}
         if doc.periodo_retencion:
-            from .models import _sumar_meses
-            doc.fecha_retencion = hoy
+            campos['fecha_retencion'] = hoy
             # _sumar_meses ajusta el día al último válido del mes (ej. 31-ene +
             # 1 mes = 28/29-feb), evitando la aritmética manual de meses/años
             # que fallaba en esos bordes.
-            doc.fecha_destruccion = _sumar_meses(hoy, doc.periodo_retencion.meses)
-            update_fields.extend(['fecha_retencion', 'fecha_destruccion'])
-        doc.save(update_fields=update_fields)
+            campos['fecha_destruccion'] = _sumar_meses(hoy, doc.periodo_retencion.meses)
+        Documento.objects.filter(pk=doc.pk).update(**campos)
         vencidos += 1
         # Notificar propietario
-        Notificacion.objects.create(
+        notifs.append(Notificacion(
             usuario=doc.propietario,
             titulo='Documento vencido',
             mensaje=f'El documento "{doc.nombre}" ({doc.codigo}) ha vencido y fue marcado como obsoleto.',
             tipo='documento_vencido',
             url_accion=f'/documentos/{doc.tipo_id}/{doc.uuid}/',
-        )
+        ))
         # Notificar jefe del depto
-        if doc.departamento and doc.departamento.jefe:
-            Notificacion.objects.create(
+        if doc.departamento and doc.departamento.jefe_id:
+            notifs.append(Notificacion(
                 usuario=doc.departamento.jefe,
                 titulo='Documento del departamento vencido',
                 mensaje=f'El documento "{doc.nombre}" ({doc.codigo}) de {doc.departamento.nombre} ha vencido.',
                 tipo='documento_vencido',
                 url_accion=f'/documentos/{doc.tipo_id}/{doc.uuid}/',
-            )
+            ))
         # Auditoría
         try:
             from auditoria.services import registrar_log_iso
@@ -238,32 +285,39 @@ def verificar_vencimientos(self):
 
     # 2. Documentos con vencimiento en ≤7 días → notificar aviso
     fecha_limite = hoy + timedelta(days=7)
-    docs_por_vencer = Documento.objects.filter(
-        fecha_vencimiento__gt=hoy,
-        fecha_vencimiento__lte=fecha_limite,
-        estado='activo',
-        aviso_vencimiento_enviado=False,
-        fecha_vencimiento__isnull=False,
+    docs_por_vencer = list(
+        Documento.objects.filter(
+            fecha_vencimiento__gt=hoy,
+            fecha_vencimiento__lte=fecha_limite,
+            estado='activo',
+            aviso_vencimiento_enviado=False,
+            fecha_vencimiento__isnull=False,
+        ).select_related('propietario', 'departamento', 'departamento__jefe')
     )
+    ids_por_vencer = []
     for doc in docs_por_vencer:
-        Notificacion.objects.create(
+        notifs.append(Notificacion(
             usuario=doc.propietario,
             titulo='Documento próximo a vencer',
             mensaje=f'El documento "{doc.nombre}" ({doc.codigo}) vence el {doc.fecha_vencimiento}.',
             tipo='aviso_vencimiento',
             url_accion=f'/documentos/{doc.tipo_id}/{doc.uuid}/',
-        )
-        if doc.departamento and doc.departamento.jefe:
-            Notificacion.objects.create(
+        ))
+        if doc.departamento and doc.departamento.jefe_id:
+            notifs.append(Notificacion(
                 usuario=doc.departamento.jefe,
                 titulo='Documento del departamento próximo a vencer',
                 mensaje=f'El documento "{doc.nombre}" ({doc.codigo}) de {doc.departamento.nombre} vence el {doc.fecha_vencimiento}.',
                 tipo='aviso_vencimiento',
                 url_accion=f'/documentos/{doc.tipo_id}/{doc.uuid}/',
-            )
-        doc.aviso_vencimiento_enviado = True
-        doc.save(update_fields=['aviso_vencimiento_enviado'])
+            ))
+        ids_por_vencer.append(doc.pk)
         avisos += 1
+
+    if notifs:
+        Notificacion.objects.bulk_create(notifs)
+    if ids_por_vencer:
+        Documento.objects.filter(pk__in=ids_por_vencer).update(aviso_vencimiento_enviado=True)
 
     logger.info(f"Verificación vencimientos: {vencidos} obsoletos, {avisos} avisos enviados")
     return {'vencidos': vencidos, 'avisos': avisos}

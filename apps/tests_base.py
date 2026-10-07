@@ -171,6 +171,15 @@ class BaseDocumentosTest(TestCase):
         ]
 
     def setUp(self):
+        # La caché (LocMem en tests) es global al proceso y no se limpia sola
+        # entre tests: sin esto, los catálogos cacheados (tipos/periodos/
+        # departamentos) filtrarían instancias de un test a otro.
+        from django.core.cache import cache
+        cache.clear()
+        # Cerrar el circuit breaker de auditoría: estado de módulo/caché que de
+        # otro modo filtraría entre tests tras uno que simula Mongo caído.
+        from auditoria.services import _cerrar_circuito_mongo
+        _cerrar_circuito_mongo()
         self._mongo_patch = patch(MONGO_PATCH_TARGET, return_value=MagicMock())
         self._mongo_patch.start()
         self._refresh_fixtures()

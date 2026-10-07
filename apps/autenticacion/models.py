@@ -190,6 +190,9 @@ class Notificacion(models.Model):
         verbose_name = 'Notificación'
         verbose_name_plural = 'Notificaciones'
         ordering = ['-fecha_creacion']
+        indexes = [
+            models.Index(fields=['usuario', 'leida'], name='notif_user_leida_idx'),
+        ]
 
     def __str__(self):
         return f"{self.titulo} - {self.usuario.username}"

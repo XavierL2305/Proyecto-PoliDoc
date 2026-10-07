@@ -12,6 +12,7 @@ from .permissions import (
     puede_ver_documento, q_documentos_visibles
 )
 from .services.planillas import aplicar_planilla_al_documento
+from .cache_utils import tipos_activos
 from auditoria.services import registrar_aprobacion_planilla, registrar_rechazo_planilla
 
 
@@ -218,7 +219,7 @@ def opciones_filtros(request):
     return JsonResponse({
         'tipos': [
             {'valor': t.key, 'texto': t.nombre}
-            for t in TipoDocumento.objects.filter(activo=True).exclude(key='').order_by('codigo')
+            for t in tipos_activos()
         ],
         'estados': [
             {'valor': 'borrador', 'texto': 'Borrador'},
@@ -232,31 +233,32 @@ def opciones_filtros(request):
 def contadores_documentos(request):
     user = request.user
 
-    # IDs de documentos propios
-    docs_propios = Documento.objects.filter(propietario=user)
+    # Documentos propios + asignados (como coordinador). `distinct=True` en el
+    # conteo evita duplicar filas por el JOIN con asignaciones (que puede tener
+    # más de una fila activa para el mismo documento). Dos aggregates en total,
+    # en vez de 1 consulta por tipo.
+    todos_docs = Documento.objects.filter(
+        Q(propietario=user)
+        | Q(asignaciones__coordinador=user, asignaciones__activa=True)
+    )
 
-    # IDs de documentos asignados (como coordinador)
-    docs_asignados = Documento.objects.filter(
-        asignaciones__coordinador=user,
-        asignaciones__activa=True
-    ).exclude(propietario=user)
+    # Contar por tipo (incluyendo tipos activos con 0 documentos)
+    tipos_keys = [t.key for t in tipos_activos()]
+    conteo_tipos = {
+        item['tipo']: item['total']
+        for item in todos_docs.values('tipo').annotate(total=Count('id', distinct=True))
+    }
+    por_tipo = {key: conteo_tipos.get(key, 0) for key in tipos_keys}
 
-    # Unificar ambas querysets
-    todos_docs = docs_propios | docs_asignados
-
-    # Contar por tipo
-    por_tipo = {}
-    for tipo in TipoDocumento.objects.filter(activo=True).exclude(key=''):
-        por_tipo[tipo.key] = todos_docs.filter(tipo=tipo.key).count()
-
-    # Contar por estado usando aggregation
-    conteo_estados = todos_docs.values('estado').annotate(total=Count('id'))
-    por_estado = {item['estado']: item['total'] for item in conteo_estados}
-
-    # Asegurar que todos los estados estén presentes
-    for estado_key in ['borrador', 'en_revision', 'activo', 'obsoleto']:
-        if estado_key not in por_estado:
-            por_estado[estado_key] = 0
+    # Contar por estado usando un único aggregate
+    conteo_estados = {
+        item['estado']: item['total']
+        for item in todos_docs.values('estado').annotate(total=Count('id', distinct=True))
+    }
+    por_estado = {
+        key: conteo_estados.get(key, 0)
+        for key in ['borrador', 'en_revision', 'activo', 'obsoleto']
+    }
 
     return JsonResponse({'por_tipo': por_tipo, 'por_estado': por_estado})
 
@@ -779,6 +781,6 @@ def tipos_documento_disponibles(request):
             'key': t.key, 'codigo': t.codigo, 'nombre': t.nombre,
             'implementado': True, 'url': f'/documentos/nuevo/{t.key}/',
         }
-        for t in TipoDocumento.objects.filter(activo=True).exclude(key='').order_by('codigo')
+        for t in tipos_activos()
     ]
     return JsonResponse({'tipos': tipos})

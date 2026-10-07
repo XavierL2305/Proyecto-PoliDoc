@@ -113,6 +113,34 @@ def convertir_documento_sync(documento):
         return False
 
 
+def encolar_conversion(documento):
+    """Encola la conversión a PDF del documento.
+
+    Devuelve True solo si el fallback síncrono (broker/Celery no disponible)
+    generó ya el PDF; en el caso normal (encolado correcto) devuelve False y la
+    plantilla hace polling de `estado_conversion` mientras se genera.
+    """
+    from ..tasks import convertir_documento_a_pdf
+
+    try:
+        convertir_documento_a_pdf.delay(str(documento.uuid))
+    except Exception as exc:  # noqa: BLE001 - broker caído: degradar a síncrono
+        logger.warning(
+            "No se pudo encolar la conversión de %s (%s); se intenta en línea: %s",
+            documento.codigo, documento.uuid, exc,
+        )
+        return convertir_documento_sync(documento)
+
+    # Con `CELERY_TASK_ALWAYS_EAGER` (tests) la tarea ya terminó; refrescar el
+    # estado evita mostrar la barra de progreso cuando el PDF ya está listo.
+    documento.refresh_from_db(fields=['archivo_pdf'])
+    listo = pdf_disponible(documento)
+    if not listo and getattr(settings, 'CELERY_TASK_ALWAYS_EAGER', False):
+        # La tarea eager no generó el PDF: reproducir el modo síncrono previo.
+        return convertir_documento_sync(documento)
+    return listo
+
+
 def asegurar_pdf(documento):
     """Garantiza que `documento.archivo_pdf` apunte a un PDF real.
 

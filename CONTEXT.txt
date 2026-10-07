@@ -2110,3 +2110,149 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
       destruirse: conviene un tipo/período "permanente" (sin destrucción).
     - PENDIENTE OPCIONAL: hacer la retención configurable por TIPO de
       documento (hoy es por documento, default 10 años).
+
+===================================================================
+26. OPTIMIZACIÓN DE CARGA Y RENDIMIENTO (Bloques 1-4)
+===================================================================
+
+Motivación: reducir el peso de la página y quitar de la request las
+operaciones bloqueantes (LibreOffice, Mongo caído) y las consultas N+1.
+Datos reales en el momento del cambio: 2 documentos, 16 tipos, 38 deptos →
+el cuello NO era el volumen de datos.
+
+-------------------------------------------------------------------
+26.1 FRONTEND / ESTÁTICOS
+-------------------------------------------------------------------
+
+  - Se ELIMINÓ Lucide (`unpkg.com/lucide@latest`): se cargaba en
+    `base.html` pero NO se usaba (0 íconos). Font Awesome es la única
+    librería de iconos.
+  - `django-compressor` agrupa y minifica los CSS/JS propios. En
+    `base.html` el bloque de 24 hojas va dentro de `{% compress css %}`.
+    En producción se genera offline (`COMPRESS_OFFLINE=True` +
+    `manage.py compress --force`); en DEBUG se sirve sin tocar.
+  - WhiteNoise sirve los estáticos comprimidos (gzip/brotli) desde el
+    WSGI, sin nginx ni runserver:
+      * `MIDDLEWARE`: `whitenoise.middleware.WhiteNoiseMiddleware`
+        justo tras `SecurityMiddleware`.
+      * `STATIC_ROOT = BASE_DIR/'staticfiles'`.
+      * `STORAGES['staticfiles']`:
+          - DEBUG=True  → `whitenoise.storage.CompressedStaticFilesStorage`
+            (sin manifest: no exige `collectstatic`).
+          - DEBUG=False → `whitenoise.storage.CompressedManifestStaticFilesStorage`
+            (hash en el nombre → cache-busting).
+      * `STATICFILES_FINDERS` incluye `compressor.finders.CompressorFinder`.
+  - `docker-compose.yml` (servicio `web`): arranca con
+    `collectstatic --noinput && { compress --force || true; } && runserver`.
+  - Scripts propios con `defer` (theme, notifications, progress-loader,
+    button-animations, search, sidebar, accordion).
+  - Se ELIMINÓ `polidoc/context_processors.py` (`static_versions`): el
+    `?v=mtime` queda cubierto por el manifest de WhiteNoise.
+  - `requirements.txt`: +django-compressor, +rjsmin, +csscompressor,
+    +whitenoise, +brotli.
+
+-------------------------------------------------------------------
+26.2 CONSULTAS E ÍNDICES
+-------------------------------------------------------------------
+
+  - Migración `documentos/0047_*`: índices en `Documento` (estado,
+    clasificación, fecha_vencimiento, (departamento,estado),
+    (estado,-fecha_modificacion)) y en `SolicitudDescarga`; migración
+    `autenticacion/0009_*`: índice `(usuario, leida)` en `Notificacion`.
+  - `api.contadores_documentos`: de 1 consulta por tipo a 2 aggregates
+    (`values('tipo')`/`values('estado')` con `Count(distinct=True)`),
+    sin importar cuántos tipos activos haya.
+  - `views._conteos_vigencia`: de 4 `count` a 1 `aggregate` con
+    `Count(filter=Q(...), distinct=True)`.
+  - `signals.py`: los dos SELECT previos por guardado (pre_save de
+    clasificación + post_save de estado) se unificaron en UN solo
+    `pre_save` (`capturar_estado_previo`) que deja los valores en la
+    instancia. `documento_referencia_resuelta` solo actúa en la
+    TRANSICIÓN a `activo` (antes en cada save de un activo).
+  - `tasks.verificar_vencimientos`: usa `QuerySet.update()` (no dispara
+    señales ni auditoría por documento) y `bulk_create` para las
+    notificaciones.
+  - `views.get_documento`: `select_related` de tipo/departamento/
+    propietario/períodos. `mis_documentos`: sin `exists()` previo (el
+    Paginator ya cuenta) y `select_related`.
+
+-------------------------------------------------------------------
+26.3 CACHÉ DE CATÁLOGOS
+-------------------------------------------------------------------
+
+  - Nuevo `documentos/cache_utils.py`: `tipos_activos()`,
+    `periodos_activos()`, `departamentos_activos()` con TTL 10 min.
+    Cachean listas de instancias (no aptas para `ModelChoiceField`).
+  - Invalidación por señales post_save/post_delete de TipoDocumento,
+    Periodo y Departamento (`signals.py`).
+  - Usados en `mis_documentos`, `_grupos_documentos`,
+    `documentos_departamento`, `seleccionar_tipo`, `detalle_documento`,
+    `opciones_filtros`, `contadores_documentos`, `tipos_documento_disponibles`.
+  - En tests, `tests_base.BaseDocumentosTest.setUp` limpia la caché
+    (LocMem es global al proceso y no se limpia sola).
+
+-------------------------------------------------------------------
+26.4 CONVERSIÓN A PDF ASÍNCRONA
+-------------------------------------------------------------------
+
+  - `services/documentos_pdf.encolar_conversion(doc)`: encola
+    `convertir_documento_a_pdf.delay`; si el broker falla, degrada a
+    `convertir_documento_sync` (comportamiento anterior). Tras encolar,
+    hace `refresh_from_db` y devuelve `pdf_disponible` (para tests con
+    `CELERY_TASK_ALWAYS_EAGER`, donde la tarea corre ya).
+  - `detalle_documento`: si falta el PDF y el archivo es convertible, se
+    encola y la plantilla muestra la barra de progreso
+    (`#conv-progress`) con polling a `estado_conversion` (ya existía).
+  - `ver_archivo`: si falta el PDF, encola y redirige al detalle (o sirve
+    si el fallback síncrono lo generó).
+  - `Formato.save`: la vista previa (`plantilla_pdf`) se genera en la
+    tarea `convertir_formato_a_pdf` (helper síncrono
+    `convertir_formato_a_pdf_sync` como fallback).
+  - `crear_planilla`: usa `convertir_planilla_a_pdf.delay` con fallback.
+  - `services/planillas._guardar_pdf`: ya corría dentro de una tarea de
+    Celery (no se tocó).
+
+-------------------------------------------------------------------
+26.5 AUDITORÍA: CIRCUIT BREAKER + BUFFER (Mongo caído)
+-------------------------------------------------------------------
+
+  - Problema: `serverSelectionTimeoutMS=2000` penalizaba CADA evento con
+    ~2 s cuando MongoDB no respondía (dev sin Docker), y el dashboard
+    llama `obtener_logs` por carga.
+  - Solución (`auditoria/services.py`):
+      * `_mongo_circuit_open()` / `_abrir_circuito_mongo()` /
+        `_cerrar_circuito_mongo()`: flag en caché compartida + variable de
+        proceso, TTL `AUDIT_MONGO_DOWN_SEGUNDOS` (default 60).
+      * `registrar_log_iso`: si el circuito está abierto y el evento NO es
+        crítico (`fail_closed=False`), serializa el payload a disco
+        (`_encolar_log_buffer`, pickle en `AUDIT_BUFFER_DIR`) y regresa sin
+        tocar la red. Al primer insert exitoso se cierra el circuito.
+      * Las acciones críticas (`fail_closed=True`: visor/descarga) NUNCA se
+        cortocircuitan: siguen intentando Mongo para preservar la
+        trazabilidad ISO; ante fallo se propaga la excepción (bloqueo).
+      * `reprocesar_buffer()` reenvía los `.pkl` (con `_no_buffer=True`
+        para no duplicar) y borra los ficheros enviados.
+  - Nuevo `auditoria/tasks.py`: `reprocesar_logs_buffer`, en
+    `CELERY_BEAT_SCHEDULE` cada 5 min.
+  - Nuevos settings: `AUDIT_MONGO_DOWN_SEGUNDOS`, `AUDIT_BUFFER_DIR`
+    (default `BASE_DIR/data/audit_buffer`; `data/` está en .gitignore y
+    montado en Docker).
+  - `polidoc/test_settings.py`: `AUDIT_BUFFER_DIR` temporal,
+    `CELERY_TASK_ALWAYS_EAGER=True`, `STORAGES`/`COMPRESS_*` de prueba y
+    WhiteNoise fuera del pipeline. `tests_base` cierra el circuito y
+    limpia caché en `setUp` para evitar filtraciones entre tests.
+
+-------------------------------------------------------------------
+26.6 TESTS NUEVOS
+-------------------------------------------------------------------
+
+  - `documentos/tests_performance.py`: número de consultas constante en
+    `contadores_documentos`, `_conteos_vigencia` en 1 query, un solo
+    SELECT previo al guardar, sin consulta de referencias al guardar un
+    activo, y encolado (no bloqueo) de la conversión.
+  - `auditoria/tests_buffer.py`: circuit breaker (bufferiza y no toca
+    Mongo; fail_closed siempre intenta), cierre al recuperar y
+    `reprocesar_buffer`.
+
+  - Suite total: 853 tests. Comando:
+    `python manage.py test auditoria documentos autenticacion --settings=polidoc.test_settings`

@@ -381,6 +381,13 @@ class Documento(models.Model):
         verbose_name = 'Documento'
         verbose_name_plural = 'Documentos'
         ordering = ['-fecha_modificacion']
+        indexes = [
+            models.Index(fields=['estado'], name='doc_estado_idx'),
+            models.Index(fields=['clasificacion'], name='doc_clasif_idx'),
+            models.Index(fields=['fecha_vencimiento'], name='doc_venc_idx'),
+            models.Index(fields=['departamento', 'estado'], name='doc_depto_estado_idx'),
+            models.Index(fields=['estado', '-fecha_modificacion'], name='doc_estado_fmod_idx'),
+        ]
 
     def __str__(self):
         return f"{self.codigo} - {self.nombre}"
@@ -599,6 +606,10 @@ class SolicitudDescarga(models.Model):
         verbose_name = 'Solicitud de Descarga'
         verbose_name_plural = 'Solicitudes de Descarga'
         ordering = ['-fecha_solicitud']
+        indexes = [
+            models.Index(fields=['estado', 'solicitado_por'], name='sol_desc_est_user_idx'),
+            models.Index(fields=['documento', 'estado'], name='sol_desc_doc_est_idx'),
+        ]
 
     def __str__(self):
         return f"Solicitud #{self.id} - {self.documento.codigo}"
@@ -1340,7 +1351,6 @@ class Formato(models.Model):
         return f"{self.codigo} v{self.version} E{self.edicion}"
 
     def save(self, *args, **kwargs):
-        from .tasks import convertir_a_pdf_sync
         # Saneado defensivo en la capa de modelo: cubre TODAS las rutas de
         # escritura (FormatoForm, Django Admin y management commands), de modo
         # que nunca se persista HTML ejecutable que luego se renderiza con |safe.
@@ -1348,19 +1358,17 @@ class Formato(models.Model):
         self.instructivo_html = sanitizar_html(self.instructivo_html)
         super().save(*args, **kwargs)
         if self.plantilla_xlsx and not self.plantilla_pdf:
+            # Vista previa en PDF de forma asíncrona: guardar el Formato (p.ej.
+            # el constructor de formatos) ya no espera 2-3 s a LibreOffice. Si
+            # el broker no responde, se degrada al modo síncrono.
+            from .tasks import convertir_formato_a_pdf, convertir_formato_a_pdf_sync
             try:
-                pdf_path = convertir_a_pdf_sync(self.plantilla_xlsx.path)
-                if pdf_path:
-                    import os
-                    media_root = str(os.path.dirname(self.plantilla_xlsx.path))
-                    rel = os.path.relpath(pdf_path, media_root) if pdf_path.startswith(media_root) else pdf_path
-                    from django.conf import settings
-                    if not os.path.isabs(pdf_path) and not os.path.exists(pdf_path):
-                        pdf_path = os.path.join(settings.MEDIA_ROOT, pdf_path)
-                    self.plantilla_pdf = rel
-                    Formato.objects.filter(pk=self.pk).update(plantilla_pdf=rel)
+                convertir_formato_a_pdf.delay(self.pk)
             except Exception:
-                pass
+                try:
+                    convertir_formato_a_pdf_sync(self)
+                except Exception:
+                    pass
 
     def get_secciones(self):
         return self.secciones.all().order_by('orden')

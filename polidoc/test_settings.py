@@ -22,6 +22,32 @@ CACHES = {
 # los tests que lo prueban con override_settings.
 PDF_QA_ADAPTATIVO = False
 
+# Ejecutar las tareas de Celery en el proceso (sin broker) durante los tests.
+# Reproduce el comportamiento previo (conversión en línea) y evita intentos de
+# conexión a RabbitMQ.
+CELERY_TASK_ALWAYS_EAGER = True
+
+# Buffer de auditoría a un directorio temporal, no dentro del repo.
+import tempfile as _tempfile  # noqa: E402
+AUDIT_BUFFER_DIR = _tempfile.mkdtemp(prefix='polidoc_audit_buffer_')
+
+# Estáticos: sin manifest de WhiteNoise (requiere `collectstatic`) y sin
+# django-compressor, para que los tests rendericen las plantillas tal cual.
+STORAGES = {
+    'default': {
+        'BACKEND': 'django.core.files.storage.FileSystemStorage',
+    },
+    'staticfiles': {
+        'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
+    },
+}
+COMPRESS_ENABLED = False
+COMPRESS_OFFLINE = False
+
+# WhiteNoise avisa si STATIC_ROOT no existe (no se corre collectstatic en tests);
+# se retira del pipeline en tests.
+MIDDLEWARE = [m for m in MIDDLEWARE if 'whitenoise' not in m]
+
 # Use in-memory logging
 LOGGING = {
     'version': 1,

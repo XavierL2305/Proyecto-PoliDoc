@@ -57,6 +57,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'compressor',
     'corsheaders',
     'django_auth_ldap',
 
@@ -76,6 +77,9 @@ MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    # WhiteNoise sirve los estáticos comprimidos directamente desde el WSGI,
+    # sin depender de nginx ni del runserver. Va justo tras SecurityMiddleware.
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -101,7 +105,6 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
-                'polidoc.context_processors.static_versions',
             ],
         },
     },
@@ -178,6 +181,38 @@ STATIC_URL = '/static/'
 STATICFILES_DIRS = [
     BASE_DIR / 'polidoc' / 'static',
 ]
+
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+STATICFILES_FINDERS = [
+    'django.contrib.staticfiles.finders.FileSystemFinder',
+    'django.contrib.staticfiles.finders.AppDirectoriesFinder',
+    'compressor.finders.CompressorFinder',
+]
+
+# Almacenamiento de estáticos: WhiteNoise con compresión gzip/brotli.
+# - Producción (DEBUG=False): con manifest (hash en el nombre → cache-busting).
+# - Desarrollo (DEBUG=True): sin manifest, para no exigir `collectstatic`.
+if DEBUG:
+    _staticfiles_storage = 'whitenoise.storage.CompressedStaticFilesStorage'
+else:
+    _staticfiles_storage = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
+STORAGES = {
+    'default': {
+        'BACKEND': 'django.core.files.storage.FileSystemStorage',
+    },
+    'staticfiles': {
+        'BACKEND': _staticfiles_storage,
+    },
+}
+
+# django-compressor: agrupa y minifica los CSS/JS propios. En producción se
+# genera en build (`manage.py compress --force` → COMPRESS_OFFLINE); en DEBUG
+# se sirve sin tocar para no ralentizar el desarrollo.
+COMPRESS_ENABLED = os.getenv('COMPRESS_ENABLED', str(not DEBUG)).lower() in ('true', '1', 't')
+COMPRESS_OFFLINE = os.getenv('COMPRESS_OFFLINE', str(not DEBUG)).lower() in ('true', '1', 't')
+COMPRESS_OUTPUT_DIR = 'CACHE'
 
 # Media files (uploaded documents)
 MEDIA_URL = '/media/'
@@ -331,6 +366,15 @@ except ValueError:
 # §7.5.3: control de distribución y acceso).
 DESCARGA_VIGENCIA_DIAS = int(os.getenv('DESCARGA_VIGENCIA_DIAS', '30'))
 
+# Auditoría: si MongoDB no responde, se abre un "circuito" durante estos
+# segundos para no penalizar cada evento con el timeout de selección (~2 s).
+# Mientras esté abierto, los logs no críticos se guardan en disco (buffer) y
+# una tarea de Celery Beat los reenvía. Ver auditoria/services.py.
+AUDIT_MONGO_DOWN_SEGUNDOS = int(os.getenv('AUDIT_MONGO_DOWN_SEGUNDOS', '60'))
+AUDIT_BUFFER_DIR = os.getenv(
+    'AUDIT_BUFFER_DIR', str(BASE_DIR / 'data' / 'audit_buffer')
+)
+
 # Tareas periódicas (Celery Beat)
 CELERY_BEAT_SCHEDULE = {
     'verificar-vencimientos-diario': {
@@ -344,6 +388,10 @@ CELERY_BEAT_SCHEDULE = {
     'generar-planillas-pendientes': {
         'task': 'documentos.tasks.generar_planillas_pendientes',
         'schedule': timedelta(minutes=PLANILLAS_BARRIDO_MINUTOS),
+    },
+    'reprocesar-logs-buffer': {
+        'task': 'auditoria.tasks.reprocesar_logs_buffer',
+        'schedule': timedelta(minutes=5),
     },
 }
 

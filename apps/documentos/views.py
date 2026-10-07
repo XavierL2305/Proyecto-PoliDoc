@@ -9,7 +9,7 @@ from django.contrib.auth.models import User
 from django.contrib import messages
 from django.http import FileResponse, Http404, JsonResponse
 from django.utils import timezone
-from django.db.models import Q
+from django.db.models import Q, Count
 from django.db import transaction
 from django.conf import settings
 from .models import (
@@ -28,6 +28,7 @@ from .forms import (
 from .icons import ICONOS_DISPONIBLES
 from .services.planillas import aplicar_planilla_al_documento
 from auditoria.services import registrar_aprobacion_planilla, registrar_rechazo_planilla
+from .cache_utils import tipos_activos, periodos_activos, departamentos_activos
 from . import ai
 
 logger = logging.getLogger(__name__)
@@ -36,7 +37,10 @@ logger = logging.getLogger(__name__)
 def get_documento(tipo, documento_id):
     """Obtiene un documento por tipo y UUID"""
     try:
-        return Documento.objects.get(uuid=documento_id, tipo=tipo)
+        return Documento.objects.select_related(
+            'tipo', 'departamento', 'propietario',
+            'periodo_vigencia', 'periodo_retencion',
+        ).get(uuid=documento_id, tipo=tipo)
     except Documento.DoesNotExist:
         raise Http404("Documento no encontrado")
 
@@ -491,7 +495,7 @@ def mis_documentos(request):
         )
 
     tipos_documento = []
-    for tipo in TipoDocumento.objects.filter(activo=True).exclude(key='').order_by('codigo'):
+    for tipo in tipos_activos():
         tipo_key = tipo.key
         docs = Documento.objects.filter(propietario=user, tipo=tipo_key)
         if perfil.es_coordinador:
@@ -512,16 +516,20 @@ def mis_documentos(request):
             docs = docs.filter(estado=estado_filter)
         if clasificacion_filter:
             docs = docs.filter(clasificacion=clasificacion_filter)
-        if docs.exists():
-            paginator = Paginator(docs, 12)
-            page = request.GET.get(f'page_{tipo_key}', 1)
+        docs = docs.select_related('departamento', 'tipo', 'periodo_vigencia')
+        # Sin `exists()` previo: el Paginator ya cuenta y pagina; evaluamos la
+        # página y solo anexamos el tipo si tiene documentos. Ahorra una query
+        # por cada tipo activo en cada carga de "Mis Documentos".
+        paginator = Paginator(docs, 12)
+        page = paginator.get_page(request.GET.get(f'page_{tipo_key}', 1))
+        if page.object_list:
             tipos_documento.append({
                 'key': tipo_key,
                 'nombre': tipo.nombre,
                 'codigo': tipo.codigo,
                 'icono': tipo.icono or 'file',
                 'color': tipo.color or 'primary',
-                'documentos': paginator.get_page(page),
+                'documentos': page,
             })
 
     return render(request, 'documentos/mis_documentos.html', {
@@ -606,9 +614,7 @@ def _grupos_documentos(departamentos, clasificacion='', vigencia='', usuario=Non
     """
     from .permissions import q_documentos_visibles
 
-    tipos = list(
-        TipoDocumento.objects.filter(activo=True).exclude(key='').order_by('codigo')
-    )
+    tipos = tipos_activos()
     agrupado = {d.id: {} for d in departamentos}
     generales_por_tipo = {}
 
@@ -683,17 +689,31 @@ def _conteos_vigencia(departamentos, clasificacion, usuario):
         Q(afecta_todos=True)
         | Q(departamento_id__in=dep_ids)
         | Q(departamentos_afectados__id__in=dep_ids)
-    ).distinct()
-    return {
-        'vencidos': base.filter(
-            fecha_vencimiento__isnull=False, fecha_vencimiento__lte=hoy,
-        ).count(),
-        'vence_pronto': base.filter(
-            fecha_vencimiento__gt=hoy, fecha_vencimiento__lte=hoy + timedelta(days=7),
-        ).count(),
-        'vigentes': base.filter(fecha_vencimiento__gt=hoy + timedelta(days=7)).count(),
-        'sin_vigencia': base.filter(fecha_vencimiento__isnull=True).count(),
-    }
+    )
+    # Un único aggregate con filtros condicionales en vez de 4 consultas.
+    # `distinct=True` compensa el JOIN con departamentos_afectados.
+    return base.aggregate(
+        vencidos=Count(
+            'id',
+            filter=Q(fecha_vencimiento__isnull=False, fecha_vencimiento__lte=hoy),
+            distinct=True,
+        ),
+        vence_pronto=Count(
+            'id',
+            filter=Q(fecha_vencimiento__gt=hoy, fecha_vencimiento__lte=hoy + timedelta(days=7)),
+            distinct=True,
+        ),
+        vigentes=Count(
+            'id',
+            filter=Q(fecha_vencimiento__gt=hoy + timedelta(days=7)),
+            distinct=True,
+        ),
+        sin_vigencia=Count(
+            'id',
+            filter=Q(fecha_vencimiento__isnull=True),
+            distinct=True,
+        ),
+    )
 
 
 @login_required(login_url='/login/')
@@ -708,9 +728,7 @@ def documentos_departamento(request):
     clasificacion_filter = request.GET.get('clasificacion', '')
     vigencia_filter = request.GET.get('vigencia', '')
     if es_admin:
-        departamentos = list(
-            Departamento.objects.filter(activo=True).order_by('codigo')
-        )
+        departamentos = departamentos_activos()
         solicitudes_pendientes = SolicitudDescarga.objects.filter(estado='pendiente')
     else:
         if not departamento:
@@ -748,7 +766,7 @@ def seleccionar_tipo(request):
     """Página/catálogo para seleccionar tipo de documento a crear"""
     es_jefe = request.user.perfil.es_jefe
     tipos_disponibles = []
-    for tipo in TipoDocumento.objects.filter(activo=True).exclude(key='').order_by('codigo'):
+    for tipo in tipos_activos():
         if tipo.solo_jefes and not es_jefe:
             continue
         tipos_disponibles.append({
@@ -1139,17 +1157,15 @@ def detalle_documento(request, tipo, documento_id):
     convirtiendo = False
     from .services.documentos_pdf import FORMATOS_CONVERTIBLES, pdf_disponible
     pdf_listo = pdf_disponible(documento)
-    if documento.tipo_archivo in FORMATOS_CONVERTIBLES and not pdf_listo:
-        # Conversión en línea: si el PDF falta o su ruta es fantasma (borrado
-        # del disco), se regenera ahora y la vista sirve el PDF ya listo.
-        from .services.documentos_pdf import asegurar_pdf
-        pdf_listo = asegurar_pdf(documento)
-        if not pdf_listo and documento.archivo:
-            messages.error(
-                request,
-                'No se pudo generar la vista previa en PDF. '
-                'Vuelve a recargar para reintentar.',
-            )
+    if (documento.archivo and documento.tipo_archivo in FORMATOS_CONVERTIBLES
+            and not pdf_listo):
+        # Conversión asíncrona: se encola y la plantilla muestra la barra de
+        # progreso haciendo polling de `estado_conversion`. Si el broker no
+        # responde, `encolar_conversion` degrada a la conversión en línea
+        # (mismo comportamiento que antes) y devuelve el resultado.
+        from .services.documentos_pdf import encolar_conversion
+        pdf_listo = encolar_conversion(documento)
+        convirtiendo = not pdf_listo
 
     solicitud_aprobacion = SolicitudAprobacionDocumento.objects.filter(
         documento=documento, estado='pendiente', aprobador=request.user,
@@ -1269,7 +1285,7 @@ def detalle_documento(request, tipo, documento_id):
         'puede_inhabilitar': puede_inhab,
         'puede_renovar': es_propietario or es_admin or es_jefe_depto,
         'puede_establecer_vigencia': (es_propietario or es_admin or es_jefe_depto) and documento.estado == 'activo',
-        'periodos_vigencia': Periodo.objects.filter(activo=True),
+        'periodos_vigencia': periodos_activos(),
         'puede_distribuir': es_admin or es_jefe_depto or es_propietario,
         'puede_revocar': puede_revocar_distribucion(request.user, documento),
         'puede_asignar': es_admin or es_jefe_depto,
@@ -1676,25 +1692,22 @@ def ver_archivo(request, tipo, documento_id):
         messages.error(request, 'No tienes permisos para ver este documento.')
         return redirect('documentos:mis_documentos')
     from .services.documentos_pdf import (
-        FORMATOS_CONVERTIBLES, archivo_existe, asegurar_pdf,
+        FORMATOS_CONVERTIBLES, archivo_existe, encolar_conversion,
         limpiar_pdf_inexistente, pdf_disponible,
     )
     # `archivo_pdf` guarda una ruta en BD, no garantiza que el fichero exista:
-    # si el PDF se borró del disco se limpia el puntero y se regenera en línea.
+    # si el PDF se borró del disco se limpia el puntero y se regenera.
     limpiar_pdf_inexistente(documento)
     archivo = documento.archivo_pdf if pdf_disponible(documento) else None
-    if archivo is None and documento.tipo_archivo in FORMATOS_CONVERTIBLES:
-        # No se pudo (re)generar el PDF: el visor no puede mostrar un office,
-        # así que se devuelve al detalle con el aviso en lugar de servir bytes
-        # que pdf.js no entiende (y sin romper con un 500).
-        if not asegurar_pdf(documento):
-            messages.error(
-                request,
-                'No se pudo generar la vista previa en PDF. '
-                'Vuelve a recargar para reintentar.',
-            )
+    if (archivo is None and documento.archivo
+            and documento.tipo_archivo in FORMATOS_CONVERTIBLES):
+        # El PDF aún no está listo: se encola y se vuelve al detalle (que
+        # muestra la barra de progreso). Si el broker no responde, el fallback
+        # síncrono lo genera aquí mismo y se sirve sin recargar.
+        if encolar_conversion(documento):
+            archivo = documento.archivo_pdf
+        else:
             return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
-        archivo = documento.archivo_pdf
     if archivo is None:
         archivo = documento.archivo
     if not archivo or not archivo_existe(archivo):
@@ -2545,11 +2558,21 @@ def crear_planilla(request):
                     _autollenar_envio(planilla.solicitud_cambio, request.user)
                 form.save_m2m()
                 if planilla.archivo_propuesto:
-                    from .tasks import convertir_a_pdf_sync
-                    pdf_path = convertir_a_pdf_sync(planilla.archivo_propuesto.path)
-                    if pdf_path:
-                        planilla.archivo_propuesto_pdf = pdf_path
-                        planilla.save(update_fields=['archivo_propuesto_pdf'])
+                    # Conversión asíncrona de la vista previa (no bloquea el
+                    # envío de la planilla). Si el broker no responde, fallback
+                    # en línea.
+                    from .tasks import convertir_planilla_a_pdf, convertir_a_pdf_sync
+                    try:
+                        convertir_planilla_a_pdf.delay(planilla.id)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "No se pudo encolar la conversión de la planilla %s: %s",
+                            planilla.codigo, exc,
+                        )
+                        pdf_path = convertir_a_pdf_sync(planilla.archivo_propuesto.path)
+                        if pdf_path:
+                            planilla.archivo_propuesto_pdf = pdf_path
+                            planilla.save(update_fields=['archivo_propuesto_pdf'])
                 _procesar_asociados_planilla(
                     planilla, request, permitir_asociados, documento, request.user
                 )
@@ -2585,7 +2608,7 @@ def crear_planilla(request):
     departamentos_seleccionados = []
     responsables_seleccionados = []
     documentos_asociados_iniciales = []
-    departamentos_disponibles = Departamento.objects.filter(activo=True)
+    departamentos_disponibles = departamentos_activos()
     if documento:
         proxima_version = calcular_proxima_version(documento)
         version_actual = documento.version_actual
