@@ -43,5 +43,5 @@ alfabético.
 
 ---
 
-**Anterior:** [09. Solución de problemas](09-troubleshooting.md) ·
+**Anterior:** [14. Auditoría, trazabilidad e informes](14-auditoria-e-informes.md) ·
 **Volver al [índice](README.md)**

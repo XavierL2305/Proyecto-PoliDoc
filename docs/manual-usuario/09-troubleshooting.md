@@ -58,6 +58,11 @@ reúne la información de "Cuándo pedir ayuda al administrador" (al final).
 
 ## Archivos, conversión y resumen IA
 
+Al subir un .docx/.doc, POLIDOC lo convierte a PDF en segundo plano y la
+ficha muestra una barra de progreso:
+
+![Barra de conversión a PDF](imagenes/ampliacion/conversion-pdf.png)
+
 | Síntoma | Causa probable | Qué hacer |
 |---|---|---|
 | La barra de conversión a PDF no termina | La tarea asíncrona no respondió | Recarga la página; si persiste, contacta al administrador |
@@ -100,4 +105,4 @@ captura del mensaje.
 ---
 
 **Anterior:** [08. Descargas y distribución](08-descargas-distribucion.md) ·
-**Siguiente:** [Anexo A. Glosario](A-glosario.md)
+**Siguiente:** [10. Vigencia y vencimientos](10-vigencia-y-vencimientos.md)

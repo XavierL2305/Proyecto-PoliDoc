@@ -33,6 +33,11 @@ CAPITULOS = [
     "07-versionado-planilla.md",
     "08-descargas-distribucion.md",
     "09-troubleshooting.md",
+    "10-vigencia-y-vencimientos.md",
+    "11-guia-trabajador-coordinador.md",
+    "12-guia-jefe-departamento.md",
+    "13-guia-administrador.md",
+    "14-auditoria-e-informes.md",
     "A-glosario.md",
 ]
 

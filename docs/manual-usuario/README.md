@@ -5,11 +5,11 @@ Sistema de gestión documental para la Policlínica Táchira (normas ISO 9001,
 
 | Control de versión | |
 |---|---|
-| Versión del manual | **0.95 — MVP (Tomo 1)** |
+| Versión del manual | **1.0 — Tomo 1 + Tomo 2** |
 | Fecha | 08/10/2026 |
 | Versión del sistema verificada | commit `8f9be56` |
 | Fuente de verdad técnica | `CONTEXT.txt` (raíz del proyecto) + código de vistas y plantillas |
-| Estado | En elaboración. Tomo 2 pendiente (ver "Fases" abajo) |
+| Estado | Contenido completo. Fase 3 (export PDF/HTML) pendiente; 1 captura pendiente |
 
 > Este manual describe la **interfaz de usuario**. No contiene instrucciones
 > técnicas de instalación, configuración de variables de entorno ni uso de la
@@ -22,12 +22,12 @@ Sistema de gestión documental para la Policlínica Táchira (normas ISO 9001,
 | Si tu rol es... | Lee obligatoriamente | Lee solo si te interesa |
 |---|---|---|
 | **Cualquier usuario** | 01, 02, 03, 04 | 09 (problemas), A (glosario) |
-| **Trabajador / Coordinador** | + 05, 06, 08 | 07 (si editas documentos) |
-| **Jefe de Departamento** | + 06, 07, 08 | 05, 09 |
+| **Trabajador / Coordinador** | + 05, 06, 08, **11** | 07 (si editas documentos), 10 |
+| **Jefe de Departamento** | + 06, 07, 08, **10, 12** | 05, 09, 14 |
 | **Administrador** | Todo | — |
 
-Las secciones por rol ampliadas (qué ve exactamente cada perfil, catálogos,
-usuarios y auditoría) están en el **Tomo 2**, aún pendiente.
+Las guías por rol (qué hace exactamente cada perfil, catálogos, usuarios y
+auditoría) están en los **capítulos 10 a 14** del Tomo 2.
 
 ---
 
@@ -44,6 +44,11 @@ usuarios y auditoría) están en el **Tomo 2**, aún pendiente.
 | 07 | [Versionado y Planilla de Cambios](07-versionado-planilla.md) | Creadores y jefes |
 | 08 | [Descargas, distribución y trazabilidad](08-descargas-distribucion.md) | Todos |
 | 09 | [Solución de problemas](09-troubleshooting.md) | Todos |
+| 10 | [Vigencia y vencimientos](10-vigencia-y-vencimientos.md) | Jefes y creadores |
+| 11 | [Guía del trabajador y del coordinador](11-guia-trabajador-coordinador.md) | Trabajadores y coordinadores |
+| 12 | [Guía del jefe de departamento](12-guia-jefe-departamento.md) | Jefes |
+| 13 | [Guía del administrador](13-guia-administrador.md) | Administradores |
+| 14 | [Auditoría, trazabilidad e informes](14-auditoria-e-informes.md) | Jefes y administradores |
 | A | [Glosario](A-glosario.md) | Todos |
 
 ---
@@ -73,12 +78,12 @@ La comprobación automática de 1 a 5 se hace con
 El inventario completo, con el nombre exacto de archivo, la pantalla, el rol
 con el que tomarla y la URL, está en [`CAPTURAS.md`](CAPTURAS.md).
 
-Estado actual del Tomo 1:
+Estado actual de las capturas:
 
 | | Cantidad | Estado |
 |---|---|---|
-| Capturas imprescindibles (★) | 16 | ⬜ pendientes |
-| Capturas de ampliación (☆) | 15 | ⬜ pendientes (3 de ellas ya se usan en el Tomo 1) |
+| Capturas imprescindibles (★) | 16 | ✅ tomadas y usadas |
+| Capturas del Tomo 2 (☆) | 15 | ✅ 14 tomadas y usadas · 1 pendiente (`conversion-pdf.png`) |
 
 ---
 
@@ -101,6 +106,6 @@ fueron contrastadas contra el código en la versión indicada arriba.
 
 | Fase | Contenido | Estado |
 |---|---|---|
-| **1. Tomo 1 (MVP)** | Capítulos 01-09 + glosario, 16 capturas ★ | En curso |
-| **2. Tomo 2** | Vigencia y vencimientos, guías por rol (10-14), capturas ☆ | Pendiente |
-| **3. Export** | Generación de PDF/HTML con portada y control de versiones para distribución | Pendiente — fuera de alcance del Tomo 1 |
+| **1. Tomo 1 (MVP)** | Capítulos 01-09 + glosario, 16 capturas ★ | ✅ Hecho |
+| **2. Tomo 2** | Vigencia y vencimientos, guías por rol (10-14), capturas ☆ | ✅ Hecho (falta 1 captura) |
+| **3. Export** | Generación de PDF/HTML con portada y control de versiones para distribución | Pendiente |
