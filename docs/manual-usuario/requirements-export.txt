@@ -1,0 +1,4 @@
+# Requisitos solo para exportar el manual (HTML/PDF).
+# No forman parte del entorno de la aplicación Django.
+markdown>=3.4
+weasyprint>=61
