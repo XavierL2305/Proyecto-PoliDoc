@@ -889,6 +889,121 @@ class VistasEtiquetasCambioEstadoTest(BaseDocumentosTest):
 
 
 # =============================================================================
+# VERIFICACIÓN: AUDITORÍA, NOTIFICACIÓN Y PLANILLA
+# =============================================================================
+
+class VerificacionCambioEstadoTest(BaseDocumentosTest):
+    """Cierra el hueco de verificación del flujo de cambio de estado.
+
+    Comprueba tres cosas que ningún otro test cubría: la evidencia ISO
+    (``registrar_log_iso``), la notificación al aprobador cuando la
+    solicitud queda pendiente y la planilla de inhabilitación encolada
+    en el camino directo. ``registrar_log_iso`` se parchea a nivel de
+    ``auditoria.services`` porque los flujos lo importan en local.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.client = Client()
+
+    # --- Auditoría -------------------------------------------------------
+
+    @patch('auditoria.services.registrar_log_iso')
+    def test_renovar_directo_deja_evidencia_iso(self, mock_log):
+        """La renovación aplicada directamente deja registro ISO con IP."""
+        self.client.login(username='admin01', password='testpass123')
+        resp = self.client.post(
+            f'/documentos/{self.doc_activo.tipo_id}/'
+            f'{self.doc_activo.uuid}/renovar-vencimiento/',
+            {'fecha_nueva': (date.today() + timedelta(days=400)).isoformat()},
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(mock_log.called)
+        kwargs = [c.kwargs for c in mock_log.call_args_list if c.kwargs]
+        renovacion = [a for a in kwargs if a.get('accion_tipo') == 'renovacion']
+        self.assertTrue(renovacion, 'No se registró la auditoría de renovación')
+        self.assertEqual(renovacion[0]['accion_categoria'], 'vencimiento')
+        self.assertTrue(renovacion[0]['resultado_exitoso'])
+        self.assertEqual(renovacion[0]['usuario'], self.user_admin)
+        self.assertIsNotNone(renovacion[0]['ip_address'])
+        # El cliente de prueba no envía HTTP_USER_AGENT: solo exige la clave.
+        self.assertIn('user_agent', renovacion[0])
+
+    @patch('auditoria.services.registrar_log_iso')
+    def test_aprobar_inhabilitar_deja_evidencia_iso(self, mock_log):
+        """La aprobación de una inhabilitación también deja registro ISO."""
+        self.client.login(username='jefe_ti', password='testpass123')
+        self.client.post(
+            f'/documentos/api/{self.doc_activo.tipo_id}/'
+            f'{self.doc_activo.uuid}/cambiar-estado/',
+            data=json.dumps({'estado': 'obsoleto', 'motivo_seleccion': 'prueba'}),
+            content_type='application/json',
+        )
+        mock_log.reset_mock()
+        self.client.login(username='jefe_gg', password='testpass123')
+        resp = self.client.post(
+            f'/documentos/api/{self.doc_activo.tipo_id}/'
+            f'{self.doc_activo.uuid}/aprobar-creacion/',
+            data=json.dumps({'observaciones': 'aprobado'}),
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        kwargs = [c.kwargs for c in mock_log.call_args_list if c.kwargs]
+        aprobacion = [a for a in kwargs if a.get('accion_tipo') == 'aprobacion']
+        self.assertTrue(aprobacion, 'No se registró la auditoría de aprobación')
+        self.assertEqual(aprobacion[0]['accion_categoria'], 'documento')
+        self.assertEqual(aprobacion[0]['usuario'], self.user_jefe_gg)
+        self.assertEqual(aprobacion[0]['detalles']['accion_solicitud'], 'inhabilitar')
+
+    # --- Notificación ----------------------------------------------------
+
+    def test_solicitar_inhabilitar_notifica_al_aprobador(self):
+        """La solicitud pendiente avisa al aprobador por notificación."""
+        from documentos.services.cambios_estado import solicitar_cambio_estado
+
+        resultado = solicitar_cambio_estado(
+            self.doc_activo, self.user_jefe_ti, 'inhabilitar',
+        )
+        self.assertFalse(resultado.aplicado)
+        self.assertEqual(resultado.codigo, 'solicitado')
+        self.assertEqual(resultado.aprobador, self.user_jefe_gg)
+        notif = Notificacion.objects.get(
+            usuario=self.user_jefe_gg, tipo='solicitud_aprobacion',
+        )
+        self.assertIn('inhabilitación', notif.titulo)
+        self.assertIn(self.doc_activo.codigo, notif.mensaje)
+
+    # --- Planilla en el camino directo -----------------------------------
+
+    @patch('documentos.services.planillas.encolar_generacion_planilla')
+    def test_directo_encola_planilla_de_inhabilitacion(self, mock_encolar):
+        """El camino directo aprueba y encola la planilla SGC-FOR-001."""
+        formato = Formato.objects.create(
+            codigo='SGC-FOR-005-TEST', nombre='Planilla de inhabilitación',
+            aplica_creacion=False, aplica_modificacion=False,
+            aplica_eliminacion=True,
+        )
+        sol_cambio = SolicitudCambio.objects.create(
+            codigo='SC-VERIF-001', formato=formato, operacion='eliminacion',
+            documento=self.doc_activo, solicitante=self.user_admin,
+            departamento=self.depto_ti, estado='en_revision',
+        )
+        from documentos.services.cambios_estado import solicitar_cambio_estado
+
+        resultado = solicitar_cambio_estado(
+            self.doc_activo, self.user_admin, 'inhabilitar',
+            solicitud_cambio=sol_cambio,
+        )
+        self.assertTrue(resultado.aplicado)
+        self.assertEqual(resultado.codigo, 'ok')
+        sol_cambio.refresh_from_db()
+        self.assertEqual(sol_cambio.estado, 'aprobado')
+        mock_encolar.assert_called_once_with(sol_cambio)
+        self.doc_activo.refresh_from_db()
+        self.assertEqual(self.doc_activo.estado, 'obsoleto')
+
+
+# =============================================================================
 # VISTAS: DISTRIBUCIÓN
 # =============================================================================
 
