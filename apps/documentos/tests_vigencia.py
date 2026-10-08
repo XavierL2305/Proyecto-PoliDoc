@@ -250,4 +250,4 @@ class DetalleVigenciaUITest(BaseVigenciaTest):
         self.client.login(username='jefe_ti', password='testpass123')
         resp = self.client.get(reverse('documentos:detalle', args=[doc.tipo_id, doc.uuid]))
         self.assertEqual(resp.status_code, 200)
-        self.assertContains(resp, 'Reactivar / Renovar')
+        self.assertContains(resp, 'Solicitar Reactivación / Renovación')

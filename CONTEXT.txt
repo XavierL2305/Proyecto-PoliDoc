@@ -1187,12 +1187,22 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
           `aviso_vencimiento_enviado` y retención, pasa a 'activo' si hacía
           falta y crea `RenovacionVencimiento` con `renovado_por =
           aprobador or solicitante`.
-        - ENTRADAS: `views.eliminar_documento` (POST) y
-          `api.cambiar_estado` (POST JSON {estado, motivo_seleccion,
-          motivo_texto}); el botón "Habilitar" del detalle llama a la misma
-          API. La planilla SGC-FOR-001 solo se encola para `inhabilitar`
-          (SGC-FOR-005 para inhabilitación con formato dinámico): en
-          reactivar/renovar NO se genera planilla (ISO 9001:7.5.3.2 d/b/a).
+        - ENTRADAS: `views.eliminar_documento` (POST), `api.cambiar_estado`
+          (POST JSON {estado, motivo_seleccion, motivo_texto}; el botón
+          "Habilitar" del detalle llama a la misma API) y
+          `views.renovar_vencimiento` (POST fecha_nueva/observacion, que
+          ahora tramita la renovación por el servicio en vez de aplicarla
+          directamente). La planilla SGC-FOR-001 solo se encola para
+          `inhabilitar` (SGC-FOR-005 para inhabilitación con formato
+          dinámico): en reactivar/renovar NO se genera planilla
+          (ISO 9001:7.5.3.2 d/b/a).
+        - UI (`detalle.html` + `confirmar_eliminar.html`): contexto
+          `puede_inhabilitar_directo` y `vencimiento_vencido`. Botones:
+          "Inhabilitar"/"Habilitar" solo para admin y jefe de GG; para el
+          resto "Solicitar Inhabilitación"/"Solicitar Reactivación" (y el
+          confirm se titula "¿Inhabilitar documento?"). Si el documento
+          obsoleto ya venció se oculta "Habilitar" y se ofrece
+          "Solicitar Reactivación / Renovación" (renovar es la única salida).
         - `SolicitudCambio` de `operacion='eliminacion'` se crea SIEMPRE que
           haya `formato_dinamico` (aunque `respuestas_formato` esté vacío)
           y se borra si la solicitud no se puede tramitar (huérfano).
@@ -2340,5 +2350,5 @@ el cuello NO era el volumen de datos.
     Mongo; fail_closed siempre intenta), cierre al recuperar y
     `reprocesar_buffer`.
 
-  - Suite total: 904 tests. Comando:
+  - Suite total: 912 tests. Comando:
     `python manage.py test auditoria documentos autenticacion --settings=polidoc.test_settings`

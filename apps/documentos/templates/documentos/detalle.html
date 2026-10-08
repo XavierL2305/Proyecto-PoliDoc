@@ -51,9 +51,10 @@
           <p>{{ documento.codigo }} - Versión {{ documento.version_actual }}</p>
         </div>
         <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-          {% if documento.estado == 'obsoleto' and puede_inhabilitar %}
-          <button class="btn btn--success btn--sm" onclick="cambiarEstadoDocumento('{{ tipo }}', '{{ documento.uuid }}', 'activo')">
-            <i class="fa-solid fa-rotate-left"></i> Habilitar
+          {% if documento.estado == 'obsoleto' and puede_inhabilitar and not vencimiento_vencido %}
+          <button class="btn btn--success btn--sm" onclick="cambiarEstadoDocumento('{{ tipo }}', '{{ documento.uuid }}', 'activo', {{ puede_inhabilitar_directo|yesno:'true,false' }})">
+            <i class="fa-solid fa-rotate-left"></i>
+            {% if puede_inhabilitar_directo %}Habilitar{% else %}Solicitar Reactivación{% endif %}
           </button>
           {% endif %}
           {% if puede_editar %}
@@ -81,10 +82,10 @@
           {% endif %}
           {% if puede_eliminar %}
           <a href="{% url 'documentos:eliminar' tipo=tipo documento_id=documento.uuid %}" class="btn btn--danger btn--sm">
-            {% if request.user.perfil.es_jefe or request.user.perfil.es_administrador %}
+            {% if puede_inhabilitar_directo %}
             <i class="fa-solid fa-trash"></i> Inhabilitar
             {% else %}
-            <i class="fa-solid fa-ban"></i> Solicitar Eliminación
+            <i class="fa-solid fa-ban"></i> Solicitar Inhabilitación
             {% endif %}
           </a>
           {% endif %}
@@ -550,10 +551,11 @@
               {% endif %}
               {% if documento.estado == 'obsoleto' and puede_renovar %}
               <div class="detail-row">
-                <span class="detail-label">Documento vencido</span>
+                <span class="detail-label">{% if vencimiento_vencido %}Documento vencido{% else %}Documento inhabilitado{% endif %}</span>
                 <span class="detail-value">
                   <button type="button" class="btn btn--primary btn--sm" onclick="document.getElementById('modal-renovar').classList.add('active')">
-                    <i class="fa-solid fa-rotate"></i> Reactivar / Renovar
+                    <i class="fa-solid fa-rotate"></i>
+                    {% if puede_inhabilitar_directo %}Reactivar / Renovar{% else %}Solicitar Reactivación / Renovación{% endif %}
                   </button>
                 </span>
               </div>
@@ -912,7 +914,9 @@
       {% if puede_renovar and documento.estado == 'obsoleto' %}
       <div id="modal-renovar" class="modal">
         <div class="modal-content" style="background: var(--color-surface); border-radius: var(--radius-lg); padding: 1.5rem; max-width: 450px; width: 100%; box-shadow: var(--shadow-lg);">
-          <h3 style="margin: 0 0 1rem; font-size: 1rem;">Renovar Vencimiento</h3>
+          <h3 style="margin: 0 0 1rem; font-size: 1rem;">
+            {% if puede_inhabilitar_directo %}Renovar Vencimiento{% else %}Solicitar Renovación de Vencimiento{% endif %}
+          </h3>
           <form method="post" action="{% url 'documentos:renovar_vencimiento' tipo=tipo documento_id=documento.uuid %}">
             {% csrf_token %}
             <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem;">
@@ -1065,10 +1069,15 @@ function mostrarRechazoDirecto() {
   document.getElementById('rechazo-directo-form').style.display = 'block';
 }
 
-function cambiarEstadoDocumento(tipo, docId, nuevoEstado) {
-  const mensaje = nuevoEstado === 'activo'
-    ? '¿Reactivar este documento (pasar a Activo)?'
-    : '¿Inhabilitar este documento (pasar a Obsoleto)?';
+function cambiarEstadoDocumento(tipo, docId, nuevoEstado, directo) {
+  const esReactivar = nuevoEstado === 'activo';
+  const mensaje = directo
+    ? (esReactivar
+        ? '¿Reactivar este documento (pasar a Activo)?'
+        : '¿Inhabilitar este documento (pasar a Obsoleto)?')
+    : (esReactivar
+        ? 'Se enviará la solicitud de reactivación para aprobación. ¿Continuar?'
+        : 'Se enviará la solicitud de inhabilitación para aprobación. ¿Continuar?');
   if (!confirm(mensaje)) return;
 
   fetch(`/documentos/api/${tipo}/${docId}/cambiar-estado/`, {

@@ -11,7 +11,7 @@ from documentos.models import (
     Documento, VersionDocumento, SolicitudDescarga, AprobacionDescarga,
     PlanillaCambios, SolicitudAprobacionDocumento, SolicitudAccesoDocumento,
     DistribucionDocumento, Formato, SolicitudCambio, CampoFormato,
-    SeccionFormato, TipoDocumento,
+    SeccionFormato, TipoDocumento, RenovacionVencimiento,
 )
 from autenticacion.models import PerfilUsuario, Notificacion
 
@@ -617,24 +617,148 @@ class VistasVersionesTest(BaseDocumentosTest):
 # =============================================================================
 
 class VistasRenovarTest(BaseDocumentosTest):
-    """Tests de renovación de vencimiento."""
+    """Tests de renovación de vencimiento (ISO 9001:7.5.3.2)."""
 
     def setUp(self):
         super().setUp()
         self.client = Client()
         self.client.login(username='jefe_ti', password='testpass123')
 
-    def test_renovar_vencimiento(self):
-        resp = self.client.post(
-            f'/documentos/procedimientos_generales/{self.doc_activo.uuid}/renovar-vencimiento/',
+    def _post(self, doc, username=None, **extra):
+        if username:
+            self.client.login(username=username, password='testpass123')
+        payload = {'fecha_nueva': (date.today() + timedelta(days=400)).isoformat()}
+        payload.update(extra)
+        return self.client.post(
+            f'/documentos/{doc.tipo_id}/{doc.uuid}/renovar-vencimiento/',
+            data=payload,
         )
+
+    def test_renovar_vencimiento_jefe_solicita_aprobacion(self):
+        """El jefe del departamento no renueva directo: aprueba GG."""
+        fecha_anterior = self.doc_activo.fecha_vencimiento
+        resp = self._post(self.doc_activo)
         self.assertEqual(resp.status_code, 302)
+        self.doc_activo.refresh_from_db()
+        self.assertEqual(self.doc_activo.fecha_vencimiento, fecha_anterior)
+        solicitud = SolicitudAprobacionDocumento.objects.get(
+            documento=self.doc_activo, accion_solicitud='renovar',
+        )
+        self.assertEqual(solicitud.estado, 'pendiente')
+        self.assertEqual(solicitud.aprobador, self.user_jefe_gg)
+        self.assertIsNotNone(solicitud.fecha_propuesta)
+
+    def test_renovar_vencimiento_admin_directo(self):
+        resp = self._post(self.doc_activo, 'admin01')
+        self.assertEqual(resp.status_code, 302)
+        self.doc_activo.refresh_from_db()
+        self.assertEqual(
+            self.doc_activo.fecha_vencimiento, date.today() + timedelta(days=400),
+        )
+        renovacion = RenovacionVencimiento.objects.get(documento=self.doc_activo)
+        self.assertEqual(renovacion.renovado_por, self.user_admin)
+        solicitud = SolicitudAprobacionDocumento.objects.get(
+            documento=self.doc_activo, accion_solicitud='renovar',
+        )
+        self.assertEqual(solicitud.estado, 'aprobada')
+
+    def test_renovar_obsoleto_reactiva_directo(self):
+        resp = self._post(self.doc_obsoleto, 'admin01')
+        self.assertEqual(resp.status_code, 302)
+        self.doc_obsoleto.refresh_from_db()
+        self.assertEqual(self.doc_obsoleto.estado, 'activo')
 
     def test_renovar_obsoleto_reactiva(self):
+        resp = self._post(self.doc_obsoleto)
+        self.assertEqual(resp.status_code, 302)
+        self.doc_obsoleto.refresh_from_db()
+        # Queda pendiente: el estado no se anticipa.
+        self.assertEqual(self.doc_obsoleto.estado, 'obsoleto')
+        solicitud = SolicitudAprobacionDocumento.objects.get(
+            documento=self.doc_obsoleto, accion_solicitud='renovar',
+        )
+        self.assertEqual(solicitud.estado, 'pendiente')
+
+    def test_renovar_sin_fecha_no_tramita(self):
         resp = self.client.post(
-            f'/documentos/formulario/{self.doc_obsoleto.uuid}/renovar-vencimiento/',
+            f'/documentos/procedimientos_generales/{self.doc_activo.uuid}/renovar-vencimiento/',
+            data={},
         )
         self.assertEqual(resp.status_code, 302)
+        self.assertFalse(
+            SolicitudAprobacionDocumento.objects.filter(
+                documento=self.doc_activo, accion_solicitud='renovar',
+            ).exists(),
+        )
+
+    def test_renovar_propietario_trabajador_solicita(self):
+        """El propietario (trabajador) solicita la renovación al jefe del depto."""
+        resp = self._post(self.doc_th, 'trab02')
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(
+            SolicitudAprobacionDocumento.objects.filter(
+                documento=self.doc_th, accion_solicitud='renovar',
+                estado='pendiente', aprobador=self.user_jefe_th,
+            ).exists(),
+        )
+        self.doc_th.refresh_from_db()
+        self.assertIsNone(self.doc_th.fecha_vencimiento)
+
+    def test_renovar_sin_permiso_no_tramita(self):
+        resp = self._post(self.doc_th, 'trab01')
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(
+            SolicitudAprobacionDocumento.objects.filter(
+                documento=self.doc_th, accion_solicitud='renovar',
+            ).exists(),
+        )
+
+
+class VistasEtiquetasCambioEstadoTest(BaseDocumentosTest):
+    """Etiquetas y regla de fecha vencida en la ficha del documento."""
+
+    def setUp(self):
+        super().setUp()
+        self.client = Client()
+
+    def test_obsoleto_vencido_ofrece_renovar_no_habilitar(self):
+        """Con fecha vencida no se ofrece 'Habilitar': hay que renovar."""
+        doc = Documento.objects.create(
+            tipo=self.tipo_formulario, nombre='Obsoleto Vencido',
+            codigo='TI-FOR-097', estado='obsoleto',
+            propietario=self.user_jefe_ti, departamento=self.depto_ti,
+            clasificacion='interno', version_actual='1.0',
+            fecha_vencimiento=date.today() - timedelta(days=1),
+        )
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.get(f'/documentos/{doc.tipo_id}/{doc.uuid}/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.context['vencimiento_vencido'])
+        self.assertContains(resp, 'Solicitar Reactivación / Renovación')
+        self.assertNotContains(resp, 'onclick="cambiarEstadoDocumento')
+
+    def test_obsoleto_sin_fecha_ofrece_reactivar_directo(self):
+        self.client.login(username='admin01', password='testpass123')
+        resp = self.client.get(
+            f'/documentos/{self.doc_obsoleto.tipo_id}/{self.doc_obsoleto.uuid}/'
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.context['vencimiento_vencido'])
+        self.assertTrue(resp.context['puede_inhabilitar_directo'])
+        self.assertTrue(resp.context['puede_inhabilitar'])
+        self.assertContains(resp, 'onclick="cambiarEstadoDocumento')
+
+    def test_jefe_ve_etiquetas_de_solicitud(self):
+        """El jefe del departamento ve 'Solicitar...' (no 'Inhabilitar')."""
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.get(
+            f'/documentos/{self.doc_activo.tipo_id}/{self.doc_activo.uuid}/'
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.context['puede_inhabilitar_directo'])
+        self.assertTrue(resp.context['puede_inhabilitar'])
+        self.assertTrue(resp.context['puede_eliminar'])
+        self.assertContains(resp, 'Solicitar Inhabilitación')
 
 
 # =============================================================================
@@ -1079,7 +1203,7 @@ class DetalleVisibilidadBotonesTest(BaseDocumentosTest):
         )
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, 'Planilla de Cambios')
-        self.assertContains(resp, 'Solicitar Eliminación')
+        self.assertContains(resp, 'Solicitar Inhabilitación')
 
     def test_admin_ve_botones_en_cualquier_depto(self):
         """Admin ve botones en documentos de cualquier depto."""

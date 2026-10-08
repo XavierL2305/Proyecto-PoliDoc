@@ -1223,7 +1223,7 @@ def detalle_documento(request, tipo, documento_id):
     ).exists()
 
     from .permissions import puede_inhabilitar
-    puede_inhab, _ = puede_inhabilitar(request.user, documento)
+    puede_inhab, rol_inhab = puede_inhabilitar(request.user, documento)
 
     from django.db.models.functions import Coalesce
     historial_estados = (
@@ -1305,6 +1305,10 @@ def detalle_documento(request, tipo, documento_id):
         'puede_eliminar_versiones': es_admin or es_propietario,
         'puede_descargar': puede_descargar(request.user, documento) or tiene_descarga_aprobada,
         'puede_inhabilitar': puede_inhab,
+        'puede_inhabilitar_directo': rol_inhab == 'directo',
+        'vencimiento_vencido': bool(
+            documento.fecha_vencimiento and documento.fecha_vencimiento <= hoy
+        ),
         'puede_renovar': es_propietario or es_admin or es_jefe_depto,
         'puede_establecer_vigencia': (es_propietario or es_admin or es_jefe_depto) and documento.estado == 'activo',
         'periodos_vigencia': periodos_activos(),
@@ -1429,10 +1433,12 @@ def eliminar_documento(request, tipo, documento_id):
             else:
                 messages.success(request, resultado.mensaje)
             return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
+    from .permissions import puede_inhabilitar
     return render(request, 'documentos/confirmar_eliminar.html', {
         'documento': documento, 'tipo': tipo,
         'formato_dinamico': formato_dinamico,
         'respuestas_formato': respuestas_formato,
+        'puede_inhabilitar_directo': puede_inhabilitar(request.user, documento)[1] == 'directo',
     })
 
 
@@ -2117,7 +2123,13 @@ def eliminar_version(request, tipo, documento_id, version_id):
 
 @login_required(login_url='/login/')
 def renovar_vencimiento(request, tipo, documento_id):
-    """Renueva la fecha de vencimiento de un documento. Reactiva si está obsoleto."""
+    """Renueva la fecha de vencimiento de un documento (ISO 9001:7.5.3.2).
+
+    La renovación exige UNA aprobación (jefe del departamento del documento,
+    o jefe de Gerencia General si el solicitante es jefe); el administrador y
+    el jefe de GG la aplican directamente. Si el documento estaba obsoleto,
+    al aprobarse pasa a activo (ver `services.cambios_estado`).
+    """
     if request.method != 'POST':
         return redirect('documentos:detalle', tipo=tipo, documento_id=documento_id)
     documento = get_documento(tipo, documento_id)
@@ -2125,14 +2137,6 @@ def renovar_vencimiento(request, tipo, documento_id):
         messages.error(request, 'Documento no encontrado.')
         return redirect('documentos:mis_documentos')
     user = request.user
-    perfil = user.perfil
-    es_propietario = documento.propietario == user
-    es_jefe_o_admin = perfil.es_administrador or (
-        perfil.es_jefe and documento.departamento == perfil.departamento
-    )
-    if not es_propietario and not es_jefe_o_admin:
-        messages.error(request, 'No tienes permisos para renovar este documento.')
-        return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
     fecha_nueva = request.POST.get('fecha_nueva')
     observacion = request.POST.get('observacion', '')
     if not fecha_nueva:
@@ -2143,66 +2147,68 @@ def renovar_vencimiento(request, tipo, documento_id):
     except ValueError:
         messages.error(request, 'Fecha inválida.')
         return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
+
+    from .services.cambios_estado import solicitar_cambio_estado
+    estado_previo = documento.estado
     fecha_anterior = documento.fecha_vencimiento
-    documento.fecha_vencimiento = fecha_nueva_dt
-    documento.aviso_vencimiento_enviado = False
-    reactivado = False
-    if documento.estado == 'obsoleto':
-        documento.estado = 'activo'
-        reactivado = True
-    documento.save(update_fields=['fecha_vencimiento', 'aviso_vencimiento_enviado', 'estado'])
-    from .models import RenovacionVencimiento
-    RenovacionVencimiento.objects.create(
-        documento=documento,
-        fecha_anterior=fecha_anterior or fecha_nueva_dt,
-        fecha_nueva=fecha_nueva_dt,
-        renovado_por=user,
-        observacion=observacion,
+    resultado = solicitar_cambio_estado(
+        documento, user, 'renovar',
+        observaciones=observacion,
+        fecha_propuesta=fecha_nueva_dt,
+        ip_address=request.META.get('REMOTE_ADDR'),
+        user_agent=request.META.get('HTTP_USER_AGENT'),
     )
-    # Notificar propietario
-    from autenticacion.models import Notificacion
-    if documento.propietario != user:
-        Notificacion.objects.create(
-            usuario=documento.propietario,
-            titulo='Vencimiento renovado',
-            mensaje=f'{user.get_full_name() or user.username} renovó el vencimiento de "{documento.nombre}" ({documento.codigo}) hasta el {fecha_nueva_dt}.',
-            tipo='renovacion_vencimiento',
-            url_accion=f'/documentos/{tipo}/{documento.uuid}/',
-        )
-    # Notificar jefe
-    if documento.departamento and documento.departamento.jefe and documento.departamento.jefe != user:
-        Notificacion.objects.create(
-            usuario=documento.departamento.jefe,
-            titulo='Documento del departamento renovado',
-            mensaje=f'{user.get_full_name() or user.username} renovó el vencimiento de "{documento.nombre}" ({documento.codigo}) hasta el {fecha_nueva_dt}.',
-            tipo='renovacion_vencimiento',
-            url_accion=f'/documentos/{tipo}/{documento.uuid}/',
-        )
-    # Auditoría
-    try:
-        from auditoria.services import registrar_log_iso
-        from auditoria.middleware import get_client_ip
-        registrar_log_iso(
-            usuario=user,
-            accion_tipo='renovacion',
-            accion_categoria='vencimiento',
-            recurso_tipo=tipo,
-            recurso_id=str(documento.uuid),
-            recurso_codigo=documento.codigo,
-            recurso_nombre=documento.nombre,
-            detalles={'fecha_anterior': str(fecha_anterior), 'fecha_nueva': str(fecha_nueva_dt)},
-            resultado_exitoso=True,
-            resultado_mensaje=f'Vencimiento renovado: {fecha_anterior} → {fecha_nueva_dt}',
-            ip_address=get_client_ip(),
-            user_agent=request.META.get('HTTP_USER_AGENT'),
-        )
-    except Exception as exc:
-        logger.error("Auditoría renovación vencimiento: %s", exc)
-    msg = f'Vencimiento renovado hasta el {fecha_nueva_dt}.'
-    if reactivado:
-        msg += ' El documento fue reactivado.'
-    messages.success(request, msg)
+    if resultado.aplicado:
+        _notificar_renovacion(documento, user, fecha_nueva_dt)
+        try:
+            from auditoria.services import registrar_log_iso
+            from auditoria.middleware import get_client_ip
+            registrar_log_iso(
+                usuario=user,
+                accion_tipo='renovacion',
+                accion_categoria='vencimiento',
+                recurso_tipo=tipo,
+                recurso_id=str(documento.uuid),
+                recurso_codigo=documento.codigo,
+                recurso_nombre=documento.nombre,
+                detalles={'fecha_anterior': str(fecha_anterior), 'fecha_nueva': str(fecha_nueva_dt)},
+                resultado_exitoso=True,
+                resultado_mensaje=f'Vencimiento renovado: {fecha_anterior} → {fecha_nueva_dt}',
+                ip_address=get_client_ip(),
+                user_agent=request.META.get('HTTP_USER_AGENT'),
+            )
+        except Exception as exc:
+            logger.error("Auditoría renovación vencimiento: %s", exc)
+        msg = f'Vencimiento renovado hasta el {fecha_nueva_dt}.'
+        if estado_previo == 'obsoleto':
+            msg += ' El documento fue reactivado.'
+        messages.success(request, msg)
+        return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
+
+    if resultado.solicitud is None:
+        messages.warning(request, resultado.mensaje)
+    else:
+        messages.success(request, resultado.mensaje)
     return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
+
+
+def _notificar_renovacion(documento, user, fecha_nueva_dt):
+    """Avisa al propietario y al jefe del departamento de una renovación aplicada."""
+    from autenticacion.models import Notificacion
+    destinatarios = [documento.propietario, documento.departamento.jefe if documento.departamento else None]
+    for destinatario in destinatarios:
+        if not destinatario or destinatario == user:
+            continue
+        Notificacion.objects.create(
+            usuario=destinatario,
+            titulo='Vencimiento renovado',
+            mensaje=(
+                f'{user.get_full_name() or user.username} renovó el vencimiento de '
+                f'"{documento.nombre}" ({documento.codigo}) hasta el {fecha_nueva_dt}.'
+            ),
+            tipo='renovacion_vencimiento',
+            url_accion=f'/documentos/{documento.tipo_id}/{documento.uuid}/',
+        )
 
 
 @login_required(login_url='/login/')
