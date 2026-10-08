@@ -90,17 +90,21 @@ Estado actual de las capturas:
 ## Generar el manual (HTML / PDF)
 
 El manual se puede exportar a un solo archivo con portada, índice e
-imágenes incrustadas:
+imágenes incrustadas. **Es opcional y ajeno al sistema:** no forma parte
+del entorno Django y sus dependencias **no** están en `requirements.txt`
+del proyecto, sino en `requirements-export.txt`.
 
 ```bash
-pip install -r docs/manual-usuario/requirements-export.txt   # solo la 1.ª vez
+pip install -r docs/manual-usuario/requirements-export.txt   # solo quien exporte
 python3 docs/manual-usuario/exportar.py                      # HTML + PDF
 python3 docs/manual-usuario/exportar.py --html               # solo HTML
 ```
 
 La salida queda en `docs/manual-usuario/dist/manual-polidoc.html` y
 `.pdf` (carpeta ignorada por git). La portada del export toma la versión,
-la fecha y el commit de la tabla de control de versiones de arriba.
+la fecha y el commit de la tabla de control de versiones de arriba. Sin
+las dependencias, el script sale con error 1 y **el manual en Markdown
+sigue siendo la fuente válida**.
 
 ---
 
