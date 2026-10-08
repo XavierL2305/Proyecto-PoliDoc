@@ -2368,7 +2368,7 @@ el cuello NO era el volumen de datos.
     Mongo; fail_closed siempre intenta), cierre al recuperar y
     `reprocesar_buffer`.
 
-  - Suite total: 918 tests. Comando:
+  - Suite total: 921 tests. Comando:
     `python manage.py test auditoria documentos autenticacion --settings=polidoc.test_settings`
 
 -------------------------------------------------------------------
@@ -2382,8 +2382,11 @@ el cuello NO era el volumen de datos.
     (trabajador-coordinador, jefe, administrador) y auditoría e informes.
   - Export (fase 3): `exportar.py` genera `dist/manual-polidoc.{html,pdf}`
     (portada con el control de versión, índice e imágenes en base64).
-    Requisitos propios en `requirements-export.txt` (markdown + weasyprint;
-    no forman parte del entorno Django). `dist/` está en .gitignore.
+    Es **opcional y ajeno al entorno Django**: no se importa desde la
+    aplicación y sus dependencias NO están en `requirements.txt`; viven en
+    `requirements-export.txt` (markdown + weasyprint). Sin ellas el script
+    sale con error 1 y el manual en Markdown sigue siendo la fuente
+    válida. `dist/` está en .gitignore.
   - Verificación: `python3 docs/manual-usuario/verificar.py` (enlaces,
     imágenes, criterios de capítulo; debe dar 0 errores).
   - Pendiente: 1 captura — `imagenes/ampliacion/conversion-pdf.png`
@@ -2391,3 +2394,14 @@ el cuello NO era el volumen de datos.
     alcance del sandbox).
   - El manual NO se versiona en este archivo hasta ahora; esta sección es
     el resumen de estado.
+
+  27.1 LIMPIEZA POSTERIOR AL FLUJO DE CAMBIO DE ESTADO:
+       - `SolicitudAprobacionDocumento._activar_documento` →
+         `aplicar_cambio()` (el nombre viejo engañaba: además de activar
+         inhabilita, renueva y borra versiones). 2 llamadas afectadas.
+       - Regla de negocio confirmada: si el documento no tiene jefe de
+         departamento, `aprobador_de_cambio` asigna al jefe de Gerencia
+         General (no queda en espera). Documentado en el docstring y en
+         el manual (cap. 06).
+       - Pruebas de verificación añadidas (auditoría con IP, notificación
+         al aprobador, planilla SGC-FOR-001 del camino directo).

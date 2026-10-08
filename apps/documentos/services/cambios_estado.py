@@ -64,6 +64,14 @@ def jefe_gerencia_general():
 def aprobador_de_cambio(documento, usuario):
     """(aprobador, rol) único para la solicitud de cambio.
 
+    Regla de negocio confirmada:
+
+    * Si el solicitante es jefe (de cualquier departamento) → aprueba el
+      jefe de Gerencia General.
+    * Si no lo es → aprueba el jefe del departamento del documento.
+    * Si el documento **no tiene jefe de departamento** → cae al jefe de
+      Gerencia General (no queda en espera).
+
     ``(None, None)`` significa que no hay con quién aprobar (queda
     ``'esperando'``); el rol indica qué valores se autocompletan al aprobar.
     """

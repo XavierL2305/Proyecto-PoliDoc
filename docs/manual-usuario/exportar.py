@@ -13,8 +13,15 @@ Uso:
 
 Salida por defecto: docs/manual-usuario/dist/manual-polidoc.{html,pdf}
 
-Requisitos (fuera del entorno de la aplicación):
+Requisitos: Opcionales y AJENOS al entorno de la aplicación. Este script no
+forma parte del sistema Django, no se importa desde él y sus dependencias NO
+están en `requirements.txt`: son solo para generar el manual distribuible.
+Para instalarlas (solo quien quiera exportar):
+
     pip install -r docs/manual-usuario/requirements-export.txt
+
+Sin ellas el HTML no se puede generar y el script sale con error 1; el
+manual en Markdown sigue siendo la fuente válida.
 """
 
 from __future__ import annotations
@@ -120,7 +127,7 @@ def incrustar_imagenes(html: str, cap: Path) -> str:
     return re.sub(r'src="([^"]+)"', repl, html)
 
 
-def md_a_html(texto: str, cap: Path, es_glosario: bool) -> str:
+def md_a_html(texto: str, cap: Path) -> str:
     import markdown
 
     extensiones = ["tables", "fenced_code", "sane_lists"]
@@ -159,6 +166,15 @@ def titulo_capitulo(texto: str) -> str:
     return m.group(1).strip() if m else "—"
 
 
+def quitar_h1(texto: str) -> str:
+    """Elimina la línea H1 inicial del capítulo (ya usada como ancla).
+
+    Así no hace falta depurar un ``<h1>`` duplicado con regex después de
+    convertir: el H1 con ``id`` se escribe a mano y el del markdown se omite.
+    """
+    return re.sub(r"^# .*\n", "", texto, count=1, flags=re.MULTILINE)
+
+
 def construir_html() -> str:
     meta = metadata()
     partes = [
@@ -179,23 +195,19 @@ def construir_html() -> str:
         texto = re.sub(r"^\*\*(Anterior|Siguiente|Volver).*\n?", "", texto,
                        flags=re.MULTILINE)
         ancla = Path(nombre).stem
-        cuerpo.append(f"<h1 id='{ancla}'>{titulo_capitulo(texto)}</h1>")
-        # El H1 del capítulo ya está como ancla; se elimina del cuerpo.
-        cuerpo.append(md_a_html(texto, cap, es_glosario=nombre.startswith("A-")))
-        entradas.append(f"<li><a href='#{ancla}'>{titulo_capitulo(texto)}</a></li>")
+        titulo = titulo_capitulo(texto)
+        # El H1 del capítulo se escribe a mano con su ancla; el del markdown
+        # se omite para no duplicarlo (ver quitar_h1).
+        cuerpo.append(f"<h1 id='{ancla}'>{titulo}</h1>")
+        cuerpo.append(md_a_html(quitar_h1(texto), cap))
+        entradas.append(f"<li><a href='#{ancla}'>{titulo}</a></li>")
     partes.append(
         "<div class='toc'><h1 id='indice' style='page-break-before: avoid;'>"
         "Índice</h1><ul>" + "".join(entradas) + "</ul></div>"
     )
     partes.extend(cuerpo)
     partes.append("</body></html>")
-    # Los H1 de capítulo duplican el título del md: quitar el segundo H1.
-    html = "\n".join(par for par in partes if par)
-    html = re.sub(
-        r"(<h1 id='[^']+'>([^<]+)</h1>\s*)<h1[^>]*>[^<]*</h1>",
-        r"\1", html,
-    )
-    return html
+    return "\n".join(par for par in partes if par)
 
 
 def main() -> int:

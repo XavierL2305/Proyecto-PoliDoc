@@ -155,6 +155,10 @@ aprobación** y dejan evidencia (solicitud + notificación + auditoría).
 | Propietario del documento | Jefe del **departamento del documento** |
 | Coordinador con permiso de eliminación | Jefe del **departamento del documento** |
 
+> Si el documento **no tiene jefe de departamento asignado**, la solicitud
+> no queda en espera: se envía al jefe de **Gerencia General**. Solo queda
+> en espera cuando falta el jefe de Gerencia General.
+
 Mientras la solicitud está pendiente el documento **no cambia de estado**
 (puedes seguir editándolo) y no se puede pedir otra igual para el mismo
 documento.
