@@ -140,5 +140,83 @@ El documento vuelve a **Borrador** y el creador es notificado con tu motivo.
 
 ---
 
+## Cambios de estado: inhabilitar, reactivar y renovar
+
+Inhabilitar un documento, reactivarlo o renovar su vencimiento son cambios
+de la información documentada y, por ISO 9001:7.5.3.2, exigen **UNA sola
+aprobación** y dejan evidencia (solicitud + notificación + auditoría).
+
+### Quién aprueba
+
+| Quién lo pide | Quién aprueba |
+|---|---|
+| Administrador o jefe de Gerencia General | **Nadie**: lo aplican directamente y queda registrado |
+| Jefe de departamento (de cualquier departamento) | Jefe de **Gerencia General** |
+| Propietario del documento | Jefe del **departamento del documento** |
+| Coordinador con permiso de eliminación | Jefe del **departamento del documento** |
+
+Mientras la solicitud está pendiente el documento **no cambia de estado**
+(puedes seguir editándolo) y no se puede pedir otra igual para el mismo
+documento.
+
+### Inhabilitar
+
+1. Abre la ficha del documento y pulsa **Inhabilitar** (o
+   **Solicitar Inhabilitación** si te corresponde aprobar).
+2. Rellena la planilla del formulario **SGC-FOR-005** si el documento tiene
+   formato dinámico; es la evidencia de la disposición.
+3. Confirma. Si eres administrador o jefe de Gerencia General el documento
+   pasa a **Obsoleto** en el acto; en caso contrario, el aprobador recibe
+   la solicitud y tú la notificación de que quedó enviada.
+
+### Reactivar
+
+1. En la ficha de un documento **Obsoleto** pulsa **Habilitar** (o
+   **Solicitar Reactivación**).
+2. Confirma. El documento vuelve a **Activo** al aprobarse.
+
+> Si el documento obsoleto **ya venció**, la reactivación se niega: la
+> única salida es **renovar** el vencimiento.
+
+### Renovar el vencimiento
+
+1. En la ficha de un documento **Obsoleto** (fila *Documento vencido* /
+   *Documento inhabilitado* de la tarjeta ISO) pulsa
+   **Reactivar / Renovar** (o **Solicitar Reactivación / Renovación**).
+2. Elige la **nueva fecha** (hay atajos de +6 meses a +10 años) y añade una
+   observación si quieres.
+3. Confirma. Al aprobarse se fija la fecha, se limpia la cola de retención,
+   el documento pasa a **Activo** y queda una *Renovación de vencimiento* en
+   su historial.
+
+### Errores frecuentes (cambios de estado)
+
+| Mensaje | Causa | Solución |
+|---|---|---|
+| "Ya existe una solicitud de … pendiente" | Ya se pidió antes | Espera a que se resuelva |
+| "El documento ya está inhabilitado" | Ya es obsoleto | No hay nada que hacer |
+| "El documento venció el …; para reactivarlo debes solicitar una renovación" | Vencido | Usa **Renovar** en lugar de **Habilitar** |
+| "No tienes permisos para solicitar la …" | No eres propietario, jefe del departamento ni coordinador con permiso | Pídeselo a quien corresponda |
+| "No hay jefe de Gerencia General asignado" | El departamento GG no tiene jefe | Un administrador debe asignarlo |
+
+---
+
+## Eliminar una versión (solo propietario o administrador)
+
+La eliminación de una versión **no tiene aprobación**: la ejecuta en el acto
+el **propietario del documento** o un **administrador**, y queda registrada
+como una fila ya aprobada (evidencia ISO). El jefe del departamento no
+elimina versiones ajenas a su autoría.
+
+1. En la ficha, pestaña **Últimas Versiones**, pulsa **Ver historial de
+   versiones**.
+2. Junto a la versión a quitar, pulsa **Eliminar** y confirma.
+3. Si la versión eliminada era la vigente, se restaura la anterior o el
+   documento pasa a *Obsoleto*.
+
+Ver [capítulo 07](07-versionado-planilla.md) para el resto del versionado.
+
+---
+
 **Anterior:** [05. Crear un documento](05-crear-documento.md) ·
 **Siguiente:** [07. Versionado y Planilla de Cambios](07-versionado-planilla.md)

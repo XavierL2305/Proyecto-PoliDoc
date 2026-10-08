@@ -123,11 +123,13 @@ recibe el motivo.
 
 ### Eliminar una versión
 
-1. En el historial, pulsa **Eliminar Versión** junto a la versión a quitar.
-2. Quién puede:
-   - **Jefe del departamento o administrador:** la elimina directamente.
-   - **Propietario y creador de esa versión:** genera una solicitud que debe
-     aprobar el jefe.
+1. En el historial, pulsa **Eliminar** junto a la versión a quitar y
+   confirma.
+2. Quién puede (no hay aprobación: se ejecuta en el acto y queda registrada
+   como evidencia ISO):
+   - **Propietario del documento** o **administrador**.
+   - El jefe del departamento, por sí solo, **no** elimina versiones ajenas a
+     su autoría.
 3. Si la versión eliminada era la vigente, se restaura la anterior o el
    documento pasa a *Obsoleto*.
 
@@ -135,9 +137,8 @@ recibe el motivo.
 
 | Mensaje | Causa | Solución |
 |---|---|---|
-| "No se pueden eliminar versiones mientras el documento está en revisión" | Hay una aprobación en curso | Espera a que termine la revisión |
-| "Ya existe una solicitud pendiente para eliminar esta versión" | Ya se pidió antes | Espera la respuesta del aprobador |
-| "No tienes permisos para eliminar esta versión" | No eres jefe/admin, ni propietario-creador | Pide la eliminación al jefe |
+| "No tienes permisos para eliminar esta versión" | No eres el propietario ni administrador | Pídeselo al propietario o a un administrador |
+| No aparece el botón **Eliminar** | No eres propietario ni administrador | Solo ellos ven el botón |
 | "No tienes permisos para editar este documento" | Solo el propietario (o quien tenga asignación de edición) edita | Revisa tus asignaciones |
 | No aparece el botón *Planilla de Cambios* | El documento está en borrador | Usa *Editar Borrador* |
 | No encuentras tu planilla borrador | No hay un listado de planillas; solo se reabre por su enlace | Botón **Planilla de Cambios (borrador)** en la ficha o en Mis Documentos (§2) |

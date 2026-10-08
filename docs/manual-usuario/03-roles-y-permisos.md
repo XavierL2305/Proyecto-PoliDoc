@@ -20,7 +20,7 @@ indicado en la esquina superior derecha, junto a tu nombre.
 |---|---|
 | **Trabajador** | Crear y gestionar sus propios documentos; descargar formularios; solicitar descarga de documentos de su departamento |
 | **Coordinador** | Todo lo del trabajador **más** los documentos que el jefe le asigne, con los permisos que el jefe defina (leer, editar, eliminar) |
-| **Jefe de Departamento** | Gestionar todos los documentos de su departamento, aprobar y autorizar, asignar, transferir, distribuir, inhabilitar y consultar el panel *Departamento* |
+| **Jefe de Departamento** | Gestionar todos los documentos de su departamento, aprobar y autorizar, asignar, transferir, distribuir, pedir la inhabilitación (la aprueba Gerencia General) y consultar el panel *Departamento* |
 | **Administrador** | Acceso a todos los documentos y a la administración del sistema (usuarios, catálogos, formatos, auditoría) |
 
 > El rol y el departamento los asigna el administrador. Si el tuyo está mal,
@@ -39,10 +39,18 @@ indicado en la esquina superior derecha, junto a tu nombre.
 | Asignar documentos a un coordinador | ✖ | ✖ | ✔ | ✔ |
 | Transferir propiedad | ✖ | ✖ | ✔ (su departamento) | ✔ |
 | Distribuir y revocar copias | ✖ | ✖ | ✔ | ✔ |
-| Inhabilitar documentos | ✖ | ✖ | ✔ | ✔ |
+| Inhabilitar documentos | ✔ (solicita) | ✔ según permiso (solicita) | ✔ (solicita) | ✔ directo |
+| Reactivar / renovar vencimiento | ✔ (solicita) | ✔ según permiso (solicita) | ✔ (solicita) | ✔ directo |
 | Ver *Departamento* | ✖ | ✖ | ✔ | ✔ |
 | Gestionar usuarios y catálogos | ✖ | ✖ | ✖ | ✔ |
 | Destruir documentos (fin de retención) | ✖ | ✖ | ✖ | ✔ (superusuario) |
+
+> **Inhabilitar, reactivar y renovar siempre pasan por UNA aprobación**, salvo
+> para el administrador y el jefe de Gerencia General, que lo aplican
+> directamente. Aprueba **quien corresponde** según quién lo pide: el jefe de
+> Gerencia General si lo pide un jefe de departamento, y el jefe del
+> departamento del documento si lo pide el propietario (o un coordinador con
+> permiso de eliminación). El detalle está en el capítulo 06.
 
 ## Clasificación de seguridad
 

@@ -46,11 +46,14 @@ reúne la información de "Cuándo pedir ayuda al administrador" (al final).
 
 | Síntoma | Causa probable | Qué hacer |
 |---|---|---|
-| El documento aparece **Obsoleto** / **Vencido** | Pasó la fecha de vencimiento | El propietario, el jefe o el administrador lo renuevan desde la ficha |
+| El documento aparece **Obsoleto** / **Vencido** | Pasó la fecha de vencimiento | Renueva el vencimiento desde la ficha (cap. 06): el propietario o el jefe lo **solicitan**, el jefe del departamento lo aprueba y el administrador lo aplica directo |
+| Quieres "Habilitar" un documento obsoleto y vencido | La reactivación se niega si la fecha ya venció | Usa **Renovar** el vencimiento: es la única salida (cap. 06) |
 | "Vence pronto" (amarillo) | Faltan 7 días o menos | Renueva el período de vigencia o revisa el contenido |
 | No puedes editar un documento activo | Por diseño: los activos se cambian por Planilla de Cambios | Crea la planilla desde la ficha (cap. 07) |
 | Guardaste una planilla como borrador y no la encuentras | No hay un listado de planillas; solo se reabre desde su enlace | Botón **Planilla de Cambios (borrador)** en la ficha del documento o en Mis Documentos, y **Continuar edición** en el detalle (cap. 07) |
-| "No se pueden eliminar versiones mientras el documento está en revisión" | Hay una aprobación en curso | Espera a que termine |
+| "No tienes permisos para eliminar esta versión" | Solo el propietario del documento o un administrador eliminan versiones | Pídeselo al propietario o a un administrador (cap. 07) |
+| "No tienes permisos para solicitar la inhabilitación / reactivación / renovación" | No eres propietario, jefe del departamento ni coordinador con permiso | Pídeselo a quien corresponda (cap. 06) |
+| "Ya existe una solicitud de … pendiente" | Ya se pidió antes | Espera a que se resuelva |
 | El código que quieres ya existe | Colisión de secuencia | Cambia el número de secuencia en el formulario |
 
 ## Archivos, conversión y resumen IA

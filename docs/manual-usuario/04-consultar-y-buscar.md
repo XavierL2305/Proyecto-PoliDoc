@@ -79,9 +79,12 @@ Al pulsar **Ver** abres el detalle (`/documentos/<tipo>/<uuid>/`).
 
 **Cabecera:** nombre, código y versión, más los botones de acción disponibles:
 *Editar Borrador* / *Enviar a Revisión* (borrador), *Planilla de Cambios*
-(documento activo), *Inhabilitar* o *Solicitar Eliminación*, *Descargar* o
-*Solicitar Descarga*, y *Habilitar* / *Reactivar - Renovar* (si el documento
-está obsoleto y puedes reactivarlo).
+(documento activo), *Inhabilitar* o *Solicitar Inhabilitación*, *Descargar* o
+*Solicitar Descarga*, y *Habilitar* / *Solicitar Reactivación* /
+*Solicitar Reactivación / Renovación* (si el documento está obsoleto; si ya
+venció, solo se ofrece renovar). Quien aplica el cambio sin aprobación
+(administrador y jefe de Gerencia General) ve los botones sin la palabra
+"Solicitar".
 
 **Información principal:** estado, clasificación, versión actual, propietario,
 departamento, última modificación y fechas de vigencia y vencimiento.

@@ -5,9 +5,9 @@ Sistema de gestión documental para la Policlínica Táchira (normas ISO 9001,
 
 | Control de versión | |
 |---|---|
-| Versión del manual | **0.9 — MVP (Tomo 1)** |
-| Fecha | 07/10/2026 |
-| Versión del sistema verificada | commit `89549ba` |
+| Versión del manual | **0.95 — MVP (Tomo 1)** |
+| Fecha | 08/10/2026 |
+| Versión del sistema verificada | commit `8f9be56` |
 | Fuente de verdad técnica | `CONTEXT.txt` (raíz del proyecto) + código de vistas y plantillas |
 | Estado | En elaboración. Tomo 2 pendiente (ver "Fases" abajo) |
 

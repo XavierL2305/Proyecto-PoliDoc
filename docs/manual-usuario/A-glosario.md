@@ -24,13 +24,14 @@ alfabético.
 | **Evaluador** | Primer paso de la cadena: jefe de departamento (o jefe par si el solicitante también es jefe) |
 | **Formato** | Plantilla configurable (secciones y campos) que se aplica a determinadas operaciones; lo gestiona el administrador |
 | **GG** | Gerencia General: departamento cuyo jefe actúa como Autorizador |
-| **Habilitar / Inhabilitar** | Reactivar un documento obsoleto / pasarlo a obsoleto (jefe o administrador; los demás solicitan eliminación) |
+| **Habilitar / Inhabilitar** | Reactivar un documento obsoleto / pasarlo a obsoleto. Exige UNA aprobación: la aplica directo el administrador o el jefe de Gerencia General; los demás reciben el botón como *Solicitar Reactivación* / *Solicitar Inhabilitación* |
 | **Jefe de departamento** | Rol que gestiona todo su departamento: aprueba, asigna, distribuye, transfiere e inhabilita |
 | **Obsoleto** | Estado del documento vencido o inhabilitado: solo lectura histórica, no se distribuye |
 | **Período de retención** | Tiempo mínimo que un documento se conserva tras dejar de estar activo, antes de poder destruirse |
 | **Planilla de Cambios** | Trámite formal para modificar un documento activo; al aprobarse, genera la nueva versión |
 | **Propietario** | Usuario responsable del documento; el que lo creó salvo que se haya transferido |
 | **Revisión (ISO)** | Contador del ciclo de revisión del documento (0, 1, 2...); se incrementa en cada activación. No confundir con *Versión* |
+| **Renovación de vencimiento** | Nueva fecha de vencimiento de un documento (sirve para reactivar un obsoleto vencido). Exige UNA aprobación y deja registro en el historial |
 | **Solicitud de acceso** | Petición de un jefe a otro departamento para ver un documento que no es de su ámbito |
 | **Solicitud de descarga** | Petición formal con motivo para descargar un documento que no puedes bajar directamente |
 | **Trazabilidad** | Capacidad de reconstruir el historial de un documento: versiones, aprobaciones, descargas y distribuciones |
