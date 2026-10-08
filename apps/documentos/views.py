@@ -1160,7 +1160,7 @@ def detalle_documento(request, tipo, documento_id):
 
     _reconciliar_resumen_ia(documento)
 
-    versiones = VersionDocumento.objects.filter(documento=documento)
+    versiones = VersionDocumento.objects.filter(documento=documento, activa=True)
     from .permissions import descarga_autorizada, puede_descargar
     tiene_descarga_aprobada = descarga_autorizada(documento, request.user)
 
@@ -1298,6 +1298,7 @@ def detalle_documento(request, tipo, documento_id):
         'versiones': versiones,
         'puede_editar': puede_editar_documento(request.user, documento),
         'puede_eliminar': puede_eliminar_documento(request.user, documento),
+        'puede_eliminar_versiones': es_admin or es_propietario,
         'puede_descargar': puede_descargar(request.user, documento) or tiene_descarga_aprobada,
         'puede_inhabilitar': puede_inhab,
         'puede_renovar': es_propietario or es_admin or es_jefe_depto,
@@ -2043,9 +2044,15 @@ def historial_versiones(request, tipo, documento_id):
     solicitudes_pendientes = SolicitudAprobacionDocumento.objects.filter(
         documento=documento, accion_solicitud='eliminar_version', estado='pendiente'
     ).values_list('version_a_eliminar_id', flat=True)
+    # ISO: la eliminación de versión es directa y queda reservada al
+    # propietario del documento y a los administradores (no al jefe del
+    # departamento, que no responde por la autoría del documento).
+    perfil = request.user.perfil
+    puede_eliminar_versiones = perfil.es_administrador or documento.propietario == request.user
     return render(request, 'documentos/historial_versiones.html', {
         'documento': documento, 'tipo': tipo, 'versiones': versiones,
         'solicitudes_pendientes_ids': list(solicitudes_pendientes),
+        'puede_eliminar_versiones': puede_eliminar_versiones,
     })
 
 
@@ -2055,13 +2062,11 @@ def eliminar_version(request, tipo, documento_id, version_id):
     version = get_object_or_404(VersionDocumento, id=version_id, documento=documento, activa=True)
     user = request.user
     perfil = user.perfil
-    from .permissions import es_jefe_de_departamento
-    # Un jefe solo actúa sobre documentos de SU departamento; admin sobre todos.
-    es_jefe_o_admin = perfil.es_administrador or es_jefe_de_departamento(user, documento)
+    # ISO: la eliminación de versión se aplica directo (sin aprobación) y
+    # solo puede iniciarla el propietario del documento o un administrador.
     es_propietario = documento.propietario == user
-    es_creador = version.creado_por == user
 
-    if not (es_jefe_o_admin or (es_propietario and es_creador)):
+    if not (perfil.es_administrador or es_propietario):
         messages.error(request, 'No tienes permisos para eliminar esta versión.')
         return redirect('documentos:historial_versiones', tipo=tipo, documento_id=documento.uuid)
 
@@ -2069,49 +2074,39 @@ def eliminar_version(request, tipo, documento_id, version_id):
         messages.error(request, 'No se pueden eliminar versiones mientras el documento está en revisión.')
         return redirect('documentos:historial_versiones', tipo=tipo, documento_id=documento.uuid)
 
-    solicitud_existente = SolicitudAprobacionDocumento.objects.filter(
-        documento=documento, version_a_eliminar=version, accion_solicitud='eliminar_version', estado='pendiente'
-    ).exists()
-    if solicitud_existente:
-        messages.warning(request, 'Ya existe una solicitud pendiente para eliminar esta versión.')
-        return redirect('documentos:historial_versiones', tipo=tipo, documento_id=documento.uuid)
-
     if request.method == 'POST':
-        if es_jefe_o_admin:
-            solic = SolicitudAprobacionDocumento(
-                documento=documento, accion_solicitud='eliminar_version',
-                version_a_eliminar=version, solicitante=user,
-                propietario=documento.propietario,
-                aprobador=user,
-                departamento_origen=documento.departamento,
-                estado='aprobada',
+        # Solicitudes de eliminación de versión generadas antes de que este
+        # flujo fuera directo: se cancelan para no dejar cadenas obsoletas
+        # que podrían "restaurar" la versión tras borrarse.
+        SolicitudAprobacionDocumento.objects.filter(
+            documento=documento, version_a_eliminar=version,
+            accion_solicitud='eliminar_version',
+        ).exclude(estado__in=('aprobada', 'rechazada', 'cancelada')).update(
+            estado='cancelada', fecha_respuesta=timezone.now(),
+        )
+        solic = SolicitudAprobacionDocumento(
+            documento=documento, accion_solicitud='eliminar_version',
+            version_a_eliminar=version, solicitante=user,
+            propietario=documento.propietario,
+            aprobador=user,
+            departamento_origen=documento.departamento,
+            rol_aprobador='autorizador', es_final=True,
+            estado='aprobada',
+        )
+        solic.save()
+        solic.aplicar_eliminacion_version(documento, version)
+        solic.fecha_respuesta = timezone.now()
+        solic.save(update_fields=['fecha_respuesta'])
+        try:
+            from auditoria.services import registrar_eliminacion_version
+            registrar_eliminacion_version(
+                user, tipo, str(documento.uuid),
+                version.numero_version, documento.codigo,
+                ip_address=request.META.get('REMOTE_ADDR'),
             )
-            solic.save()
-            solic.aplicar_eliminacion_version(documento, version)
-            solic.fecha_respuesta = timezone.now()
-            solic.save(update_fields=['fecha_respuesta'])
-            try:
-                from auditoria.services import registrar_eliminacion_version
-                registrar_eliminacion_version(
-                    user, tipo, str(documento.uuid),
-                    version.numero_version, documento.codigo,
-                    ip_address=request.META.get('REMOTE_ADDR'),
-                )
-            except Exception:
-                pass
-            messages.success(request, f'Versión {version.numero_version} eliminada correctamente.')
-        else:
-            departamento = perfil.departamento
-            sol = crear_cadena_aprobacion_documento(
-                documento=documento, usuario=user,
-                departamento=departamento, accion='eliminar_version',
-                version_a_eliminar=version,
-                observaciones=f'Versión {version.numero_version} de "{documento.nombre}"',
-            )
-            if sol and sol.aprobador_id:
-                messages.success(request, f'Solicitud de eliminación de versión {version.numero_version} enviada al aprobador.')
-            else:
-                messages.warning(request, f'Solicitud de eliminación de versión {version.numero_version} registrada. No hay jefe de departamento asignado; quedará en espera de evaluación.')
+        except Exception:
+            pass
+        messages.success(request, f'Versión {version.numero_version} eliminada correctamente.')
         return redirect('documentos:historial_versiones', tipo=tipo, documento_id=documento.uuid)
 
     return redirect('documentos:historial_versiones', tipo=tipo, documento_id=documento.uuid)

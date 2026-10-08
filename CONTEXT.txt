@@ -1033,6 +1033,17 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
        - observaciones, motivo_rechazo, fecha_solicitud, fecha_respuesta
        - aprobar(): si es_final → _activar_documento(); si no → _avanzar_siguiente()
        - rechazar(): _cancelar_hermano() + _revertir_documento()
+       - ELIMINACIÓN DE VERSIÓN (directa, sin aprobación): `eliminar_version`
+         solo puede iniciarla el PROPIETARIO del documento o un ADMINISTRADOR
+         (el jefe del departamento no elimina versiones ajeno a la autoría).
+         Se registra una fila con estado='aprobada', es_final=True y
+         rol_aprobador='autorizador' (evidencia ISO), y se aplica en el acto;
+         NO se crea cadena de aprobación. Si quedaban solicitudes antiguas
+         pendientes de esa versión, se cancelan antes de aplicar.
+         Vistas: `views.eliminar_version`, `views.historial_versiones`
+         (contexto `puede_eliminar_versiones`); botones en
+         `historial_versiones.html` y en la pestaña "Últimas Versiones" de
+         `detalle.html`.
 
   20.5 NOTIFICACIONES:
        - Evaluador: "Documento pendiente de evaluación".

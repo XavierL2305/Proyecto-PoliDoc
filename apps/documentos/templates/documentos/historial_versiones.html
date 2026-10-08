@@ -60,7 +60,7 @@
           <p class="version-changes">{{ version.cambios }}</p>
           {% endif %}
           <div class="version-actions">
-            {% if user.perfil.es_administrador or user.perfil.es_jefe or documento.propietario == user and version.creado_por == user %}
+            {% if puede_eliminar_versiones %}
               {% if version.id in solicitudes_pendientes_ids %}
               <span class="badge badge--warning" style="font-size: 0.75rem;"><i class="fa-solid fa-clock"></i> Pendiente de aprobación</span>
               {% else %}

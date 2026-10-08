@@ -684,6 +684,12 @@
           </div>
           <div class="detail-body">
             <div id="tab-versiones" class="tab-content active">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.5rem;">
+                <span style="font-size: 0.8rem; color: var(--color-muted);">Últimas {{ versiones|length }} versión{{ versiones|length|pluralize }}</span>
+                <a href="{% url 'documentos:historial_versiones' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost btn--sm" data-anim="view">
+                  <i class="fa-solid fa-clock-rotate-left"></i> <span class="btn-label">Ver historial de versiones</span>
+                </a>
+              </div>
               {% if versiones %}
               <div class="version-list">
                 {% for version in versiones|slice:":5" %}
@@ -693,6 +699,13 @@
                     <span class="version-date">{{ version.fecha_creacion|date:"d/m/Y" }}</span>
                   </div>
                   <span style="font-size: 0.75rem; color: var(--color-muted);">{{ version.creado_por.username }}</span>
+                  {% if puede_eliminar_versiones %}
+                  <button type="button" class="btn btn--danger btn--sm" style="margin-left: auto;"
+                          title="Eliminar versión {{ version.numero_version }}"
+                          onclick="eliminarVersion('{{ version.numero_version }}', '{% url 'documentos:eliminar_version' tipo=tipo documento_id=documento.uuid version_id=version.id %}')">
+                    <i class="fa-solid fa-trash"></i>
+                  </button>
+                  {% endif %}
                 </div>
                 {% endfor %}
               </div>
@@ -1078,10 +1091,22 @@ function cambiarEstadoDocumento(tipo, docId, nuevoEstado) {
   .catch(() => alert('Error de conexión'));
 }
 
+function eliminarVersion(numVersion, url) {
+  const mensaje = 'Se eliminará la versión ' + numVersion + ' del historial. '
+    + 'Si es la versión actual, se restaurará la anterior como base. ¿Deseas continuar?';
+  if (!confirm(mensaje)) return;
+  const form = document.createElement('form');
+  form.method = 'POST';
+  form.action = url;
+  const csrf = document.querySelector('[name=csrfmiddlewaretoken]');
+  if (csrf) form.appendChild(csrf.cloneNode(true));
+  document.body.appendChild(form);
+  form.submit();
+}
+
 function ocultarRechazoDirecto() {
   document.getElementById('rechazo-directo-form').style.display = 'none';
 }
-
 function confirmarRechazoDirecto(tipo, docId) {
   const motivo = document.getElementById('motivo-rechazo-directo').value;
   if (!motivo) {
