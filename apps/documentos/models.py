@@ -1017,7 +1017,7 @@ class SolicitudAprobacionDocumento(models.Model):
         if self.es_final:
             # Activar primero para que fecha_vigencia quede disponible y se
             # autocomplete también en las respuestas del formato dinámico.
-            self._activar_documento()
+            self.aplicar_cambio()
             if operacion:
                 autocompletar_respuestas(self.documento, valores, operacion=operacion)
         else:
@@ -1156,7 +1156,14 @@ class SolicitudAprobacionDocumento(models.Model):
             observacion=self.observaciones or '',
         )
 
-    def _activar_documento(self):
+    def aplicar_cambio(self):
+        """Aplica al documento el resultado de la aprobación de esta solicitud.
+
+        Despacha según ``accion_solicitud``: inhabilitar (pasa a obsoleto y
+        programa la disposición), reactivar (vuelve a activo y limpia la
+        disposición), renovar (aplica la fecha propuesta), eliminar_version
+        (soft-delete) y creación/edición/version (activa y sube la revisión).
+        """
         from django.utils import timezone as tz
         from datetime import timedelta
         doc = self.documento

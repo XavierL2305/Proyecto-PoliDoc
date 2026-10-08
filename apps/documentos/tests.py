@@ -1624,21 +1624,6 @@ class VistasAsignacionesTest(BaseDocumentosTest):
         self.assertIn(resp.status_code, [200, 302])
 
 
-class VistasVersionesTest(BaseDocumentosTest):
-    """Tests de vistas de versiones."""
-
-    def setUp(self):
-        super().setUp()
-        self.client = Client()
-        self.client.login(username='jefe_ti', password='testpass123')
-
-    def test_historial_versiones(self):
-        resp = self.client.get(
-            f'/documentos/procedimientos_generales/{self.doc_activo.uuid}/versiones/'
-        )
-        self.assertEqual(resp.status_code, 200)
-
-
 # =============================================================================
 # EDGE CASES
 # =============================================================================

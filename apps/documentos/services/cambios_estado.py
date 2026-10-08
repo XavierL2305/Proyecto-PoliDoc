@@ -215,7 +215,7 @@ def solicitar_cambio_estado(documento, usuario, accion, *, observaciones='',
         solicitud.save()
         solicitud.fecha_respuesta = timezone.now()
         solicitud.save(update_fields=['fecha_respuesta'])
-        solicitud._activar_documento()
+        solicitud.aplicar_cambio()
         if solicitud_cambio is not None:
             _resolver_solicitud_cambio(solicitud_cambio, aprobada=True)
         return ResultadoCambio(
