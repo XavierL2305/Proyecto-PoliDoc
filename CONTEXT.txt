@@ -2370,3 +2370,24 @@ el cuello NO era el volumen de datos.
 
   - Suite total: 918 tests. Comando:
     `python manage.py test auditoria documentos autenticacion --settings=polidoc.test_settings`
+
+-------------------------------------------------------------------
+27. MANUAL DE USUARIO (docs/manual-usuario/) — TOMO 1 + TOMO 2 + EXPORT
+-------------------------------------------------------------------
+
+  - Contenido: 15 archivos (caps. 01-14 + A-glosario), versión 1.0,
+    verificado contra el commit `8f9be56` (flujo de cambio de estado con
+    una aprobación y eliminación directa de versiones).
+  - Tomo 2 (caps. 10-14): vigencia/vencimientos, guías por rol
+    (trabajador-coordinador, jefe, administrador) y auditoría e informes.
+  - Export (fase 3): `exportar.py` genera `dist/manual-polidoc.{html,pdf}`
+    (portada con el control de versión, índice e imágenes en base64).
+    Requisitos propios en `requirements-export.txt` (markdown + weasyprint;
+    no forman parte del entorno Django). `dist/` está en .gitignore.
+  - Verificación: `python3 docs/manual-usuario/verificar.py` (enlaces,
+    imágenes, criterios de capítulo; debe dar 0 errores).
+  - Pendiente: 1 captura — `imagenes/ampliacion/conversion-pdf.png`
+    (barra de conversión; requiere app levantada + navegador, fuera del
+    alcance del sandbox).
+  - El manual NO se versiona en este archivo hasta ahora; esta sección es
+    el resumen de estado.
