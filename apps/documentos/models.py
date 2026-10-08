@@ -1009,14 +1009,20 @@ class SolicitudAprobacionDocumento(models.Model):
         if self.es_final:
             valores.update(_valores_autorizacion(self.aprobador))
             valores['resolucion'] = 'Aceptado'
+        # Solo la planilla de la operación que corresponde a ESTA acción se
+        # autocompleta: reactivar/renovar no tienen planilla y no deben tocar
+        # la última SolicitudCambio del documento (que puede ser de otra
+        # operación concurrente).
+        operacion = OPERACION_POR_ACCION.get(self.accion_solicitud)
         if self.es_final:
             # Activar primero para que fecha_vigencia quede disponible y se
             # autocomplete también en las respuestas del formato dinámico.
             self._activar_documento()
-            autocompletar_respuestas(self.documento, valores)
+            if operacion:
+                autocompletar_respuestas(self.documento, valores, operacion=operacion)
         else:
-            if valores:
-                autocompletar_respuestas(self.documento, valores)
+            if valores and operacion:
+                autocompletar_respuestas(self.documento, valores, operacion=operacion)
             self._avanzar_siguiente()
 
     def rechazar(self, motivo=''):
@@ -1030,7 +1036,9 @@ class SolicitudAprobacionDocumento(models.Model):
         else:
             valores = _valores_evaluacion(self.aprobador)
         valores['resolucion'] = 'Rechazado'
-        autocompletar_respuestas(self.documento, valores)
+        operacion = OPERACION_POR_ACCION.get(self.accion_solicitud)
+        if operacion:
+            autocompletar_respuestas(self.documento, valores, operacion=operacion)
         self._cancelar_hermano()
         self._revertir_documento()
 
@@ -1234,6 +1242,20 @@ OPERACION_LABELS = {
     'eliminacion': 'Eliminación',
 }
 
+#: Acción de ``SolicitudAprobacionDocumento`` → operación de la
+#: ``SolicitudCambio`` (planilla SGC-FOR-001) que la acompaña. ``None`` =
+#: sin planilla (reactivar/renovar/eliminar_version no la generan), y por lo
+#: tanto no se autocompleta ni se resuelve ninguna planilla al aprobar.
+OPERACION_POR_ACCION = {
+    'creacion': 'creacion',
+    'edicion': 'modificacion',
+    'version': 'modificacion',
+    'inhabilitar': 'eliminacion',
+    'eliminar_version': None,
+    'reactivar': None,
+    'renovar': None,
+}
+
 
 def valores_documento(documento):
     """Valores derivados del documento para los campos auto del motor dinámico."""
@@ -1283,9 +1305,17 @@ def mapear_valores_auto(formato, valores):
     return resultado
 
 
-def autocompletar_respuestas(documento, valores):
-    """Actualiza las respuestas del SolicitudCambio con valores de sistema."""
-    sol = SolicitudCambio.objects.filter(documento=documento).order_by('-id').first()
+def autocompletar_respuestas(documento, valores, operacion=None):
+    """Actualiza las respuestas del SolicitudCambio con valores de sistema.
+
+    Con ``operacion`` se limita a la planilla de esa operación: la
+    aprobación de una reactivación/renovación no debe escribir en la última
+    SolicitudCambio del documento, que puede pertenecer a otra operación.
+    """
+    solicitudes = SolicitudCambio.objects.filter(documento=documento)
+    if operacion:
+        solicitudes = solicitudes.filter(operacion=operacion)
+    sol = solicitudes.order_by('-id').first()
     if not sol or not sol.formato:
         return
     valores_auto = valores_auto_solicitud(sol)

@@ -562,6 +562,62 @@ def solicitudes_aprobacion_pendientes(request):
     return JsonResponse({'solicitudes': lista, 'total': len(lista)})
 
 
+from .models import OPERACION_POR_ACCION as _OPERACION_POR_ACCION
+
+
+def _mensajes_aprobacion(solicitud):
+    """(titulo, mensaje) de la notificación al resolver una aprobación."""
+    documento = solicitud.documento
+    ref = f'"{documento.nombre}" ({documento.codigo})'
+    accion = solicitud.accion_solicitud
+    if accion == 'inhabilitar':
+        return 'Documento inhabilitado', f'Tu documento {ref} ha sido inhabilitado.'
+    if accion == 'reactivar':
+        return 'Documento reactivado', f'Tu documento {ref} ha sido reactivado.'
+    if accion == 'renovar':
+        hasta = f' hasta el {solicitud.fecha_propuesta}' if solicitud.fecha_propuesta else ''
+        return (
+            'Vencimiento renovado',
+            f'El vencimiento de tu documento {ref} fue renovado{hasta}.',
+        )
+    if accion == 'eliminar_version':
+        return (
+            'Versión eliminada',
+            f'La versión seleccionada de tu documento {ref} ha sido eliminada.',
+        )
+    return 'Documento aprobado', f'Tu documento {ref} ha sido aprobado.'
+
+
+def _auditar_resolucion(request, solicitud, resuelta, observaciones=''):
+    """Registro ISO (con IP y user-agent) de aprobar/rechazar una solicitud."""
+    try:
+        from auditoria.middleware import resolver_ip_cliente
+        from auditoria.services import registrar_log_iso
+        registrar_log_iso(
+            usuario=request.user,
+            accion_tipo='aprobacion' if resuelta else 'rechazo',
+            accion_categoria='documento',
+            recurso_tipo=solicitud.documento.tipo_id or '',
+            recurso_id=str(solicitud.documento.uuid),
+            recurso_codigo=solicitud.documento.codigo,
+            recurso_nombre=solicitud.documento.nombre,
+            detalles={
+                'accion_solicitud': solicitud.accion_solicitud,
+                'rol_aprobador': solicitud.rol_aprobador,
+                'observaciones': observaciones,
+            },
+            resultado_exitoso=resuelta,
+            resultado_mensaje=(
+                f'Solicitud {solicitud.accion_solicitud} '
+                f'{"aprobada" if resuelta else "rechazada"}'
+            ),
+            ip_address=resolver_ip_cliente(request),
+            user_agent=request.META.get('HTTP_USER_AGENT'),
+        )
+    except Exception:
+        pass
+
+
 @login_required(login_url='/login/')
 @transaction.atomic
 def aprobar_creacion_documento(request, tipo, documento_id):
@@ -581,29 +637,42 @@ def aprobar_creacion_documento(request, tipo, documento_id):
         return JsonResponse({'success': False, 'mensaje': 'Solicitud no encontrada'}, status=404)
     data = json.loads(request.body) if request.body else {}
     observaciones = data.get('observaciones', '')
+    accion = solicitud.accion_solicitud
     es_final = solicitud.es_final
     solicitud.aprobar(observaciones=observaciones)
     if es_final:
         from .models import SolicitudCambio
-        from .services.planillas import OPERACIONES_CON_PLANILLA, encolar_generacion_planilla
-        solicitudes_planilla = list(SolicitudCambio.objects.filter(
-            documento=solicitud.documento,
-            estado='en_revision',
-            operacion__in=OPERACIONES_CON_PLANILLA,
-        ))
-        SolicitudCambio.objects.filter(documento=solicitud.documento, estado='en_revision').update(estado='aprobado')
-        for sc in solicitudes_planilla:
-            encolar_generacion_planilla(sc)
+        from .services.planillas import encolar_generacion_planilla
+        # Gate por acción: la aprobación de una solicitud solo resuelve las
+        # planillas de su propia operación (antes se aprobaba TODO lo que
+        # estuviera 'en_revision' del documento, incluso planillas de otra
+        # operación concurrente).
+        operacion_planilla = _OPERACION_POR_ACCION.get(accion)
+        if operacion_planilla:
+            solicitudes_planilla = list(SolicitudCambio.objects.filter(
+                documento=solicitud.documento,
+                estado='en_revision',
+                operacion=operacion_planilla,
+            ))
+            SolicitudCambio.objects.filter(
+                documento=solicitud.documento,
+                estado='en_revision',
+                operacion=operacion_planilla,
+            ).update(estado='aprobado')
+            for sc in solicitudes_planilla:
+                encolar_generacion_planilla(sc)
         from autenticacion.models import Notificacion
         usuario_a_notificar = solicitud.propietario or solicitud.solicitante
+        titulo, mensaje = _mensajes_aprobacion(solicitud)
         Notificacion.objects.create(
-            usuario=usuario_a_notificar, titulo='Documento aprobado',
-            mensaje=f'Tu documento "{solicitud.documento.nombre}" ({solicitud.documento.codigo}) ha sido aprobado.{(" " + observaciones) if observaciones else ""}',
+            usuario=usuario_a_notificar, titulo=titulo,
+            mensaje=mensaje + (f' {observaciones}' if observaciones else ''),
             tipo='aprobacion_documento', url_accion=f'/documentos/{tipo}/{documento_id}/',
             departamento=solicitud.documento.departamento,
             documento=solicitud.documento
         )
-        return JsonResponse({'success': True, 'mensaje': 'Documento aprobado correctamente'})
+        _auditar_resolucion(request, solicitud, resuelta=True, observaciones=observaciones)
+        return JsonResponse({'success': True, 'mensaje': mensaje})
     return JsonResponse({'success': True, 'mensaje': 'Evaluación registrada, pendiente de autorización'})
 
 
@@ -628,19 +697,41 @@ def rechazar_creacion_documento(request, tipo, documento_id):
     motivo = data.get('motivo', '')
     if not motivo:
         return JsonResponse({'success': False, 'mensaje': 'El motivo de rechazo es requerido'}, status=400)
+    accion = solicitud.accion_solicitud
     solicitud.rechazar(motivo=motivo)
     from .models import SolicitudCambio
-    SolicitudCambio.objects.filter(documento=solicitud.documento, estado='en_revision').update(estado='rechazado')
+    # Gate por acción (igual que en la aprobación): solo se resuelven las
+    # planillas de la operación que corresponde a esta solicitud.
+    operacion_planilla = _OPERACION_POR_ACCION.get(accion)
+    if operacion_planilla:
+        SolicitudCambio.objects.filter(
+            documento=solicitud.documento,
+            estado='en_revision',
+            operacion=operacion_planilla,
+        ).update(estado='rechazado')
     from autenticacion.models import Notificacion
     usuario_a_notificar = solicitud.propietario or solicitud.solicitante
+    from .services.cambios_estado import ACCION_LABEL
+    if accion in ('inhabilitar', 'reactivar', 'renovar'):
+        titulo = f'Solicitud de {ACCION_LABEL[accion]} rechazada'
+        mensaje = (
+            f'Su solicitud para el documento "{solicitud.documento.nombre}" '
+            f'({solicitud.documento.codigo}) fue rechazada. Motivo: {motivo}'
+        )
+    else:
+        titulo = 'Documento rechazado'
+        mensaje = (
+            f'Tu documento "{solicitud.documento.nombre}" ({solicitud.documento.codigo}) '
+            f'ha sido rechazado. Motivo: {motivo}'
+        )
     Notificacion.objects.create(
-        usuario=usuario_a_notificar, titulo='Documento rechazado',
-        mensaje=f'Tu documento "{solicitud.documento.nombre}" ({solicitud.documento.codigo}) ha sido rechazado. Motivo: {motivo}',
+        usuario=usuario_a_notificar, titulo=titulo, mensaje=mensaje,
         tipo='rechazo_documento', url_accion=f'/documentos/{tipo}/{documento_id}/',
         departamento=solicitud.documento.departamento,
         documento=solicitud.documento
     )
-    return JsonResponse({'success': True, 'mensaje': 'Documento rechazado correctamente'})
+    _auditar_resolucion(request, solicitud, resuelta=False, observaciones=motivo)
+    return JsonResponse({'success': True, 'mensaje': 'Solicitud rechazada correctamente'})
 
 
 # =====================================================================

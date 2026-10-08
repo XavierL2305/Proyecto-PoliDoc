@@ -351,6 +351,133 @@ class APIAprobarCreacionTest(BaseDocumentosTest):
         self.assertEqual(resp.status_code, 404)
 
 
+class APIAprobarCambioEstadoTest(BaseDocumentosTest):
+    """Aprobación de inhabilitar / reactivar / renovar vía api."""
+
+    def setUp(self):
+        super().setUp()
+        self.client = Client()
+
+    def _aprobar(self, doc, username, observaciones=''):
+        self.client.login(username=username, password='testpass123')
+        return self.client.post(
+            f'/documentos/api/{doc.tipo_id}/{doc.uuid}/aprobar-creacion/',
+            data=json.dumps({'observaciones': observaciones}),
+            content_type='application/json',
+        )
+
+    def _solicitar(self, doc, accion, username):
+        estado = 'obsoleto' if accion == 'inhabilitar' else 'activo'
+        self.client.login(username=username, password='testpass123')
+        self.client.post(
+            f'/documentos/api/{doc.tipo_id}/{doc.uuid}/cambiar-estado/',
+            data=json.dumps({'estado': estado, 'motivo_seleccion': 'prueba'}),
+            content_type='application/json',
+        )
+
+    def test_aprobar_inhabilitar_marca_obsoleto(self):
+        self._solicitar(self.doc_activo, 'inhabilitar', 'jefe_ti')
+        resp = self._aprobar(self.doc_activo, 'jefe_gg')
+        self.assertEqual(resp.status_code, 200)
+        self.doc_activo.refresh_from_db()
+        self.assertEqual(self.doc_activo.estado, 'obsoleto')
+        notif = Notificacion.objects.get(
+            documento=self.doc_activo, tipo='aprobacion_documento',
+        )
+        self.assertEqual(notif.titulo, 'Documento inhabilitado')
+        self.assertIn('inhabilitado', notif.mensaje)
+
+    def test_aprobar_reactivar(self):
+        self._solicitar(self.doc_obsoleto, 'reactivar', 'jefe_ti')
+        resp = self._aprobar(self.doc_obsoleto, 'jefe_gg')
+        self.assertEqual(resp.status_code, 200)
+        self.doc_obsoleto.refresh_from_db()
+        self.assertEqual(self.doc_obsoleto.estado, 'activo')
+        notif = Notificacion.objects.get(
+            documento=self.doc_obsoleto, tipo='aprobacion_documento',
+        )
+        self.assertEqual(notif.titulo, 'Documento reactivado')
+
+    def test_aprobar_renovar(self):
+        self.client.login(username='jefe_ti', password='testpass123')
+        fecha = (date.today() + timedelta(days=365)).isoformat()
+        self.client.post(
+            f'/documentos/{self.doc_activo.tipo_id}/{self.doc_activo.uuid}/renovar-vencimiento/',
+            data={'fecha_nueva': fecha},
+        )
+        resp = self._aprobar(self.doc_activo, 'jefe_gg')
+        self.assertEqual(resp.status_code, 200)
+        self.doc_activo.refresh_from_db()
+        self.assertEqual(self.doc_activo.fecha_vencimiento, date.today() + timedelta(days=365))
+        self.assertEqual(self.doc_activo.estado, 'activo')
+        notif = Notificacion.objects.get(
+            documento=self.doc_activo, tipo='aprobacion_documento',
+        )
+        self.assertEqual(notif.titulo, 'Vencimiento renovado')
+        self.assertIn(f'hasta el {date.today() + timedelta(days=365)}', notif.mensaje)
+
+    def test_rechazar_inhabilitar_no_marca_obsoleto(self):
+        self._solicitar(self.doc_activo, 'inhabilitar', 'jefe_ti')
+        self.client.login(username='jefe_gg', password='testpass123')
+        resp = self.client.post(
+            f'/documentos/api/{self.doc_activo.tipo_id}/{self.doc_activo.uuid}/rechazar-creacion/',
+            data=json.dumps({'motivo': 'Se mantiene vigente'}),
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.doc_activo.refresh_from_db()
+        self.assertEqual(self.doc_activo.estado, 'activo')
+        notif = Notificacion.objects.get(
+            documento=self.doc_activo, tipo='rechazo_documento',
+        )
+        self.assertEqual(notif.titulo, 'Solicitud de inhabilitación rechazada')
+
+    def test_aprobar_reactivar_no_autocompleta_planilla_ajena(self):
+        """La reactivación no escribe en la última SolicitudCambio del doc."""
+        formato = Formato.objects.create(
+            codigo='SGC-FOR-AUTO', nombre='Planilla Auto', aplica_modificacion=True,
+        )
+        seccion = SeccionFormato.objects.create(formato=formato, titulo='S1', orden=1)
+        CampoFormato.objects.create(
+            seccion=seccion, clave='resolucion', etiqueta='Resolución',
+            tipo='texto', origen='resolucion', orden=1,
+        )
+        planilla = SolicitudCambio.objects.create(
+            codigo='SC-AUTO-001', formato=formato, operacion='modificacion',
+            documento=self.doc_obsoleto, solicitante=self.user_jefe_ti,
+            departamento=self.depto_ti, estado='en_revision', respuestas={},
+        )
+        self._solicitar(self.doc_obsoleto, 'reactivar', 'jefe_ti')
+        resp = self._aprobar(self.doc_obsoleto, 'jefe_gg')
+        self.assertEqual(resp.status_code, 200)
+        planilla.refresh_from_db()
+        self.assertEqual(planilla.respuestas, {})
+
+    def test_gate_planillas_de_otra_operacion(self):
+        """Aprobar una inhabilitación no aprueba planillas de otra operación."""
+        formato = Formato.objects.create(
+            codigo='SGC-FOR-GATE', nombre='Planilla Gate', aplica_creacion=True,
+        )
+        planilla_eliminacion = SolicitudCambio.objects.create(
+            codigo='SC-GATE-ELI', formato=formato, operacion='eliminacion',
+            documento=self.doc_activo, solicitante=self.user_jefe_ti,
+            departamento=self.depto_ti, estado='en_revision',
+        )
+        planilla_creacion = SolicitudCambio.objects.create(
+            codigo='SC-GATE-CRE', formato=formato, operacion='creacion',
+            documento=self.doc_activo, solicitante=self.user_jefe_ti,
+            departamento=self.depto_ti, estado='en_revision',
+        )
+        self._solicitar(self.doc_activo, 'inhabilitar', 'jefe_ti')
+        resp = self._aprobar(self.doc_activo, 'jefe_gg')
+        self.assertEqual(resp.status_code, 200)
+        planilla_eliminacion.refresh_from_db()
+        planilla_creacion.refresh_from_db()
+        self.assertEqual(planilla_eliminacion.estado, 'aprobado')
+        # La de creación sigue en revisión: otra operación, otra aprobación.
+        self.assertEqual(planilla_creacion.estado, 'en_revision')
+
+
 # =============================================================================
 # API: APROBACIÓN DE PLANILLAS
 # =============================================================================

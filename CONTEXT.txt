@@ -1096,11 +1096,14 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
          `aprobado` + creacion/eliminacion sin `planilla_xlsx` (y con formato
          que tenga plantilla) y las genera. Idempotente; procesa de a lo más
          PLANILLAS_BARRIDO_LOTE (default 100) por pasada.
-       - Puntos de enganche (los dos únicos casos con operación
-         creacion/eliminacion):
-             api.aprobar_creacion_documento  (es_final → estado 'aprobado')
-             views.eliminar_documento        (eliminación directa: la solicitud
-                                              nace en 'aprobado')
+        - Puntos de enganche (los dos únicos casos con operación
+          creacion/eliminacion):
+              api.aprobar_creacion_documento  (es_final → estado 'aprobado';
+                                               gate por acción: solo las
+                                               planillas de ESA operación,
+                                               ver §20.9)
+              views.eliminar_documento        (eliminación directa: la solicitud
+                                               nace en 'aprobado')
        - Descargas descargar_solicitud_xlsx/pdf sirven el archivo GUARDADO si
          existe; si no, exportan al vuelo (comportamiento histórico).
         - Requiere migración 0040 y worker de Celery para el modo asíncrono.
@@ -1206,6 +1209,21 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
         - `SolicitudCambio` de `operacion='eliminacion'` se crea SIEMPRE que
           haya `formato_dinamico` (aunque `respuestas_formato` esté vacío)
           y se borra si la solicitud no se puede tramitar (huérfano).
+        - RESOLUCIÓN (commit 4): `api.aprobar_creacion_documento` /
+          `rechazar_creacion_documento` resuelven UNA aprobación. Gate por
+          acción con `models.OPERACION_POR_ACCION` (creación→creacion,
+          edición/version→modificacion, inhabilitar→eliminacion,
+          reactivar/renovar/eliminar_version→None): solo se aprueban/rechazan
+          las planillas de ESA operación (antes se aprobaba todo lo que
+          estuviera `en_revision` del documento, incluso planillas de otra
+          operación concurrente). `models.autocompletar_respuestas` acepta
+          `operacion` y solo escribe en la planilla que corresponde, de modo
+          que aprobar una reactivación/renovación no pisa la última
+          SolicitudCambio del documento. La notificación y el JSON usan
+          mensajes por acción ("Documento inhabilitado" / "reactivado" /
+          "Vencimiento renovado hasta el {fecha_propuesta}" /
+          "Solicitud de {acción} rechazada") y `_auditar_resolucion` deja
+          registro ISO con IP y user-agent.
 
  21. REGLAS DE EDICIÓN DE DOCUMENTOS
 -------------------------------------------------------------------
@@ -2350,5 +2368,5 @@ el cuello NO era el volumen de datos.
     Mongo; fail_closed siempre intenta), cierre al recuperar y
     `reprocesar_buffer`.
 
-  - Suite total: 912 tests. Comando:
+  - Suite total: 918 tests. Comando:
     `python manage.py test auditoria documentos autenticacion --settings=polidoc.test_settings`
