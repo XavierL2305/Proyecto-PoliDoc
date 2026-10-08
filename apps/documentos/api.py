@@ -8,7 +8,7 @@ from django.utils import timezone
 from .models import Documento, Departamento, SolicitudAccesoDocumento, SolicitudAprobacionDocumento, PlanillaCambios, AprobacionPlanilla, AsignacionDocumento, TipoDocumento
 from .permissions import (
     obtener_documento, puede_editar, puede_descargar,
-    puede_inhabilitar, puede_transferir, documentos_usuario,
+    puede_transferir, documentos_usuario,
     puede_ver_documento, q_documentos_visibles
 )
 from .services.planillas import aplicar_planilla_al_documento
@@ -144,7 +144,6 @@ def cambiar_estado(request, tipo, doc_id):
     if not doc:
         return JsonResponse({'error': 'Documento no encontrado'}, status=404)
     user = request.user
-    puede, razon = puede_inhabilitar(user, doc)
     try:
         data = json.loads(request.body)
     except json.JSONDecodeError:
@@ -154,20 +153,30 @@ def cambiar_estado(request, tipo, doc_id):
     motivo_texto = data.get('motivo_texto', '')
     if nuevo_estado not in ['activo', 'obsoleto']:
         return JsonResponse({'error': 'Estado inválido'}, status=400)
-    if not puede:
-        from autenticacion.models import Notificacion
-        Notificacion.objects.create(
-            usuario=doc.propietario,
-            titulo=f'Solicitud de {"inhabilitar" if nuevo_estado == "obsoleto" else "habilitar"} documento',
-            mensaje=f'{user.get_full_name() or user.username} solicita cambiar estado de "{doc.nombre}" a {nuevo_estado}. Motivo: {motivo_seleccion} - {motivo_texto}',
-            tipo='sistema', url_accion='/documentos/',
-            departamento=doc.departamento,
-            documento=doc
-        )
-        return JsonResponse({'success': True, 'mensaje': 'Solicitud enviada al Jefe de Departamento para aprobación'})
-    doc.estado = nuevo_estado
-    doc.save(update_fields=['estado'])
-    return JsonResponse({'success': True, 'mensaje': f'Documento {"habilitado" if nuevo_estado == "activo" else "inhabilitado"} correctamente'})
+
+    # Inhabilitar y reactivar exigen UNA aprobación salvo para administrador
+    # y jefe de Gerencia General (ISO 9001:7.5.3.2). El stub anterior solo
+    # notificaba al propietario y nunca creaba la solicitud.
+    from .services.cambios_estado import solicitar_cambio_estado
+
+    from auditoria.middleware import resolver_ip_cliente
+
+    accion = 'inhabilitar' if nuevo_estado == 'obsoleto' else 'reactivar'
+    observaciones = ' - '.join(m for m in (motivo_seleccion, motivo_texto) if m)
+    resultado = solicitar_cambio_estado(
+        doc, user, accion, observaciones=observaciones,
+        ip_address=resolver_ip_cliente(request),
+        user_agent=request.META.get('HTTP_USER_AGENT'),
+    )
+    if resultado.aplicado:
+        return JsonResponse({'success': True, 'mensaje': resultado.mensaje})
+    if resultado.codigo == 'solicitado':
+        return JsonResponse({'success': True, 'mensaje': resultado.mensaje})
+    estado_http = {
+        'sin_permiso': 403,
+        'duplicado': 409,
+    }.get(resultado.codigo, 400)
+    return JsonResponse({'success': False, 'mensaje': resultado.mensaje}, status=estado_http)
 
 
 @login_required(login_url='/login/')

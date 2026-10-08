@@ -589,10 +589,15 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
          sin vigencia).
 
   13.5 RESTRICCIONES DE ESTADO (ISO 9001:7.5):
-       - Documentos OBSOLETOS: No se editan ni eliminan
-       - Documentos EN REVISIÓN: Solo el propietario puede editar
-       - Documentos BORRADOR/ACTIVO: Edición vía planilla de cambios
-       - Control de distribución: Modelo DistribucionDocumento
+        - Documentos OBSOLETOS: No se editan ni eliminan
+        - Documentos EN REVISIÓN: Solo el propietario puede editar
+        - Documentos BORRADOR/ACTIVO: Edición vía planilla de cambios
+        - Control de distribución: Modelo DistribucionDocumento
+        - Cambio de estado (inhabilitar/reactivar/renovar): UNA aprobación
+          (ver §20.9). La edición del documento mientras hay una solicitud
+          de cambio de estado pendiente NO se bloquea: no se reutiliza el
+          estado `en_revision`, que está reservado a las planillas de
+          cambios y a las cadenas de creación.
 
   13.6 PARTICIPANTES Y RESPONSABLES (Migración 0013):
        - participantes: JSONField, lista de tags libres (departamentos,
@@ -1024,26 +1029,38 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
          cadena, evaluador primero).
 
   20.4 MODELO SolicitudAprobacionDocumento:
-       - documento (FK), version_a_eliminar (FK, opcional)
-       - accion_solicitud: creacion | edicion | inhabilitar | version | eliminar_version
-       - solicitante (FK), propietario (FK), aprobador (FK), departamento_origen (FK)
-       - rol_aprobador: evaluador | autorizador
-       - es_final (bool): True = último paso (ejecuta la acción)
-       - estado: pendiente | esperando | aprobada | rechazada | cancelada
-       - observaciones, motivo_rechazo, fecha_solicitud, fecha_respuesta
-       - aprobar(): si es_final → _activar_documento(); si no → _avanzar_siguiente()
-       - rechazar(): _cancelar_hermano() + _revertir_documento()
-       - ELIMINACIÓN DE VERSIÓN (directa, sin aprobación): `eliminar_version`
-         solo puede iniciarla el PROPIETARIO del documento o un ADMINISTRADOR
-         (el jefe del departamento no elimina versiones ajeno a la autoría).
-         Se registra una fila con estado='aprobada', es_final=True y
-         rol_aprobador='autorizador' (evidencia ISO), y se aplica en el acto;
-         NO se crea cadena de aprobación. Si quedaban solicitudes antiguas
-         pendientes de esa versión, se cancelan antes de aplicar.
-         Vistas: `views.eliminar_version`, `views.historial_versiones`
-         (contexto `puede_eliminar_versiones`); botones en
-         `historial_versiones.html` y en la pestaña "Últimas Versiones" de
-         `detalle.html`.
+        - documento (FK), version_a_eliminar (FK, opcional)
+        - accion_solicitud: creacion | edicion | inhabilitar | version |
+          eliminar_version | reactivar | renovar
+        - solicitante (FK), propietario (FK), aprobador (FK), departamento_origen (FK)
+        - rol_aprobador: evaluador (jefe del depto del documento) |
+          autorizador (jefe de Gerencia General)
+        - es_final (bool): True = último paso (ejecuta la acción)
+        - estado: pendiente | esperando | aprobada | rechazada | cancelada
+        - observaciones, motivo_rechazo, fecha_solicitud, fecha_respuesta
+        - fecha_propuesta (DateField, migración 0048): nueva
+          `fecha_vencimiento` propuesta al renovar (ISO 9001:7.5.3.2 a).
+        - aprobar(): si es_final → _activar_documento(); si no → _avanzar_siguiente()
+        - rechazar(): _cancelar_hermano() + _revertir_documento()
+        - _revertir_documento(): revierte SOLO creacion | edicion | version →
+          'borrador'. Inhabilitar/reactivar/renovar NO tocan el estado del
+          documento (en un rechazo no hay nada que restaurar, porque el
+          estado nunca se anticipó).
+        - _activar_documento(): además de creacion/edicion/version/eliminar_
+          version, atiende `inhabilitar` (→ 'obsoleto' + limpia retención) y
+          `reactivar`/`renovar` (→ 'activo'); `renovar` delega en
+          _aplicar_renovacion() (§20.9).
+        - ELIMINACIÓN DE VERSIÓN (directa, sin aprobación): `eliminar_version`
+          solo puede iniciarla el PROPIETARIO del documento o un ADMINISTRADOR
+          (el jefe del departamento no elimina versiones ajeno a la autoría).
+          Se registra una fila con estado='aprobada', es_final=True y
+          rol_aprobador='autorizador' (evidencia ISO), y se aplica en el acto;
+          NO se crea cadena de aprobación. Si quedaban solicitudes antiguas
+          pendientes de esa versión, se cancelan antes de aplicar.
+          Vistas: `views.eliminar_version`, `views.historial_versiones`
+          (contexto `puede_eliminar_versiones`); botones en
+          `historial_versiones.html` y en la pestaña "Últimas Versiones" de
+          `detalle.html`.
 
   20.5 NOTIFICACIONES:
        - Evaluador: "Documento pendiente de evaluación".
@@ -1124,10 +1141,63 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
          `ReferenciaDocumento` (se resuelven al crearse el destino).
        - Sustituye los componentes previos `docrel-*` (formulario) y
          `asociado-select`/`procedimientos-por-departamentos` (planilla); los
-         endpoints viejos quedan por compatibilidad.
+          endpoints viejos quedan por compatibilidad.
 
+  20.9 CAMBIO DE ESTADO: INHABILITAR / REACTIVAR / RENOVAR (UNA APROBACIÓN):
+        Servicio único: `documentos/services/cambios_estado.py`
+        (migración 0048). Sustituye al stub de `api.cambiar_estado`, que
+        solo notificaba al propietario y nunca creaba la solicitud.
+        - ACCIONES: inhabilitar | reactivar | renovar (pares de
+          `SolicitudAprobacionDocumento.ACCION_CHOICES`).
+        - QUIÉN APLICA / QUIÉN APRUEBA (una sola aprobación, no cadena):
+              administrador              → aplica directo
+              jefe de Gerencia General   → aplica directo (con auditoría)
+              jefe del depto del documento → aprueba el jefe de GG
+              jefe de depto ajeno        → sin permiso
+              propietario                → aprueba el jefe del depto del doc
+              coordinador con asignación → aprueba el jefe del depto del doc
+              resto                      → sin permiso
+          (mismo criterio de "quién puede iniciar" que
+          `views.puede_eliminar_documento`, con GG añadido como autoridad
+          máxima). `permissions.puede_inhabilitar` devuelve
+          `(True,'directo')` / `(True,'solicitar')` / `(False,'sin_permiso')`
+          y delega en `services.cambios_estado.puede_iniciar`.
+        - QUIÉN NO APRUEBA NUNCA: el propio solicitante. Si el aprobador
+          sería él mismo (p. ej. jefe del depto dueño del doc que se marca a
+          sí mismo, o ausencia de jefe de GG), la solicitud queda
+          ``estado='esperando'`` en lugar de auto-aprobarse.
+        - RUTINA: `validar_cambio()` → `solicitud_pendiente()` (no duplica) →
+          crea `SolicitudAprobacionDocumento(accion_solicitud=accion,
+          estado='pendiente'|'aprobada', es_final=True,
+          rol_aprobador='evaluador'|'autorizador')` → si aplica directo,
+          `_activar_documento()` en el acto; si no, notifica al aprobador y
+          queda en espera de `api.aprobar_creacion_documento` (gate §21).
+        - RESULTADO: `ResultadoCambio(aplicado, solicitud, mensaje, aprobador,
+          codigo)`; `codigo` mapea el HTTP del endpoint:
+          ok/solicitado → 200, duplicado → 409, sin_permiso → 403,
+          invalido/sin_departamento → 400.
+        - VALIDACIONES (`validar_cambio`):
+            inhabilitar: estado ≠ 'obsoleto'
+            reactivar:   estado == 'obsoleto' Y fecha_vencimiento nula o
+                         futura; si `fecha_vencimiento <= hoy` se NIEGA con
+                         mensaje pidiendo renovar (ISO 9001:7.5.3.2)
+            renovar:     estado 'activo' u 'obsoleto'
+        - RENOVAR (`_aplicar_renovacion`): fija `fecha_vencimiento` y
+          `proxima_revision` (propuesta o +período), limpia
+          `aviso_vencimiento_enviado` y retención, pasa a 'activo' si hacía
+          falta y crea `RenovacionVencimiento` con `renovado_por =
+          aprobador or solicitante`.
+        - ENTRADAS: `views.eliminar_documento` (POST) y
+          `api.cambiar_estado` (POST JSON {estado, motivo_seleccion,
+          motivo_texto}); el botón "Habilitar" del detalle llama a la misma
+          API. La planilla SGC-FOR-001 solo se encola para `inhabilitar`
+          (SGC-FOR-005 para inhabilitación con formato dinámico): en
+          reactivar/renovar NO se genera planilla (ISO 9001:7.5.3.2 d/b/a).
+        - `SolicitudCambio` de `operacion='eliminacion'` se crea SIEMPRE que
+          haya `formato_dinamico` (aunque `respuestas_formato` esté vacío)
+          y se borra si la solicitud no se puede tramitar (huérfano).
 
-21. REGLAS DE EDICIÓN DE DOCUMENTOS
+ 21. REGLAS DE EDICIÓN DE DOCUMENTOS
 -------------------------------------------------------------------
   21.1 CAMPOS EDITABLES:
        - Nombre del documento
@@ -1378,8 +1448,13 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
                               afectados/borradores/todos), guardado de
                               pendientes en la planilla y render en ambas
                               pantallas. Ver §20.8.
-        migrations/        0001–0046; última: 0046
-                            (PlanillaCambios.referencias_pendientes, para asociar
+        migrations/        0001–0048; última: 0048
+                            (SolicitudAprobacionDocumento.fecha_propuesta +
+                            ACCION_CHOICES con reactivar/renovar, para el flujo
+                            de cambio de estado con UNA aprobación; ver §20.9).
+                            La 0047 añadió índices en Documento y
+                            SolicitudDescarga. La 0046 añadió
+                            PlanillaCambios.referencias_pendientes, para asociar
                             documentos aún inexistentes por código). La 0045 añadió
                             Documento.resumen_ia_solicitado. La 0044 añadió
                             TipoDocumento.requiere_vigencia. La 0043 añadió
@@ -2265,5 +2340,5 @@ el cuello NO era el volumen de datos.
     Mongo; fail_closed siempre intenta), cierre al recuperar y
     `reprocesar_buffer`.
 
-  - Suite total: 853 tests. Comando:
+  - Suite total: 904 tests. Comando:
     `python manage.py test auditoria documentos autenticacion --settings=polidoc.test_settings`

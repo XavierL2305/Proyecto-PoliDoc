@@ -224,6 +224,10 @@ def puede_eliminar_documento(user, documento):
     perfil = user.perfil
     if perfil.es_administrador:
         return True
+    from .services.cambios_estado import es_jefe_gg
+    if es_jefe_gg(user):
+        # Gerencia General es la autoridad máxima: inhabilita directo.
+        return True
     from .permissions import es_jefe_de_departamento
     if es_jefe_de_departamento(user, documento):
         return True
@@ -1377,55 +1381,54 @@ def eliminar_documento(request, tipo, documento_id):
                     messages.error(request, err)
 
         if not errores_formato:
-            from .permissions import puede_inhabilitar
-            puede, razon = puede_inhabilitar(request.user, documento)
-            if puede:
-                documento.estado = 'obsoleto'
-                documento.save(update_fields=['estado'])
-                if formato_dinamico and respuestas_formato:
-                    sol_cambio = SolicitudCambio.objects.create(
-                        codigo=f"SC-{timezone.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6].upper()}",
-                        formato=formato_dinamico,
-                        operacion='eliminacion',
-                        documento=documento,
-                        solicitante=request.user,
-                        departamento=documento.departamento,
-                        respuestas=respuestas_formato,
-                        estado='aprobado',
-                    )
-                    _autollenar_envio(sol_cambio, request.user)
-                    from .services.planillas import encolar_generacion_planilla
-                    encolar_generacion_planilla(sol_cambio)
+            from .services.cambios_estado import (
+                solicitar_cambio_estado, solicitud_pendiente, validar_cambio,
+            )
+
+            motivo = validar_cambio(documento, 'inhabilitar')
+            if motivo:
+                messages.error(request, motivo)
+                return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
+            if solicitud_pendiente(documento, 'inhabilitar'):
+                messages.warning(request, 'Ya existe una solicitud de inhabilitación pendiente para este documento.')
+                return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
+
+            # La planilla SGC-FOR-001 es la evidencia de la disposición
+            # (ISO 9001:7.5.3.2): se genera SIEMPRE que exista el formato,
+            # aunque no se haya respondido ningún campo opcional.
+            sol_cambio = None
+            if formato_dinamico:
+                sol_cambio = SolicitudCambio.objects.create(
+                    codigo=f"SC-{timezone.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6].upper()}",
+                    formato=formato_dinamico,
+                    operacion='eliminacion',
+                    documento=documento,
+                    solicitante=request.user,
+                    departamento=documento.departamento or request.user.perfil.departamento,
+                    respuestas=respuestas_formato,
+                    estado='en_revision',
+                )
+                _autollenar_envio(sol_cambio, request.user)
+
+            resultado = solicitar_cambio_estado(
+                documento, request.user, 'inhabilitar',
+                solicitud_cambio=sol_cambio,
+                observaciones=f'Estado previo: {documento.estado}',
+                ip_address=request.META.get('REMOTE_ADDR'),
+                user_agent=request.META.get('HTTP_USER_AGENT'),
+            )
+            if resultado.aplicado:
                 messages.success(request, 'Documento marcado como obsoleto.')
                 return redirect('documentos:mis_documentos')
+            if resultado.solicitud is None:
+                # Sin solicitud creada (permiso/validación/departamento):
+                # no dejar huérfana la solicitud de cambio.
+                if sol_cambio is not None:
+                    sol_cambio.delete()
+                messages.warning(request, resultado.mensaje)
             else:
-                perfil = request.user.perfil
-                departamento = perfil.departamento
-                estado_anterior = documento.estado
-                documento.estado = 'en_revision'
-                documento.save(update_fields=['estado'])
-                if formato_dinamico and respuestas_formato:
-                    sol_cambio = SolicitudCambio.objects.create(
-                        codigo=f"SC-{timezone.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6].upper()}",
-                        formato=formato_dinamico,
-                        operacion='eliminacion',
-                        documento=documento,
-                        solicitante=request.user,
-                        departamento=departamento,
-                        respuestas=respuestas_formato,
-                        estado='en_revision',
-                    )
-                    _autollenar_envio(sol_cambio, request.user)
-                sol = crear_cadena_aprobacion_documento(
-                    documento=documento, usuario=request.user,
-                    departamento=departamento, accion='inhabilitar',
-                    observaciones=f'Estado anterior: {estado_anterior}',
-                )
-                if sol and sol.aprobador_id:
-                    messages.success(request, 'Solicitud de inhabilitación enviada al Jefe de Departamento para aprobación.')
-                else:
-                    messages.warning(request, 'Solicitud registrada. No hay jefe de departamento asignado; quedará en espera de evaluación.')
-                return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
+                messages.success(request, resultado.mensaje)
+            return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
     return render(request, 'documentos/confirmar_eliminar.html', {
         'documento': documento, 'tipo': tipo,
         'formato_dinamico': formato_dinamico,

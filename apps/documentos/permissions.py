@@ -116,11 +116,22 @@ def puede_descargar(usuario, documento):
 
 
 def puede_inhabilitar(usuario, documento):
-    if usuario.perfil.es_administrador:
+    """¿Puede iniciar (o aplicar) inhabilitar/reactivar este documento?
+
+    - ``(True, 'directo')``: lo aplica él mismo (administrador o jefe de
+      Gerencia General), sin aprobación.
+    - ``(True, 'solicitar')``: puede iniciarlo, pero exige UNA aprobación
+      (propietario o jefe del departamento del documento).
+    - ``(False, 'sin_permiso')``: no está autorizado a tocar el estado.
+    """
+    perfil = usuario.perfil
+    from .services.cambios_estado import es_jefe_gg, puede_iniciar
+
+    if perfil.es_administrador or es_jefe_gg(usuario):
         return True, "directo"
-    if es_jefe_de_departamento(usuario, documento):
-        return True, "directo"
-    return False, "requiere_aprobacion"
+    if puede_iniciar(usuario, documento):
+        return True, "solicitar"
+    return False, "sin_permiso"
 
 
 def puede_transferir(usuario, documento):

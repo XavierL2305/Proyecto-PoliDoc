@@ -786,27 +786,46 @@ class PuedeDescargarTest(BaseDocumentosTest):
 
 
 class PuedeInhabilitarTest(BaseDocumentosTest):
-    """Tests de puede_inhabilitar."""
+    """Tests de puede_inhabilitar (inhabilitar / reactivar)."""
 
     def test_admin_puede_inhabilitar_directo(self):
         result = puede_inhabilitar(self.user_admin, self.doc_activo)
         self.assertEqual(result, (True, 'directo'))
 
-    def test_jefe_mismo_departamento_puede_inhabilitar(self):
-        result = puede_inhabilitar(self.user_jefe_ti, self.doc_activo)
+    def test_jefe_gg_inhabilita_directo(self):
+        result = puede_inhabilitar(self.user_jefe_gg, self.doc_activo)
         self.assertEqual(result, (True, 'directo'))
+
+    def test_jefe_del_depto_solicita_aprobacion(self):
+        """El jefe del departamento NO inhabilita directo: aprueba GG."""
+        result = puede_inhabilitar(self.user_jefe_ti, self.doc_activo)
+        self.assertEqual(result, (True, 'solicitar'))
+
+    def test_propietario_solicita_aprobacion(self):
+        result = puede_inhabilitar(self.user_trabajador_otro, self.doc_th)
+        self.assertEqual(result, (True, 'solicitar'))
 
     def test_jefe_otro_departamento_no_puede_inhabilitar(self):
         result = puede_inhabilitar(self.user_jefe_ti, self.doc_th)
-        self.assertEqual(result, (False, 'requiere_aprobacion'))
+        self.assertEqual(result, (False, 'sin_permiso'))
 
-    def test_coordinador_necesita_aprobacion(self):
+    def test_coordinador_sin_asignacion_no_puede(self):
         result = puede_inhabilitar(self.user_coordinador, self.doc_activo)
-        self.assertEqual(result, (False, 'requiere_aprobacion'))
+        self.assertEqual(result, (False, 'sin_permiso'))
 
-    def test_trabajador_necesita_aprobacion(self):
+    def test_coordinador_con_permiso_puede_solicitar(self):
+        AsignacionDocumento.objects.create(
+            documento=self.doc_activo,
+            coordinador=self.user_coordinador,
+            jefe_asignador=self.user_jefe_ti,
+            puede_eliminar=True,
+        )
+        result = puede_inhabilitar(self.user_coordinador, self.doc_activo)
+        self.assertEqual(result, (True, 'solicitar'))
+
+    def test_trabajador_no_propietario_no_puede(self):
         result = puede_inhabilitar(self.user_trabajador, self.doc_activo)
-        self.assertEqual(result, (False, 'requiere_aprobacion'))
+        self.assertEqual(result, (False, 'sin_permiso'))
 
 
 class PuedeTransferirTest(BaseDocumentosTest):

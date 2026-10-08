@@ -925,6 +925,8 @@ class SolicitudAprobacionDocumento(models.Model):
         ('creacion', 'Creación'),
         ('edicion', 'Edición'),
         ('inhabilitar', 'Inhabilitar'),
+        ('reactivar', 'Reactivar'),
+        ('renovar', 'Renovar Vencimiento'),
         ('version', 'Nueva Versión'),
         ('eliminar_version', 'Eliminar Versión'),
     ]
@@ -977,6 +979,11 @@ class SolicitudAprobacionDocumento(models.Model):
     motivo_rechazo = models.TextField(blank=True, default='', verbose_name='Motivo de Rechazo')
     fecha_solicitud = models.DateTimeField(auto_now_add=True)
     fecha_respuesta = models.DateTimeField(null=True, blank=True)
+    fecha_propuesta = models.DateField(
+        null=True, blank=True,
+        verbose_name='Fecha de Vencimiento Propuesta',
+        help_text='Solo para renovaciones: fecha que se aplicará al aprobar.',
+    )
     fecha_escalado = models.DateTimeField(
         null=True, blank=True,
         verbose_name='Fecha de escalado a administración'
@@ -1080,13 +1087,15 @@ class SolicitudAprobacionDocumento(models.Model):
             hermano.save(update_fields=['estado'])
 
     def _revertir_documento(self):
-        doc = self.documento
-        if self.accion_solicitud == 'inhabilitar':
-            doc.estado = 'activo'
-        elif self.accion_solicitud in ('creacion', 'edicion', 'version'):
+        # inhabilitar/reactivar/renovar NO cambian el estado del documento
+        # mientras están pendientes, así que al rechazar no hay nada que
+        # restaurar (evita pisar un estado alterado por el cron de vencimientos
+        # o por una planilla de cambios aprobada en paralelo).
+        if self.accion_solicitud in ('creacion', 'edicion', 'version'):
+            doc = self.documento
             doc.estado = 'borrador'
-        # eliminar_version no hace nada al rechazar → versión queda activa
-        doc.save(update_fields=['estado'])
+            doc.save(update_fields=['estado'])
+        # eliminar_version: la versión queda tal cual (soft-delete no aplica)
 
     def aplicar_eliminacion_version(self, doc, version):
         """Soft-delete la versión y restaura la anterior si era la actual"""
@@ -1107,6 +1116,38 @@ class SolicitudAprobacionDocumento(models.Model):
                 doc.estado = 'obsoleto'
                 doc.save(update_fields=['estado'])
 
+    def _aplicar_renovacion(self, doc):
+        """Aplica la fecha propuesta (ISO 9001:7.5.3.2, control de cambios).
+
+        Registra ``RenovacionVencimiento`` (anterior → nueva, autorizado por)
+        y deja el documento vigente: fecha futura o sin fecha para que la
+        tarea ``verificar_vencimientos`` no lo vuelva a marcar obsoleto.
+        """
+        fecha_nueva = self.fecha_propuesta
+        if not fecha_nueva:
+            return
+        fecha_anterior = doc.fecha_vencimiento
+        doc.fecha_vencimiento = fecha_nueva
+        doc.proxima_revision = fecha_nueva
+        doc.aviso_vencimiento_enviado = False
+        doc.fecha_retencion = None
+        doc.fecha_destruccion = None
+        campos = [
+            'fecha_vencimiento', 'proxima_revision', 'aviso_vencimiento_enviado',
+            'fecha_retencion', 'fecha_destruccion',
+        ]
+        if doc.estado != 'activo':
+            doc.estado = 'activo'
+            campos.append('estado')
+        doc.save(update_fields=campos)
+        RenovacionVencimiento.objects.create(
+            documento=doc,
+            fecha_anterior=fecha_anterior or fecha_nueva,
+            fecha_nueva=fecha_nueva,
+            renovado_por=self.aprobador or self.solicitante,
+            observacion=self.observaciones or '',
+        )
+
     def _activar_documento(self):
         from django.utils import timezone as tz
         from datetime import timedelta
@@ -1118,6 +1159,20 @@ class SolicitudAprobacionDocumento(models.Model):
                 doc.fecha_retencion = hoy
                 doc.fecha_destruccion = _sumar_meses(hoy, doc.periodo_retencion.meses)
             doc.save(update_fields=['estado', 'fecha_retencion', 'fecha_destruccion'])
+        elif self.accion_solicitud == 'reactivar':
+            # Reactivar limpia la disposición programada: estando activo el
+            # documento no debe quedar en cola para destrucción.
+            doc.estado = 'activo'
+            doc.fecha_retencion = None
+            doc.fecha_destruccion = None
+            doc.aviso_vencimiento_enviado = False
+            doc.save(update_fields=[
+                'estado', 'fecha_retencion', 'fecha_destruccion',
+                'aviso_vencimiento_enviado',
+            ])
+        elif self.accion_solicitud == 'renovar':
+            self._aplicar_renovacion(doc)
+            return
         elif self.accion_solicitud == 'eliminar_version':
             self.aplicar_eliminacion_version(doc, self.version_a_eliminar)
             return

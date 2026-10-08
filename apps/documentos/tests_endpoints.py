@@ -21,31 +21,91 @@ from autenticacion.models import PerfilUsuario, Notificacion
 # =============================================================================
 
 class APICambiarEstadoTest(BaseDocumentosTest):
-    """Tests del endpoint de cambio de estado."""
+    """Tests del endpoint de cambio de estado (inhabilitar / reactivar)."""
 
     def setUp(self):
         super().setUp()
         self.client = Client()
 
-    def test_cambiar_estado_jefe_puede(self):
-        self.client.login(username='jefe_ti', password='testpass123')
-        resp = self.client.post(
-            f'/documentos/api/procedimientos_generales/{self.doc_activo.uuid}/cambiar-estado/',
-            data=json.dumps({'estado': 'obsoleto', 'motivo_seleccion': 'test'}),
+    def _post(self, doc, estado, username, **extra):
+        self.client.login(username=username, password='testpass123')
+        payload = {'estado': estado, 'motivo_seleccion': 'test'}
+        payload.update(extra)
+        return self.client.post(
+            f'/documentos/api/{doc.tipo_id}/{doc.uuid}/cambiar-estado/',
+            data=json.dumps(payload),
             content_type='application/json',
         )
+
+    def test_cambiar_estado_jefe_solicita_aprobacion(self):
+        """El jefe del departamento no inhabilita directo: aprueba GG."""
+        resp = self._post(self.doc_activo, 'obsoleto', 'jefe_ti')
+        self.assertEqual(resp.status_code, 200)
+        self.doc_activo.refresh_from_db()
+        self.assertEqual(self.doc_activo.estado, 'activo')
+        solicitud = SolicitudAprobacionDocumento.objects.get(
+            documento=self.doc_activo, accion_solicitud='inhabilitar',
+        )
+        self.assertEqual(solicitud.estado, 'pendiente')
+        self.assertEqual(solicitud.aprobador, self.user_jefe_gg)
+        self.assertTrue(solicitud.es_final)
+
+    def test_cambiar_estado_admin_inhabilita_directo(self):
+        resp = self._post(self.doc_activo, 'obsoleto', 'admin01')
+        self.assertEqual(resp.status_code, 200)
+        self.doc_activo.refresh_from_db()
+        self.assertEqual(self.doc_activo.estado, 'obsoleto')
+        solicitud = SolicitudAprobacionDocumento.objects.get(
+            documento=self.doc_activo, accion_solicitud='inhabilitar',
+        )
+        self.assertEqual(solicitud.estado, 'aprobada')
+
+    def test_cambiar_estado_jefe_gg_inhabilita_directo(self):
+        resp = self._post(self.doc_activo, 'obsoleto', 'jefe_gg')
         self.assertEqual(resp.status_code, 200)
         self.doc_activo.refresh_from_db()
         self.assertEqual(self.doc_activo.estado, 'obsoleto')
 
-    def test_cambiar_estado_trabajador_solicitud(self):
-        self.client.login(username='trab01', password='testpass123')
-        resp = self.client.post(
-            f'/documentos/api/procedimientos_generales/{self.doc_en_revision.uuid}/cambiar-estado/',
-            data=json.dumps({'estado': 'activo'}),
-            content_type='application/json',
+    def test_cambiar_estado_propietario_trabajador_solicita(self):
+        """El propietario (trabajador) solicita la reactivación al jefe de su depto."""
+        doc = Documento.objects.create(
+            tipo=self.tipo_formulario, nombre='Formulario Obsoleto Trab',
+            codigo='TI-FOR-099', estado='obsoleto',
+            propietario=self.user_trabajador, departamento=self.depto_ti,
+            clasificacion='interno', version_actual='1.0',
         )
+        resp = self._post(doc, 'activo', 'trab01')
         self.assertEqual(resp.status_code, 200)
+        doc.refresh_from_db()
+        self.assertEqual(doc.estado, 'obsoleto')
+        solicitud = SolicitudAprobacionDocumento.objects.get(
+            documento=doc, accion_solicitud='reactivar',
+        )
+        self.assertEqual(solicitud.estado, 'pendiente')
+        self.assertEqual(solicitud.aprobador, self.user_jefe_ti)
+
+    def test_cambiar_estado_sin_permiso_403(self):
+        resp = self._post(self.doc_activo, 'obsoleto', 'trab01')
+        self.assertEqual(resp.status_code, 403)
+        self.doc_activo.refresh_from_db()
+        self.assertEqual(self.doc_activo.estado, 'activo')
+
+    def test_cambiar_estado_reactivar_no_obsoleto_400(self):
+        resp = self._post(self.doc_activo, 'activo', 'jefe_ti')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_cambiar_estado_reactivar_vencido_400(self):
+        """Con fecha vencida la reactivación se niega: hay que renovar."""
+        doc = Documento.objects.create(
+            tipo=self.tipo_formulario, nombre='Formulario Vencido',
+            codigo='TI-FOR-098', estado='obsoleto',
+            propietario=self.user_jefe_ti, departamento=self.depto_ti,
+            clasificacion='interno', version_actual='1.0',
+            fecha_vencimiento=date.today() - timedelta(days=1),
+        )
+        resp = self._post(doc, 'activo', 'jefe_ti')
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('vencimiento', resp.json()['mensaje'])
 
     def test_cambiar_estado_get_405(self):
         self.client.login(username='jefe_ti', password='testpass123')
