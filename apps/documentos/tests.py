@@ -1064,6 +1064,40 @@ class SolicitudAprobacionDocumentoTest(BaseDocumentosTest):
         self.doc_borrador.refresh_from_db()
         self.assertEqual(self.doc_borrador.estado, 'activo')
 
+    def test_aprobar_version_no_reinicia_la_fecha_de_vigencia(self):
+        """La entrada en vigor solo se fija al crear, no en cada edición."""
+        vigencia = timezone.now() - timedelta(days=10)
+        self.doc_borrador.fecha_vigencia = vigencia
+        self.doc_borrador.save(update_fields=['fecha_vigencia'])
+        revision_previa = self.doc_borrador.revision
+
+        sol = SolicitudAprobacionDocumento.objects.create(
+            documento=self.doc_borrador,
+            solicitante=self.user_trabajador,
+            aprobador=self.user_jefe_ti,
+            departamento_origen=self.depto_ti,
+            accion_solicitud='version',
+        )
+        sol.aprobar()
+
+        self.doc_borrador.refresh_from_db()
+        self.assertEqual(self.doc_borrador.estado, 'activo')
+        self.assertEqual(self.doc_borrador.fecha_vigencia, vigencia)
+        self.assertNotEqual(self.doc_borrador.revision, revision_previa)
+
+    def test_aprobar_creacion_si_fija_la_fecha_de_vigencia(self):
+        sol = SolicitudAprobacionDocumento.objects.create(
+            documento=self.doc_borrador,
+            solicitante=self.user_trabajador,
+            aprobador=self.user_jefe_ti,
+            departamento_origen=self.depto_ti,
+            accion_solicitud='creacion',
+        )
+        sol.aprobar()
+
+        self.doc_borrador.refresh_from_db()
+        self.assertIsNotNone(self.doc_borrador.fecha_vigencia)
+
     def test_aplicar_eliminacion_version(self):
         """Eliminar versión hace soft-delete y restaura anterior."""
         v1 = VersionDocumento.objects.create(

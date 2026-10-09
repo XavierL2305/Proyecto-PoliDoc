@@ -1018,9 +1018,12 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
           Si el autorizador no tiene jefe de GG, queda "esperando" y se deja
           rastro al solicitante/propietario.
           Si rechaza → cancela el hermano y el documento vuelve a "borrador".
-       5. Autorizador (jefe de GG) aprueba → _activar_documento(): estado "activo",
-          aprobado_por, fecha_aprobacion, fecha_vigencia, revision +1.
-          Si rechaza → cancela el hermano y el documento vuelve a "borrador".
+        5. Autorizador (jefe de GG) aprueba → _activar_documento(): estado "activo",
+           aprobado_por, fecha_aprobacion, revision +1 y
+           fecha_vigencia (SOLO si la acción es creación o el documento no
+           tiene ninguna: editar/subir de versión NO reinicia la entrada en
+           vigor; el vencimiento/próxima revisión sí se recalculan).
+           Si rechaza → cancela el hermano y el documento vuelve a "borrador".
        - El detalle del documento (`detalle.html`) muestra una card **"Flujo de
          aprobación"** para TODOS los roles (sin gating por rol/estado): lista
          evaluador y autorizador asignados y su estado (Pendiente / En espera /
@@ -1104,8 +1107,28 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
                                                ver §20.9)
               views.eliminar_documento        (eliminación directa: la solicitud
                                                nace en 'aprobado')
-       - Descargas descargar_solicitud_xlsx/pdf sirven el archivo GUARDADO si
-         existe; si no, exportan al vuelo (comportamiento histórico).
+        - Descargas descargar_solicitud_xlsx/pdf sirven el archivo GUARDADO si
+          existe; si no, exportan al vuelo (comportamiento histórico).
+        - VIGENCIA EN LA PLANILLA (recalculo en vivo): la planilla guarda en
+          `SolicitudCambio.respuestas` una **instantánea** de los campos auto.
+          Al mostrar y al exportar se relee contra la BD con
+          `models.respuestas_planilla_actual(sol)` (override de los orígenes
+          derivados del documento vía `valores_auto_solicitud`; un origen que
+          hoy está vacío se **borra** del dict, y evaluación/autorización/
+          resolución NO se tocan porque son histórico de la aprobación).
+          Puntos: `views.detalle_documento` (anota `sc.respuestas_efectivas`,
+          usado por `detalle.html`), `views.detalle_planilla` (contexto
+          `respuestas_actual`) y `services/exportacion.exportar_xlsx` (cubre
+          también al PDF). Resultado: H18 y el resto de los auto reflejan el
+          documento actual aunque cambien después de aprobar.
+        - INVALIDACIÓN DE LOS ARCHIVOS GUARDADOS:
+          `services/planillas.invalidar_planillas_documento(documento)` limpia
+          `planilla_xlsx`/`planilla_pdf` de las solicitudes creacion/
+          eliminación para que la descarga o el barrido las regeneren.
+          Se llama en `aplicar_planilla_al_documento` (cambia versión/título/
+          clasificación), en `aplicar_cambio` (aprobar creación/edición/
+          versión) y en las vistas `establecer_vigencia`, `quitar_vigencia` y
+          `renovar_vencimiento`.
         - Requiere migración 0040 y worker de Celery para el modo asíncrono.
         - UI: el detalle (`detalle.html`) muestra los formularios SGC
           (`SolicitudCambio`) agrupados por **operación** en pestañas
@@ -1894,7 +1917,11 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
       puede editar el documento (`puede_editar_documento`). El helper único
       `services/planillas.aplicar_planilla_al_documento()` (usado por la vista
       web y la API, antes duplicadas) la vuelca al aprobar; el rechazo no la
-      aplica. Auditoría: log ISO explícito `aprobacion_planilla` (con
+      aplica. **No reinicia `fecha_vigencia`**: aplicar una modificación sube
+      versión/título/clasificación pero la entrada en vigor es un dato del
+      documento, no de cada cambio (antes hacía
+      `fecha_vigencia = timezone.now()` y cada planilla movía la vigencia).
+      Al terminar invalida las planillas guardadas (ver §20.7). Auditoría: log ISO explícito `aprobacion_planilla` (con
       `planilla_codigo` y clasificación anterior/nueva) y el asiento `edicion`
       del documento incluye `clasificacion` con `valores_anteriores`
       (`signals.py` guarda la previa con un `pre_save`).
@@ -2086,6 +2113,12 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
       clave de campo, nunca por nombre de origen (bug corregido: antes
       `_autollenar_envio` escribía claves de origen y los campos del FOR-001
       salían vacíos hasta la aprobación).
+      Los derivados del documento (tipo_informacion, num_identificacion,
+      titulo_documento, version_documento, edicion_documento,
+      fecha_vigencia_documento, operacion) se **releen al mostrar/exportar**
+      con `models.respuestas_planilla_actual(sol)`: la planilla siempre
+      refleja el documento actual, no la instantánea guardada en
+      `respuestas` (ver §20.7 para el detalle y la invalidación de archivos).
     - El flujo de eliminación (`eliminar_documento`) llama a `_autollenar_envio`
       tanto en la vía con cadena como en la inmediata (usuario con permiso).
     - `incluir_etiqueta` (CampoFormato): si es True, el export XLSX escribe

@@ -99,15 +99,20 @@ def _get_existing_label(sheet_xml, ref, shared_strings):
 def exportar_xlsx(solicitud):
     """Genera XLSX lleno a partir de la plantilla del formato.
 
+    Los campos auto (vigencia, versión, título, operación…) se releen de la
+    BD en el momento, no del snapshot guardado en ``solicitud.respuestas``.
+
     Returns:
         bytes: El contenido XLSX generado.
     """
+    from ..models import respuestas_planilla_actual
+
     plantilla = solicitud.formato.plantilla_xlsx
     if not plantilla:
         raise ValueError('El formato no tiene plantilla XLSX')
 
     plantilla_path = plantilla.path
-    respuestas = solicitud.respuestas or {}
+    respuestas = respuestas_planilla_actual(solicitud)
     formato = solicitud.formato
 
     with zipfile.ZipFile(plantilla_path, 'r') as zf_in:

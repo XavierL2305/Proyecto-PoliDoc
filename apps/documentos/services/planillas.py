@@ -232,6 +232,37 @@ def _limpiar_planillas(solicitud):
             logger.warning('No se pudo borrar %s de %s: %s', campo, solicitud_codigo(solicitud), exc)
 
 
+def invalidar_planillas_documento(documento):
+    """Descarta las planillas SGC-FOR-001 guardadas de un documento.
+
+    Los campos auto de la planilla (vigencia, versión, título, operación…)
+    se recalculan al mostrar/exportar, pero los archivos persistidos son una
+    instantánea: se limpian aquí para que la siguiente descarga o la tarea de
+    barrido los regeneren con los valores actuales.
+
+    Devuelve el número de solicitudes afectadas.
+    """
+    from ..models import SolicitudCambio
+
+    if not documento:
+        return 0
+    afectadas = 0
+    solicitudes = SolicitudCambio.objects.filter(
+        documento=documento, operacion__in=OPERACIONES_CON_PLANILLA,
+    )
+    for solicitud in solicitudes:
+        if not solicitud.planilla_xlsx and not solicitud.planilla_pdf:
+            continue
+        _limpiar_planillas(solicitud)
+        afectadas += 1
+    if afectadas:
+        logger.info(
+            'Planillas de %s invalidadas para regeneración: %d',
+            documento.codigo, afectadas,
+        )
+    return afectadas
+
+
 def _nombre_archivo(solicitud, extension):
     """Nombre estable para el archivo guardado: ``{codigo}_{operacion}.{ext}``."""
     base = re.sub(r'[^A-Za-z0-9_-]+', '_', solicitud.codigo).strip('_')
@@ -252,9 +283,11 @@ def aplicar_planilla_al_documento(planilla, usuario=None):
     clasificación para la auditoría (``clasificacion_anterior`` /
     ``clasificacion_nueva``), o ``(None, {})`` si la planilla no tiene
     documento. No audita ni notifica: eso lo hace quien llama.
-    """
-    from django.utils import timezone
 
+    La **entrada en vigor no se reinicia**: aplicar una modificación cambia
+    versión/título/etc. pero no debe mover ``fecha_vigencia`` del documento.
+    Sí invalida las planillas guardadas, cuyos campos auto quedan viejos.
+    """
     from ..models import Documento, ReferenciaDocumento, VersionDocumento
 
     documento = planilla.documento if planilla.documento_id else None
@@ -278,7 +311,6 @@ def aplicar_planilla_al_documento(planilla, usuario=None):
     nueva_version = documento.proxima_version()
     documento.version_actual = nueva_version
     documento.estado = 'activo'
-    documento.fecha_vigencia = timezone.now()
     documento.afecta_todos = planilla.afecta_todos
     documento.save()
 
@@ -322,5 +354,7 @@ def aplicar_planilla_al_documento(planilla, usuario=None):
             'clasificacion_anterior': clasificacion_anterior,
             'clasificacion_nueva': clasificacion_nueva,
         }
+    # Título/versión/clasificación cambiaron: la planilla guardada quedó vieja.
+    invalidar_planillas_documento(documento)
     return documento, cambios
 

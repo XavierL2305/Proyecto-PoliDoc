@@ -7,10 +7,12 @@ del documento con el cambio de clasificación).
 """
 
 import json
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 from django.test import Client
 from django.urls import reverse
+from django.utils import timezone
 
 from tests_base import MONGO_PATCH_TARGET, BaseDocumentosTest
 from documentos.forms import PlanillaCambiosForm
@@ -107,6 +109,19 @@ class AplicarPlanillaHelperTest(BaseDocumentosTest):
         doc, cambios = aplicar_planilla_al_documento(planilla, usuario=self.user_jefe_ti)
         self.assertIsNone(doc)
         self.assertEqual(cambios, {})
+
+    def test_no_reinicia_la_fecha_de_vigencia(self):
+        """Aplicar una modificación sube versión pero no mueve la vigencia."""
+        vigencia_anterior = timezone.now() - timedelta(days=40)
+        self.doc_activo.fecha_vigencia = vigencia_anterior
+        self.doc_activo.save(update_fields=['fecha_vigencia'])
+        planilla = self._planilla(clasificacion_propuesta='publico')
+
+        aplicar_planilla_al_documento(planilla, usuario=self.user_jefe_ti)
+
+        self.doc_activo.refresh_from_db()
+        self.assertEqual(self.doc_activo.fecha_vigencia, vigencia_anterior)
+        self.assertEqual(self.doc_activo.estado, 'activo')
 
 
 class PlanillaClasificacionAprobacionTest(BaseDocumentosTest):

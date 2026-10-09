@@ -1195,7 +1195,12 @@ class SolicitudAprobacionDocumento(models.Model):
             doc.estado = 'activo'
             doc.aprobado_por = self.aprobador
             doc.fecha_aprobacion = tz.now()
-            doc.fecha_vigencia = tz.now()
+            # La entrada en vigor solo se fija al crear (o si el documento no
+            # tiene ninguna): editar o subir de versión no debe reiniciarla,
+            # o cada cambio empujaría el inicio de la vigencia.
+            fija_vigencia = self.accion_solicitud == 'creacion' or not doc.fecha_vigencia
+            if fija_vigencia:
+                doc.fecha_vigencia = tz.now()
             try:
                 rev = int(doc.revision)
             except (ValueError, TypeError):
@@ -1210,10 +1215,17 @@ class SolicitudAprobacionDocumento(models.Model):
                 fecha_venc = _sumar_meses(tz.now().date(), doc.periodo_vigencia.meses)
                 doc.fecha_vencimiento = fecha_venc
                 doc.proxima_revision = fecha_venc
-            doc.save(update_fields=[
-                'estado', 'aprobado_por', 'fecha_aprobacion', 'fecha_vigencia',
+            campos = [
+                'estado', 'aprobado_por', 'fecha_aprobacion',
                 'revision', 'historial_cambios', 'fecha_vencimiento', 'proxima_revision',
-            ])
+            ]
+            if fija_vigencia:
+                campos.append('fecha_vigencia')
+            doc.save(update_fields=campos)
+            # Los campos auto de la planilla (versión/edición/…) cambiaron con
+            # la aprobación: los archivos guardados quedaron desactualizados.
+            from .services.planillas import invalidar_planillas_documento
+            invalidar_planillas_documento(doc)
 
 def _cargo_usuario(usuario):
     """Genera texto de cargo: 'Rol — Departamento'."""
@@ -1334,6 +1346,41 @@ def autocompletar_respuestas(documento, valores, operacion=None):
     respuestas.update(nuevos)
     sol.respuestas = respuestas
     sol.save(update_fields=['respuestas'])
+
+
+def respuestas_planilla_actual(sol):
+    """Respuestas de la planilla con los campos auto releídos desde la BD.
+
+    Los campos auto derivados del documento (código, tipo, título, versión,
+    edición, fecha de vigencia y operación) se recalculan en cada llamada con
+    :func:`valores_auto_solicitud`, de modo que la planilla siempre refleje el
+    estado actual del documento aunque haya cambiado después de aprobarse.
+
+    Un origen cuyo valor actual es vacío se elimina de las respuestas: la
+    planilla muestra el campo vacío en lugar de un valor congelado.
+
+    El resto de las respuestas se conserva tal cual: lo escrito por el usuario
+    y los bloques de evaluación/autorización/resolución, que son histórico de
+    la aprobación y no dependen del documento.
+    """
+    if not sol:
+        return {}
+    respuestas = dict(sol.respuestas or {})
+    formato = sol.formato
+    if not formato:
+        return respuestas
+    valores = valores_auto_solicitud(sol)
+    for campo in formato.get_todos_los_campos().exclude(origen='usuario'):
+        if campo.origen not in valores:
+            continue
+        valor = valores[campo.origen]
+        if valor in (None, '', []):
+            respuestas.pop(campo.clave, None)
+        elif campo.tipo == 'checkbox_grupo' and not isinstance(valor, list):
+            respuestas[campo.clave] = [valor]
+        else:
+            respuestas[campo.clave] = valor
+    return respuestas
 
 
 def _sumar_meses(fecha, meses):

@@ -80,17 +80,9 @@
   }
 
   .login-logo img {
-    width: 72px;
-    height: 72px;
+    width: 144px;
+    height: 144px;
     margin: 0 auto 0.75rem;
-  }
-
-  [data-theme="dark"] .login-logo img rect:first-child {
-    fill: #1E3A5F;
-  }
-
-  [data-theme="dark"] .login-logo img circle {
-    fill: #059669;
   }
 
   .login-logo h1 {
@@ -160,6 +152,62 @@
     color: var(--color-muted);
   }
 
+  /* === ENTRADA ANIMADA (login) ===
+     viewEnter/viewItem vienen de css/utilities/animations.css (compartidos con
+     las vistas de base_app). Movimiento solo bajo no-preference; sin JS la
+     entrada (CSS) se ve igual. */
+  @keyframes logoIn {
+    from { opacity: 0; transform: scale(0.96); }
+    to { opacity: 1; transform: scale(1); }
+  }
+
+  /* === TRANSICIÓN AL PANEL ===
+     Overlay con el mismo token de fondo que el dashboard: la tarjeta se
+     desvanece y la navegación llega sobre un fondo ya continuo. */
+  .login-transition {
+    position: fixed;
+    inset: 0;
+    background: var(--color-bg);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 999;
+    transition: opacity 350ms ease-out;
+  }
+
+  .login-transition.is-active {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    /* fill: backwards (no both) en la tarjeta: al terminar la entrada no debe
+       quedar fijado opacity/transform, o anularía la salida .is-leaving. */
+    .login-card { animation: viewEnter 500ms ease-out backwards; }
+    .login-logo img { animation: logoIn 600ms ease-out 80ms both; }
+    .login-logo h1,
+    .login-logo p { animation: viewItem 400ms ease-out 180ms both; }
+    .login-divider { animation: viewItem 400ms ease-out 260ms both; }
+    .login-error { animation: viewItem 400ms ease-out 300ms both; }
+    .login-form-title { animation: viewItem 400ms ease-out 320ms both; }
+    /* Hijos del form: 1=csrf, 2=título, 3=usuario, 4=password, 5=checkboxes, 6=botón */
+    #login-form .form-group:nth-child(3) { animation: viewItem 400ms ease-out 380ms both; }
+    #login-form .form-group:nth-child(4) { animation: viewItem 400ms ease-out 440ms both; }
+    .login-checkboxes { animation: viewItem 400ms ease-out 500ms both; }
+    #submit-btn { animation: viewItem 400ms ease-out 560ms both; }
+
+    /* Salida hacia el panel (la activa login.js al enviar) */
+    .login-container.is-leaving .login-card {
+      opacity: 0;
+      transform: translateY(-6px) scale(0.99);
+      transition: opacity 300ms ease-in, transform 300ms ease-in;
+    }
+
+    .login-container.is-leaving .login-footer {
+      opacity: 0;
+      transition: opacity 250ms ease-in;
+    }
+  }
+
   /* === TERMS MODAL === */
   .terminos-modal .modal-body {
     max-height: 60vh;
@@ -215,6 +263,9 @@
 
 {% block content %}
 <div class="login-container">
+  <!-- Overlay de transición al panel (lo activa login.js al enviar) -->
+  <div class="login-transition" id="login-transition" aria-hidden="true"></div>
+
   <!-- Toggle Dark Mode -->
   <button type="button" class="theme-toggle" onclick="toggleTheme()" aria-label="Cambiar tema">
     <i class="fa-solid fa-sun icon-sun"></i>
@@ -225,7 +276,7 @@
   <div class="login-card">
     <!-- Logo -->
     <div class="login-logo">
-      <img src="{% static 'imagenes/logoPolidoc.svg' %}" alt="POLIDOC Logo">
+      <img src="{% static 'imagenes/logopoliclinicatachira.svg' %}" alt="POLIDOC Logo">
       <h1>POLIDOC</h1>
       <p>Gestión Documental</p>
     </div>
@@ -445,4 +496,8 @@
     }
   });
 </script>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/login.js' %}" defer></script>
 {% endblock %}

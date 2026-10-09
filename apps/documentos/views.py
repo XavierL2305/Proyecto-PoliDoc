@@ -18,7 +18,7 @@ from .models import (
     Departamento, TipoDocumento, SolicitudAprobacionDocumento,
     DocumentoAsociadoPlanilla, DistribucionDocumento, SolicitudAccesoDocumento,
     RenovacionVencimiento, ReferenciaDocumento, Formato, SeccionFormato, CampoFormato,
-    SolicitudCambio, Periodo, FormatoPublicacion,
+    SolicitudCambio, Periodo, FormatoPublicacion, respuestas_planilla_actual,
 )
 from .forms import (
     DocumentoForm, SolicitudDescargaForm, PlanillaCambiosForm,
@@ -26,7 +26,7 @@ from .forms import (
     validar_respuestas, validar_respuestas_guardadas,
 )
 from .icons import ICONOS_DISPONIBLES
-from .services.planillas import aplicar_planilla_al_documento
+from .services.planillas import aplicar_planilla_al_documento, invalidar_planillas_documento
 from auditoria.services import registrar_aprobacion_planilla, registrar_rechazo_planilla
 from .cache_utils import tipos_activos, periodos_activos, departamentos_activos
 from . import ai
@@ -1246,6 +1246,10 @@ def detalle_documento(request, tipo, documento_id):
         .select_related('formato', 'solicitante', 'departamento')
         .order_by('-fecha_creacion')
     )
+    # La planilla se muestra con los campos auto releídos de la BD: si la
+    # vigencia/título/versión cambiaron después de aprobar, se ve lo actual.
+    for sc in solicitudes_cambio:
+        sc.respuestas_efectivas = respuestas_planilla_actual(sc)
     solicitudes_por_operacion = []
     for op_key, op_label in SolicitudCambio.OPERACION_CHOICES:
         items = [sc for sc in solicitudes_cambio if sc.operacion == op_key]
@@ -2159,6 +2163,7 @@ def renovar_vencimiento(request, tipo, documento_id):
         user_agent=request.META.get('HTTP_USER_AGENT'),
     )
     if resultado.aplicado:
+        invalidar_planillas_documento(documento)
         _notificar_renovacion(documento, user, fecha_nueva_dt)
         try:
             from auditoria.services import registrar_log_iso
@@ -2243,6 +2248,8 @@ def establecer_vigencia(request, tipo, documento_id):
         messages.error(request, 'Período de vigencia no válido.')
         return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
     documento.establecer_vigencia(periodo)
+    # La planilla muestra la vigencia actual: el archivo guardado queda viejo.
+    invalidar_planillas_documento(documento)
     from autenticacion.models import Notificacion
     if documento.propietario != user:
         Notificacion.objects.create(
@@ -2333,6 +2340,7 @@ def quitar_vigencia(request, tipo, documento_id):
         'periodo_vigencia', 'fecha_vencimiento', 'proxima_revision',
         'aviso_vencimiento_enviado', 'historial_cambios',
     ])
+    invalidar_planillas_documento(documento)
 
     from autenticacion.models import Notificacion
     if documento.propietario != user:
@@ -2780,6 +2788,8 @@ def detalle_planilla(request, planilla_uuid):
     documentos_relacionados = documento.documentos_relacionados.all() if documento else []
     solicitud_cambio = planilla.solicitud_cambio
     solicitud_permitida = _puede_ver_solicitud(request.user, solicitud_cambio) if solicitud_cambio else False
+    # Respuestas con los campos auto releídos de la BD (vigencia, versión, …).
+    respuestas_actual = respuestas_planilla_actual(solicitud_cambio) if solicitud_cambio else None
 
     espera = AprobacionPlanilla.objects.filter(
         planilla=planilla, estado='esperando', aprobador__isnull=True,
@@ -2800,6 +2810,7 @@ def detalle_planilla(request, planilla_uuid):
         'documento': documento, 'departamentos_afectados': departamentos_afectados,
         'documentos_relacionados': documentos_relacionados,
         'solicitud_cambio': solicitud_cambio,
+        'respuestas_actual': respuestas_actual,
         'solicitud_permitida': solicitud_permitida,
         'espera_msg': espera_msg,
     })

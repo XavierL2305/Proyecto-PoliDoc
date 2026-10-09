@@ -245,7 +245,7 @@
             </a>
             {% endif %}
           </div>
-          {% include 'documentos/_formato_dinamico.html' with formato=solicitud_cambio.formato respuestas=solicitud_cambio.respuestas read_only=True %}
+          {% include 'documentos/_formato_dinamico.html' with formato=solicitud_cambio.formato respuestas=respuestas_actual read_only=True %}
         </div>
       </div>
       {% endif %}

@@ -16,17 +16,20 @@ from unittest.mock import patch
 
 from django.core.files.base import ContentFile
 from django.test import Client, override_settings
+from django.utils import timezone
 
 from tests_base import BaseDocumentosTest
 from documentos.models import (
     CampoFormato, Formato, SeccionFormato, SolicitudAprobacionDocumento,
-    SolicitudCambio,
+    SolicitudCambio, respuestas_planilla_actual,
 )
+from documentos.services.exportacion import exportar_xlsx
 from documentos.services.planillas import (
     OPERACIONES_CON_PLANILLA,
     encolar_generacion_planilla,
     generar_planilla_solicitud,
     guardar_planilla_solicitud,
+    invalidar_planillas_documento,
 )
 from documentos.tasks import generar_planilla_solicitud_task, generar_planillas_pendientes
 
@@ -684,3 +687,146 @@ class BarridoPlanillasPendientesTest(BasePlanillasTest):
         )
         self.assertEqual(settings.PLANILLAS_BARRIDO_MINUTOS, 15)
         self.assertEqual(settings.PLANILLAS_BARRIDO_LOTE, 100)
+
+
+# =============================================================================
+# LA PLANILLA REFLEJA SIEMPRE EL ESTADO ACTUAL DEL DOCUMENTO
+# =============================================================================
+
+class PlanillaReflejaVigenciaActualTest(BasePlanillasTest):
+    """H18 y el resto de campos auto se releen de la BD, no del snapshot.
+
+    La planilla aprobada guarda en ``respuestas`` una instantánea; mostrarla
+    o exportarla debe recalcular los campos auto contra el documento actual
+    (vigencia, versión, título, operación…) y los archivos persistidos se
+    invalidan cuando esos datos cambian.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.formato = cls.crear_formato()
+        seccion = SeccionFormato.objects.filter(formato=cls.formato).first()
+        CampoFormato.objects.create(
+            seccion=seccion, clave='fecha_vigencia',
+            etiqueta='Fecha de Vigencia', tipo='fecha',
+            origen='fecha_vigencia_documento', celda_excel='H18',
+        )
+        # El documento está vigente "hoy"; la planilla se aprobó hace años.
+        cls.vigencia_vieja = '2000-01-01'
+        cls.doc_activo.fecha_vigencia = timezone.now()
+        cls.doc_activo.save(update_fields=['fecha_vigencia'])
+        cls.vigencia_actual = cls.doc_activo.fecha_vigencia.date().isoformat()
+        cls.solicitud = cls.crear_solicitud(
+            cls.formato,
+            documento=cls.doc_activo,
+            respuestas={
+                'motivo': 'Revisión del procedimiento',
+                'fecha_vigencia': cls.vigencia_vieja,
+            },
+        )
+
+    @staticmethod
+    def _hoja(xlsx_bytes):
+        with zipfile.ZipFile(io.BytesIO(xlsx_bytes)) as zf:
+            return zf.read('xl/worksheets/sheet1.xml').decode('utf-8')
+
+    def test_el_snapshot_guardado_conserva_la_fecha_antigua(self):
+        """Premisa: sin el recálculo, la BD y la planilla discrepan."""
+        self.assertEqual(
+            SolicitudCambio.objects.get(pk=self.solicitud.pk).respuestas['fecha_vigencia'],
+            self.vigencia_vieja,
+        )
+
+    def test_el_helper_relee_la_vigencia_desde_la_bd(self):
+        sol = SolicitudCambio.objects.get(pk=self.solicitud.pk)
+
+        actual = respuestas_planilla_actual(sol)
+
+        self.assertEqual(actual['fecha_vigencia'], self.vigencia_actual)
+        self.assertNotEqual(actual['fecha_vigencia'], self.vigencia_vieja)
+        # El resto de las respuestas no se toca.
+        self.assertEqual(actual['motivo'], 'Revisión del procedimiento')
+        # Y no se persiste: el snapshot en BD sigue intacto.
+        sol.refresh_from_db()
+        self.assertEqual(sol.respuestas['fecha_vigencia'], self.vigencia_vieja)
+
+    def test_el_helper_vacia_el_campo_si_el_documento_no_tiene_vigencia(self):
+        self.doc_activo.fecha_vigencia = None
+        self.doc_activo.save(update_fields=['fecha_vigencia'])
+        sol = SolicitudCambio.objects.get(pk=self.solicitud.pk)
+
+        actual = respuestas_planilla_actual(sol)
+
+        self.assertNotIn('fecha_vigencia', actual)
+
+    def test_el_xlsx_exporta_la_vigencia_actual(self):
+        contenido = exportar_xlsx(self.solicitud)
+
+        hoja = self._hoja(contenido)
+        self.assertIn(self.vigencia_actual, hoja)
+        self.assertNotIn(self.vigencia_vieja, hoja)
+
+    def test_la_pantalla_del_documento_muestra_la_vigencia_actual(self):
+        self.client = Client()
+        self.client.login(username='jefe_ti', password='testpass123')
+
+        resp = self.client.get(
+            f'/documentos/procedimientos_generales/{self.doc_activo.uuid}/'
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, self.vigencia_actual)
+        self.assertNotContains(resp, self.vigencia_vieja)
+        planillas = [
+            sc
+            for op in resp.context['solicitudes_por_operacion']
+            for sc in op['solicitudes']
+            if sc.pk == self.solicitud.pk
+        ]
+        self.assertEqual(len(planillas), 1)
+        self.assertEqual(
+            planillas[0].respuestas_efectivas['fecha_vigencia'],
+            self.vigencia_actual,
+        )
+
+    def test_invalidar_limpia_la_planilla_guardada(self):
+        self.solicitud.planilla_xlsx.save(
+            'viejo.xlsx', ContentFile(b'XLSX VIEJO'), save=True,
+        )
+        self.solicitud.planilla_pdf.save(
+            'viejo.pdf', ContentFile(b'PDF VIEJO'), save=True,
+        )
+
+        afectadas = invalidar_planillas_documento(self.doc_activo)
+
+        self.solicitud.refresh_from_db()
+        self.assertEqual(afectadas, 1)
+        self.assertFalse(self.solicitud.planilla_xlsx)
+        self.assertFalse(self.solicitud.planilla_pdf)
+
+    def test_no_invalida_documentos_sin_planilla(self):
+        self.doc_en_revision.fecha_vigencia = timezone.now()
+        self.doc_en_revision.save(update_fields=['fecha_vigencia'])
+
+        self.assertEqual(invalidar_planillas_documento(self.doc_en_revision), 0)
+        self.assertEqual(invalidar_planillas_documento(None), 0)
+
+    def test_tras_invalidar_la_descarga_regenera_con_la_vigencia_actual(self):
+        self.solicitud.planilla_xlsx.save(
+            'viejo.xlsx', ContentFile(b'XLSX VIEJO'), save=True,
+        )
+        self.client = Client()
+        self.client.login(username='trab01', password='testpass123')
+
+        invalidar_planillas_documento(self.doc_activo)
+        resp = self.client.get(
+            f'/documentos/solicitud/{self.solicitud.uuid}/exportar/xlsx/'
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        hoja = self._hoja(b''.join(resp.streaming_content))
+        self.assertIn(self.vigencia_actual, hoja)
+        self.assertNotIn(self.vigencia_vieja, hoja)
+        self.solicitud.refresh_from_db()
+        self.assertTrue(self.solicitud.planilla_xlsx)
