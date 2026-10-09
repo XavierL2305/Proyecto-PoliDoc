@@ -1325,7 +1325,7 @@ window.addEventListener('pagehide', function() {
 {% endif %}
 
 // === Conversión de documento: barra de progreso + polling ===
-(function () {
+document.addEventListener('DOMContentLoaded', function () {
   var el = document.getElementById('conv-progress');
   if (!el || !window.createProgressLoader) return;
   var url = el.getAttribute('data-url');
@@ -1353,6 +1353,6 @@ window.addEventListener('pagehide', function() {
       .catch(function() { loader.fail('No se pudo consultar el estado de la conversión.'); });
   }
   setTimeout(poll, 2000);
-})();
+});
 </script>
 {% endblock %}
