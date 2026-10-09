@@ -7,9 +7,9 @@ Sistema de gestión documental para la Policlínica Táchira (normas ISO 9001,
 |---|---|
 | Versión del manual | **1.0 — Tomo 1 + Tomo 2** |
 | Fecha | 08/10/2026 |
-| Versión del sistema verificada | commit `8f9be56` |
+| Versión del sistema verificada | commit `95b5081` |
 | Fuente de verdad técnica | `CONTEXT.txt` (raíz del proyecto) + código de vistas y plantillas |
-| Estado | Contenido y export completos. 1 captura pendiente (`conversion-pdf.png`) |
+| Estado | Contenido y export completos. 0 capturas pendientes (31/31) |
 
 > Este manual describe la **interfaz de usuario**. No contiene instrucciones
 > técnicas de instalación, configuración de variables de entorno ni uso de la
@@ -83,7 +83,7 @@ Estado actual de las capturas:
 | | Cantidad | Estado |
 |---|---|---|
 | Capturas imprescindibles (★) | 16 | ✅ tomadas y usadas |
-| Capturas del Tomo 2 (☆) | 15 | ✅ 14 tomadas y usadas · 1 pendiente (`conversion-pdf.png`) |
+| Capturas del Tomo 2 (☆) | 15 | ✅ 15 tomadas y usadas |
 
 ---
 
@@ -128,5 +128,5 @@ fueron contrastadas contra el código en la versión indicada arriba.
 | Fase | Contenido | Estado |
 |---|---|---|
 | **1. Tomo 1 (MVP)** | Capítulos 01-09 + glosario, 16 capturas ★ | ✅ Hecho |
-| **2. Tomo 2** | Vigencia y vencimientos, guías por rol (10-14), capturas ☆ | ✅ Hecho (falta 1 captura) |
+| **2. Tomo 2** | Vigencia y vencimientos, guías por rol (10-14), capturas ☆ | ✅ Hecho (15 capturas ☆) |
 | **3. Export** | Generación de PDF/HTML con portada y control de versiones para distribución | ✅ Hecho (`exportar.py`) |

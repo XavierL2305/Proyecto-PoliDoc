@@ -10,8 +10,10 @@ script `verificar.py` detecta las referencias rotas.
 
 - **Sin datos personales:** no deben verse cédulas, nombres de pacientes,
   correos ni teléfonos reales. Usa los datos de prueba del entorno.
-- Ventana del navegador a **1440 px de ancho**, tema claro, zoom al 100 %.
-- Formato **PNG** comprimido (pngquant/oxipng), ancho máximo 1440 px.
+- Ventana del navegador a **1920 px de ancho**, tema claro, zoom al 100 %.
+- Formato **PNG** comprimido (pngquant/oxipng), ancho estándar 1920 px.
+- **Recortes de una zona** (p. ej. la campana de notificaciones o el
+  autocompletado del navbar) se dejan a su tamaño natural; **no se amplían**.
 - Si una pantalla muestra mensajes del sistema, inclúyelos: ayudan al lector.
 
 ## Entorno de captura
@@ -67,7 +69,7 @@ Y crea manualmente (con las cuentas de prueba) documentos en cada estado:
 | ✅ | Archivo | Pantalla | Rol | URL | Usada en |
 |---|---|---|---|---|---|
 | ✅ | `ampliacion/perfil.png` | Mi Perfil | Trabajador | `/perfil/` | 11 |
-| ⬜ | `ampliacion/conversion-pdf.png` | Barra de progreso de conversión a PDF | Trabajador | detalle tras subir .docx | 09 |
+| ✅ | `ampliacion/conversion-pdf.png` | Barra de progreso de conversión a PDF | Trabajador | detalle tras subir .docx | 09 |
 | ✅ | `ampliacion/resumen-ia.png` | Tarjeta "Resumen IA" con resultado | Jefe | detalle → Generar resumen | 11 |
 | ✅ | `ampliacion/aprobar-planilla.png` | Aprobación de Planilla de Cambios | Jefe | detalle de planilla | 12 |
 | ✅ | `ampliacion/departamento.png` | Documentos del Departamento con tarjetas de vigencia | Jefe | `/documentos/departamento/` | 12 |
@@ -84,8 +86,5 @@ Y crea manualmente (con las cuentas de prueba) documentos en cada estado:
 
 ## Pendientes de capturar
 
-Solo queda **una** captura declarada sin archivo:
-
-| ✅ | Archivo | Pantalla | Rol | URL | Usada en |
-|---|---|---|---|---|---|
-| ⬜ | `ampliacion/conversion-pdf.png` | Barra de progreso de conversión a PDF | Trabajador | detalle tras subir .docx | 09 |
+**No quedan capturas pendientes:** las 31 declaradas están en
+`imagenes/` y todas las tablas anteriores están en ✅.
