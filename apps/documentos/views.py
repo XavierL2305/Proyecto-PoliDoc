@@ -1225,6 +1225,18 @@ def detalle_documento(request, tipo, documento_id):
     from .permissions import puede_inhabilitar
     puede_inhab, rol_inhab = puede_inhabilitar(request.user, documento)
 
+    # Solicitudes de cambio de estado todavía sin resolver: si ya hay una
+    # en trámite, la ficha muestra un aviso en lugar de ofrecer de nuevo
+    # el botón de solicitud (el API devolvería 409 "duplicado").
+    # Se importa con alias porque el nombre coincide con la variable local
+    # `solicitud_pendiente` (descarga) que se pasa al contexto más abajo.
+    from .services.cambios_estado import (
+        solicitud_pendiente as buscar_cambio_pendiente,
+    )
+    reactivacion_pendiente = buscar_cambio_pendiente(documento, 'reactivar')
+    inhabilitacion_pendiente = buscar_cambio_pendiente(documento, 'inhabilitar')
+    renovacion_pendiente = buscar_cambio_pendiente(documento, 'renovar')
+
     from django.db.models.functions import Coalesce
     historial_estados = (
         SolicitudAprobacionDocumento.objects.filter(documento=documento)
@@ -1232,11 +1244,23 @@ def detalle_documento(request, tipo, documento_id):
         .order_by('-fecha_accion', '-id')
     )
 
-    # Cadena de aprobación actual (última): evaluador primero, luego autorizador.
-    aprobaciones_actuales = list(
+    # Cadena de aprobación actual: solo la de la ACCIÓN más reciente
+    # (evaluador primero, luego autorizador). Sin acotar por acción se
+    # mezclaba la autorización ya aprobada de una acción anterior con la
+    # pendiente de la actual, y el card mostraba filas duplicadas.
+    ultima_solicitud = (
         SolicitudAprobacionDocumento.objects.filter(documento=documento)
-        .order_by('-id')[:2]
-    )[::-1]
+        .order_by('-id').first()
+    )
+    if ultima_solicitud:
+        aprobaciones_actuales = list(
+            SolicitudAprobacionDocumento.objects.filter(
+                documento=documento,
+                accion_solicitud=ultima_solicitud.accion_solicitud,
+            ).order_by('id')
+        )
+    else:
+        aprobaciones_actuales = []
 
     renovaciones = RenovacionVencimiento.objects.filter(documento=documento)
     es_propietario = documento.propietario == request.user
@@ -1310,6 +1334,9 @@ def detalle_documento(request, tipo, documento_id):
         'puede_descargar': puede_descargar(request.user, documento) or tiene_descarga_aprobada,
         'puede_inhabilitar': puede_inhab,
         'puede_inhabilitar_directo': rol_inhab == 'directo',
+        'reactivacion_pendiente': reactivacion_pendiente,
+        'inhabilitacion_pendiente': inhabilitacion_pendiente,
+        'renovacion_pendiente': renovacion_pendiente,
         'vencimiento_vencido': bool(
             documento.fecha_vencimiento and documento.fecha_vencimiento <= hoy
         ),

@@ -887,6 +887,87 @@ class VistasEtiquetasCambioEstadoTest(BaseDocumentosTest):
         self.assertTrue(resp.context['puede_eliminar'])
         self.assertContains(resp, 'Solicitar Inhabilitación')
 
+    def test_reactivacion_pendiente_muestra_aviso_no_boton(self):
+        """Con una reactivación ya solicitada se ofrece el aviso, no el botón.
+
+        El API devuelve 409 "duplicado" si se vuelve a pedir; la ficha debe
+        reflejarlo en vez de invitar a repetir la solicitud.
+        """
+        doc = Documento.objects.create(
+            tipo=self.tipo_formulario, nombre='Obsoleto Requiere Reactivar',
+            codigo='TI-FOR-098', estado='obsoleto',
+            propietario=self.user_jefe_ti, departamento=self.depto_ti,
+            clasificacion='interno', version_actual='1.0',
+            fecha_vencimiento=date.today() + timedelta(days=30),
+        )
+        SolicitudAprobacionDocumento.objects.create(
+            documento=doc, accion_solicitud='reactivar',
+            solicitante=self.user_jefe_ti, aprobador=self.user_jefe_gg,
+            rol_aprobador='autorizador', estado='pendiente', es_final=True,
+            departamento_origen=self.depto_ti,
+        )
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.get(f'/documentos/{doc.tipo_id}/{doc.uuid}/')
+        self.assertEqual(resp.status_code, 200)
+
+        self.assertIsNotNone(resp.context['reactivacion_pendiente'])
+        self.assertContains(
+            resp, 'Reactivación solicitada — pendiente de aprobación'
+        )
+        # El botón de solicitud desaparece para quien no aplica directo.
+        self.assertNotContains(resp, 'onclick="cambiarEstadoDocumento')
+
+    def test_admin_conserva_habilitar_directo_con_reactivacion_pendiente(self):
+        """El administrador (aplicación directa) no se ve bloqueado por el aviso."""
+        SolicitudAprobacionDocumento.objects.create(
+            documento=self.doc_obsoleto, accion_solicitud='reactivar',
+            solicitante=self.user_jefe_ti, aprobador=self.user_jefe_gg,
+            rol_aprobador='autorizador', estado='pendiente', es_final=True,
+            departamento_origen=self.depto_ti,
+        )
+        self.client.login(username='admin01', password='testpass123')
+        resp = self.client.get(
+            f'/documentos/{self.doc_obsoleto.tipo_id}/{self.doc_obsoleto.uuid}/'
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.context['puede_inhabilitar_directo'])
+        self.assertContains(resp, 'onclick="cambiarEstadoDocumento')
+
+    def test_flujo_aprobacion_no_mezcla_acciones_anteriores(self):
+        """La cadena ya aprobada de una acción no se mezcla con la actual.
+
+        Antes se tomaban las 2 últimas solicitudes sin filtrar por acción:
+        una reactivación pendiente se mostraba junto a la autorización
+        aprobada de la creación, apareciendo dos filas "Autorización".
+        """
+        doc = self.doc_obsoleto
+        SolicitudAprobacionDocumento.objects.create(
+            documento=doc, accion_solicitud='creacion',
+            solicitante=self.user_trabajador, aprobador=self.user_jefe_ti,
+            rol_aprobador='evaluador', estado='aprobada', es_final=False,
+            departamento_origen=self.depto_ti,
+        )
+        SolicitudAprobacionDocumento.objects.create(
+            documento=doc, accion_solicitud='creacion',
+            solicitante=self.user_trabajador, aprobador=self.user_jefe_gg,
+            rol_aprobador='autorizador', estado='aprobada', es_final=True,
+            departamento_origen=self.depto_ti,
+        )
+        SolicitudAprobacionDocumento.objects.create(
+            documento=doc, accion_solicitud='reactivar',
+            solicitante=self.user_jefe_ti, aprobador=self.user_jefe_gg,
+            rol_aprobador='autorizador', estado='pendiente', es_final=True,
+            departamento_origen=self.depto_ti,
+        )
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.get(f'/documentos/{doc.tipo_id}/{doc.uuid}/')
+        self.assertEqual(resp.status_code, 200)
+
+        flujo = list(resp.context['aprobaciones_actuales'])
+        self.assertEqual(len(flujo), 1)
+        self.assertEqual(flujo[0].accion_solicitud, 'reactivar')
+        self.assertEqual(flujo[0].estado, 'pendiente')
+
 
 # =============================================================================
 # VERIFICACIÓN: AUDITORÍA, NOTIFICACIÓN Y PLANILLA
