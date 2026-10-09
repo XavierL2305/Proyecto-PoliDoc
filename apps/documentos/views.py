@@ -3328,7 +3328,9 @@ def auditoria_reporte_pdf(request):
         messages.error(request, 'No tienes permisos para generar reportes.')
         return redirect('documentos:mis_documentos')
     from auditoria.services import obtener_logs
-    from django.http import HttpResponse
+    from io import BytesIO
+    from hashlib import sha256
+    from django.core.files.base import ContentFile
     try:
         from reportlab.lib import colors
         from reportlab.lib.pagesizes import letter, A4, landscape
@@ -3461,9 +3463,13 @@ def auditoria_reporte_pdf(request):
     total_fallos = sum(1 for l in logs if not l.get('resultado', {}).get('exitoso', True))
 
     # ── Construir documento ──
-    doc_code = f"SGC-RPT-AUD-{timezone.now().strftime('%Y%m%d')}"
-    now_str = timezone.now().strftime('%d/%m/%Y %H:%M')
-    now_date = timezone.now().strftime('%d/%m/%Y')
+    ahora = timezone.now()
+    doc_code = (
+        f"SGC-RPT-AUD-{ahora.strftime('%Y%m%d-%H%M%S')}"
+        f"-{uuid.uuid4().hex[:6].upper()}"
+    )
+    now_str = ahora.strftime('%d/%m/%Y %H:%M')
+    now_date = ahora.strftime('%d/%m/%Y')
     user_display = request.user.get_full_name() or request.user.username
     user_rol = request.user.perfil.get_rol_display() if hasattr(request.user, 'perfil') else ''
     user_depto = ''
@@ -3479,9 +3485,16 @@ def auditoria_reporte_pdf(request):
     if filtro_categoria:
         filtros_texto.append(f'Categoría: {filtro_categoria}')
     filtros_str = ', '.join(filtros_texto) if filtros_texto else 'Todos'
+    filtros_dict = {
+        'tipo': tipo_reporte,
+        'usuario': filtro_usuario or None,
+        'accion_tipo': filtro_accion or None,
+        'accion_categoria': filtro_categoria or None,
+    }
 
-    response = HttpResponse(content_type='application/pdf')
-    response['Content-Disposition'] = f'attachment; filename="SGC-RPT-AUD-{timezone.now().strftime("%Y%m%d")}.pdf"'
+    # El PDF se genera en memoria y luego se conserva en disco (storage
+    # privado): queda la constancia del informe y su hash de integridad.
+    buffer = BytesIO()
 
     # ── Numeración de páginas ──
     class NumberedCanvas:
@@ -3766,7 +3779,7 @@ def auditoria_reporte_pdf(request):
         canvas.restoreState()
 
     doc = SimpleDocTemplate(
-        response, pagesize=pagesize,
+        buffer, pagesize=pagesize,
         leftMargin=left_margin, rightMargin=right_margin,
         topMargin=top_margin, bottomMargin=bottom_margin,
         title=f'Auditoría POLIDOC — {fecha_inicio} a {fecha_fin}',
@@ -3775,8 +3788,98 @@ def auditoria_reporte_pdf(request):
         creator='POLIDOC v1.0',
     )
     doc.build(elements, onFirstPage=draw_footer, onLaterPages=draw_footer)
+    pdf_bytes = buffer.getvalue()
+    buffer.close()
 
-    return response
+    # ── Conservar el informe en disco (ISO 15489 §6.5) ──
+    from auditoria.models import ReporteAuditoria
+    from auditoria.middleware import get_client_ip
+    from auditoria.services import registrar_log_iso
+
+    reporte = None
+    try:
+        reporte = ReporteAuditoria(
+            codigo=doc_code,
+            tipo_reporte=tipo_reporte,
+            fecha_inicio=fecha_inicio_dt.date(),
+            fecha_fin=fecha_fin_dt.date(),
+            filtros=filtros_dict,
+            formato=formato,
+            orientacion=orientacion,
+            total_registros=total,
+            tamano_bytes=len(pdf_bytes),
+            hash_sha256=sha256(pdf_bytes).hexdigest(),
+            generado_por=request.user,
+        )
+        reporte.archivo.save(
+            f'{doc_code}.pdf', ContentFile(pdf_bytes), save=False
+        )
+        reporte.save()
+    except Exception:
+        # El informe ya está generado: se entrega igual aunque no se pueda
+        # conservar; solo se deja constancia del fallo.
+        logger.exception('No se pudo conservar el reporte de auditoría %s', doc_code)
+        reporte = None
+
+    if reporte is not None:
+        registrar_log_iso(
+            usuario=request.user,
+            accion_tipo='reporte_auditoria',
+            accion_categoria='sistema',
+            recurso_tipo='reporte_auditoria',
+            recurso_id=str(reporte.uuid),
+            recurso_codigo=reporte.codigo,
+            recurso_nombre=f'Reporte de auditoría de tipo {tipo_reporte}',
+            detalles={
+                'periodo': reporte.periodo,
+                'filtros': filtros_dict,
+                'total_registros': total,
+                'hash_sha256': reporte.hash_sha256,
+            },
+            ip_address=get_client_ip(),
+        )
+
+    return FileResponse(
+        BytesIO(pdf_bytes), as_attachment=True,
+        filename=f'{doc_code}.pdf', content_type='application/pdf',
+    )
+
+
+@login_required(login_url='/login/')
+def auditoria_reportes_lista(request):
+    """Historial de los informes de auditoría exportados (solo administración)."""
+    from auditoria.models import ReporteAuditoria
+
+    if not request.user.perfil.es_administrador:
+        messages.error(request, 'No tienes permisos para ver el historial de reportes.')
+        return redirect('documentos:mis_documentos')
+
+    reportes = ReporteAuditoria.objects.select_related('generado_por').all()[:500]
+    return render(request, 'documentos/configuracion/auditoria_reportes_lista.html', {
+        'reportes': reportes,
+        'total': len(reportes),
+        'retencion_anios': getattr(settings, 'AUDITORIA_REPORTES_RETENCION_ANIOS', 10),
+    })
+
+
+@login_required(login_url='/login/')
+def auditoria_reporte_descarga(request, reporte_uuid):
+    """Descarga un informe conservado (solo administración)."""
+    from auditoria.models import ReporteAuditoria
+
+    if not request.user.perfil.es_administrador:
+        messages.error(request, 'No tienes permisos para descargar reportes.')
+        return redirect('documentos:mis_documentos')
+
+    reporte = get_object_or_404(ReporteAuditoria, uuid=reporte_uuid)
+    if not reporte.archivo:
+        messages.error(request, 'El archivo de este reporte ya no está disponible.')
+        return redirect('documentos:auditoria_reportes_lista')
+
+    return FileResponse(
+        reporte.archivo.open('rb'), as_attachment=True,
+        filename=reporte.nombre_archivo, content_type='application/pdf',
+    )
 
 
 EMAIL_ATTACH_MAX_BYTES = 5 * 1024 * 1024

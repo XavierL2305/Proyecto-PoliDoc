@@ -59,6 +59,32 @@ resultado (exitoso o no).
 > El reporte refleja **los filtros aplicados en pantalla**: si quieres el
 > informe de un mes, ajusta primero el rango de fechas.
 
+## Historial de reportes
+
+Cada PDF que exportas **queda guardado** en el servidor con un código único
+(`SGC-RPT-AUD-<fecha>-<hora>-<id>`), el período cubierto, los filtros
+aplicados, el total de registros y un **hash SHA-256** que permite demostrar
+que el informe no fue alterado después de generarlo
+(ISO 15489 §6.5 · ISO 27001 A.12.4).
+
+Para consultarlo:
+
+1. Entra a **Configuración → Reportes de Auditoría**
+   (`/documentos/configuracion/auditoria/reportes/`), o usa el botón
+   **Historial de reportes** que aparece junto a *Exportar PDF*.
+2. Revisa la tabla: código, período, cantidad de registros, quién lo generó,
+   fecha, tamaño y hash.
+3. Pulsa **Descargar** para volver a obtener el PDF, tal como se generó.
+
+> Los informes se guardan en una **carpeta privada del servidor**, fuera de
+> los archivos públicos: no se pueden abrir con una dirección web directa.
+> Solo el **administrador** ve el historial y descarga; los jefes de
+> departamento generan reportes, pero no tienen acceso al historial.
+
+Los informes se eliminan solos al cumplir **10 años** de generados, según la
+retención documental. El código también queda registrado en la auditoría
+(acción `reporte_auditoria`).
+
 ## Otras fuentes de trazabilidad
 
 - **Historial de Estado** de cada documento (pestaña de su ficha): quién
@@ -76,6 +102,8 @@ resultado (exitoso o no).
 | La lista sale vacía | No hay registros en el rango o MongoDB está caído | Amplía el rango; si el aviso de MongoDB aparece, contacta a TI |
 | No puedes filtrar por otro usuario | Eres jefe: el filtro se fija en ti | Solo el administrador ve registros ajenos |
 | El PDF no coincide con lo que ves | Los filtros de la pantalla cambiaron | Vuelve a aplicar el rango y exporta de nuevo |
+| No aparece un informe antiguo en el historial | Ya superó los 10 años de retención | Se purgó automáticamente; genera uno nuevo |
+| No ves el botón de historial | No eres administrador | Solo el administrador accede al historial |
 | Falta la IP en un registro antiguo | Registro anterior al control de IP | Solo afecta a datos históricos |
 
 ---

@@ -10,13 +10,13 @@ from .validators import validar_archivo_documento
 
 
 def generar_ruta_archivo(instance, filename):
-    """Genera ruta ISO: documentos/{depto}/V-{cedula}/{codigo}_v{ver}_{fecha}.{ext}"""
+    """Genera ruta ISO: documentos/{depto}/{username}/{codigo}_v{ver}_{fecha}.{ext}"""
     depto = getattr(instance, 'departamento', None)
     depto_codigo = depto.codigo if depto else 'SIN'
-    cedula = instance.propietario.username
+    username = instance.propietario.username
     extension = os.path.splitext(filename)[1] if filename else '.pdf'
     fecha = timezone.now().strftime('%Y%m%d')
-    return f'documentos/{depto_codigo}/V-{cedula}/{instance.codigo}_v{instance.version_actual}_{fecha}{extension}'
+    return f'documentos/{depto_codigo}/{username}/{instance.codigo}_v{instance.version_actual}_{fecha}{extension}'
 
 
 def generar_ruta_version(instance, filename):
@@ -27,10 +27,10 @@ def generar_ruta_version(instance, filename):
         return f'versiones/{filename}'
     depto = getattr(doc, 'departamento', None)
     depto_codigo = depto.codigo if depto else 'SIN'
-    cedula = doc.propietario.username
+    username = doc.propietario.username
     extension = os.path.splitext(filename)[1] if filename else '.pdf'
     fecha = (instance.fecha_creacion or timezone.now()).strftime('%Y%m%d')
-    return f'documentos/{depto_codigo}/V-{cedula}/{doc.codigo}_v{instance.numero_version}_{fecha}{extension}'
+    return f'documentos/{depto_codigo}/{username}/{doc.codigo}_v{instance.numero_version}_{fecha}{extension}'
 
 
 # =========================================================================

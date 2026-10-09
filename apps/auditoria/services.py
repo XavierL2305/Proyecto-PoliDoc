@@ -521,6 +521,7 @@ def _generar_descripcion_accion(accion_tipo, recurso_tipo):
         'revocacion_distribucion': f'Revocación de distribución de {recurso_tipo}',
         'cambio_vigencia': f'Cambio de vigencia de {recurso_tipo}',
         'eliminacion_vigencia': f'Eliminación de vigencia de {recurso_tipo}',
+        'reporte_auditoria': f'Generación de {recurso_tipo}',
     }
     return descripciones.get(accion_tipo, f'Acción {accion_tipo} en {recurso_tipo}')
 

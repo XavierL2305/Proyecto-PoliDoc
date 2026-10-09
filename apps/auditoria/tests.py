@@ -1,8 +1,15 @@
+import os
+import shutil
+import tempfile
+
 from django.test import TestCase, override_settings
 from django.contrib.auth.models import User
+from django.core.files.base import ContentFile
+from django.utils import timezone
 from unittest.mock import patch, MagicMock
 from datetime import datetime, timedelta
 from tests_base import BaseDocumentosTest
+from auditoria.models import ReporteAuditoria
 from auditoria.services import (
     generar_log_id, generar_correlation_id, calcular_hash,
     calcular_hash_registro, registrar_log_iso, registrar_login,
@@ -849,3 +856,69 @@ class EstructuraISOCompletaTest(BaseDocumentosTest):
         log2 = db.audit_logs.insert_one.call_args_list[1][0][0]
 
         self.assertNotEqual(log1['integridad']['hash'], log2['integridad']['hash'])
+
+
+# =============================================================================
+# RETENCIÓN DE REPORTES DE AUDITORÍA
+# =============================================================================
+
+class PurgarReportesAuditoriaTest(TestCase):
+    """Tests de la tarea purgar_reportes_auditoria (retención ISO 15489)."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.mkdtemp(prefix='polidoc_reportes_auditoria_')
+        self._override = override_settings(AUDITORIA_REPORTES_DIR=self._tmpdir)
+        self._override.enable()
+        self.addCleanup(self._override.disable)
+        self.addCleanup(lambda: shutil.rmtree(self._tmpdir, ignore_errors=True))
+
+    def _crear_reporte(self, codigo, dias_atras):
+        reporte = ReporteAuditoria(codigo=codigo, hash_sha256='a' * 64)
+        reporte.archivo.save(
+            f'{codigo}.pdf', ContentFile(b'%PDF-1.4\ncontenido de prueba\n'), save=False
+        )
+        reporte.save()
+        ReporteAuditoria.objects.filter(pk=reporte.pk).update(
+            fecha_generacion=timezone.now() - timedelta(days=dias_atras)
+        )
+        return reporte
+
+    def test_purga_expirados_y_conserva_recientes(self):
+        from auditoria.tasks import purgar_reportes_auditoria
+
+        viejo = self._crear_reporte('SGC-RPT-AUD-VIEJO', dias_atras=365 * 11)
+        reciente = self._crear_reporte('SGC-RPT-AUD-RECIENTE', dias_atras=30)
+        ruta_vieja = viejo.archivo.path
+        ruta_reciente = reciente.archivo.path
+
+        resumen = purgar_reportes_auditoria()
+
+        self.assertEqual(resumen['purgados'], 1)
+        self.assertFalse(ReporteAuditoria.objects.filter(pk=viejo.pk).exists())
+        self.assertTrue(ReporteAuditoria.objects.filter(pk=reciente.pk).exists())
+        self.assertFalse(os.path.exists(ruta_vieja))
+        self.assertTrue(os.path.exists(ruta_reciente))
+
+    def test_purga_no_falla_si_el_archivo_ya_no_existe(self):
+        """Un archivo borrado manualmente no impide purgar el registro."""
+        from auditoria.tasks import purgar_reportes_auditoria
+
+        fantasma = self._crear_reporte('SGC-RPT-AUD-FANTASMA', dias_atras=365 * 11)
+        os.remove(fantasma.archivo.path)
+
+        resumen = purgar_reportes_auditoria()
+
+        self.assertEqual(resumen['purgados'], 1)
+        self.assertFalse(ReporteAuditoria.objects.filter(pk=fantasma.pk).exists())
+
+    def test_purga_respeta_retencion_configurable(self):
+        """La retención se lee de AUDITORIA_REPORTES_RETENCION_ANIOS."""
+        from auditoria.tasks import purgar_reportes_auditoria
+
+        reporte = self._crear_reporte('SGC-RPT-AUD-RET', dias_atras=365 * 2)
+
+        with override_settings(AUDITORIA_REPORTES_RETENCION_ANIOS=1):
+            resumen = purgar_reportes_auditoria()
+
+        self.assertEqual(resumen['purgados'], 1)
+        self.assertFalse(ReporteAuditoria.objects.filter(pk=reporte.pk).exists())

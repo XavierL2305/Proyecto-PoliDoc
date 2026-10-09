@@ -444,14 +444,58 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
         - Default: Letter landscape, 9 columnas (Fecha, Log ID, Usuario, Acción,
           Categoría, Recurso, IP, Hash SHA-256 truncado, Resultado)
         - Logo vectorial (svglib + lxml) con fallback a branding textual
-        - Código de documento: SGC-RPT-AUD-<AAAAMMDD>
+        - Código de documento: SGC-RPT-AUD-<AAAAMMDD>-<HHMMSS>-<UUID6>
+          (único por generación; el sufijo evita colisiones entre informes
+          del mismo día y da trazabilidad individual)
         - Secciones: encabezado corporativo, bloque control documental (§7.5),
           estadísticas, tabla de datos, estado vacío (MongoDB caído),
           firmas (Elaborado/Revisado/Aprobado), footer "Página X de Y"
         - Footer: ISO 9001:2015 §7.5 · §9.2.2 — Retención: 10 años
         - Metadatos PDF: title, author, subject, creator
-        - Filename: SGC-RPT-AUD-<YYYYMMDD>.pdf
+        - Filename: SGC-RPT-AUD-<AAAAMMDD>-<HHMMSS>-<UUID6>.pdf
         - El botón "Exportar PDF" en la vista de auditoría reenvía los filtros activos
+        - Permisos de generación: administrador y jefe de departamento (un
+          jefe solo puede reportar sus propios logs: el filtro de usuario se
+          fija a su username)
+
+      10.5.1 PERSISTENCIA DEL REPORTE (ISO 15489 §6.5):
+        - El PDF se genera en un BytesIO y además se CONSERVA en disco:
+          modelo ReporteAuditoria (apps/auditoria/models.py, migración 0001)
+          con codigo, archivo, tipo_reporte, fecha_inicio/fin, filtros (JSON),
+          formato, orientacion, total_registros, tamano_bytes, hash_sha256,
+          generado_por (FK → User, SET_NULL), fecha_generacion y uuid.
+        - Storage PRIVADO ReporteAuditoriaStorage (apps/auditoria/storage.py):
+          FileSystemStorage con base_location = settings.AUDITORIA_REPORTES_DIR
+          (default data/auditoria_reportes, fuera de MEDIA_ROOT) y base_url
+          None. NO es servible por URL: solo se entrega por las vistas admin.
+        - Ruta: {username_generador}/{codigo}.pdf (sin el prefijo V- de §15.1).
+        - hash_sha256 = SHA-256 del PDF; permite demostrar que el informe no
+          fue alterado (ISO 27001 A.12.4). tamano_bytes = len del binario.
+        - Cada generación registra log Mongo con accion.tipo=reporte_auditoria,
+          categoria=sistema, recurso.tipo=reporte_auditoria, recurso.id=uuid
+          y detalles {periodo, filtros, total_registros, hash_sha256}
+          (descripción en _generar_descripcion_accion).
+        - Si falla el guardado, el informe se entrega igual y solo se loguea
+          el error (no se bloquea la exportación).
+        - Respuesta: FileResponse as_attachment con filename={codigo}.pdf.
+
+      10.5.2 HISTORIAL Y RETENCIÓN DE REPORTES:
+        - Vista auditoria_reportes_lista (SOLO administrador):
+          GET /documentos/configuracion/auditoria/reportes/ — lista los
+          últimos 500 informes con codigo, periodo, total_registros,
+          generado_por, fecha, tamano y hash.
+        - Vista auditoria_reporte_descarga (SOLO administrador):
+          GET /documentos/configuracion/auditoria/reportes/<uuid>/descargar/
+          → FileResponse as_attachment desde el storage privado.
+        - Las rutas van ANTES del catch-all auditoria/<str:log_id>/ en
+          documentos/urls.py.
+        - UI: card "Reportes de Auditoría" en dashboard.html (bloque admin) y
+          botón "Historial de reportes" en auditoria_lista.html (admin).
+        - Retención: settings.AUDITORIA_REPORTES_RETENCION_ANIOS (default 10).
+        - Tarea purgar_reportes_auditoria (apps/auditoria/tasks.py, Celery Beat
+          diario 2:00 AM, entrada 'purgar-reportes-auditoria') borra el archivo
+          y la fila de los informes más antiguos que la retención. Si el
+          fichero ya no existe no falla; solo elimina el registro.
 
      10.6 HARDENING DE SUBIDAS Y XSS (Fase 4):
         - Validador de subidas (apps/documentos/validators.py, Python puro —
@@ -733,10 +777,10 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
 15. ALMACENAMIENTO DE ARCHIVOS
 -------------------------------------------------------------------
   15.1 ESTRUCTURA DE CARPETAS:
-       media/documentos/{departamento}/V-{cedula_propietario}/
+       media/documentos/{departamento}/{username_propietario}/
 
        Ejemplo:
-         media/documentos/TI/V-12345678/
+         media/documentos/TI/12345678/
          ├── SGC-PRG-001_v1_20260826.pdf
          ├── SGC-PRG-001_v2_20260901.pdf
          ├── SGC-PRG-001_v3_20261015.pdf
@@ -752,6 +796,13 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
        media/formatos/plantillas/{AAAA}/  plantillas XLSX de los formatos
        media/formatos/pdf/                PDFs de preview de los formatos
 
+       data/auditoria_reportes/{username_generador}/
+                                          informes PDF de auditoría exportados
+                                          (ReporteAuditoria.archivo). Storage
+                                          PRIVADO: fuera de MEDIA_ROOT, no
+                                          servible por URL. Ver §10.5.1.
+       data/audit_buffer/                 logs bufferizados si MongoDB cae
+
   15.2 FORMATO DE NOMBRADO:
        {codigo}_v{version}_{fecha}.{extension}
 
@@ -761,7 +812,8 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
          TI-PRD-001_v3_20261015.xlsx
 
   15.3 REGLAS:
-       - La cédula es del PROPIETARIO del documento
+       - La carpeta la define el USERNAME del PROPIETARIO (antes V-{cédula};
+         el prefijo V- se eliminó y solo aplica a subidas nuevas)
        - Cada versión se guarda en la misma carpeta
        - Los documentos obsoletos se mantienen (no se eliminan físicamente)
        - Respaldo automático en servidor
@@ -905,7 +957,14 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
         - Params: tipo, fecha_inicio, fecha_fin, usuario, accion_tipo,
           accion_categoria, formato (letter|a4), orientacion (landscape|portrait)
         - Retorna: application/pdf, attachment
-        - Filename: SGC-RPT-AUD-<YYYYMMDD>.pdf
+        - Filename: SGC-RPT-AUD-<AAAAMMDD>-<HHMMSS>-<UUID6>.pdf
+        - Además CONSERVA el informe (ver §10.5.1) y deja log ISO
+          (accion.tipo=reporte_auditoria). Permisos: admin y jefe (un jefe solo
+          reporta sus propios logs).
+
+        GET /documentos/configuracion/auditoria/reportes/                    → Historial (SOLO admin)
+        GET /documentos/configuracion/auditoria/reportes/<uuid>/descargar/   → Descarga (SOLO admin)
+             Ver §10.5.2. Rutas definidas antes del catch-all auditoria/<log_id>/.
 
    17.9 PLANILLA DE CAMBIOS:
         GET  /documentos/planilla-cambios/nueva/              → Formulario nueva planilla

@@ -1,0 +1,103 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Reportes de Auditoría - Configuración{% endblock %}
+
+{% block extra_css %}
+<style>
+  .filters-card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    padding: 1.25rem;
+    margin-bottom: 1.5rem;
+  }
+  .filter-note {
+    margin: 0 0 0.75rem;
+    font-size: 0.8125rem;
+    color: var(--color-muted);
+  }
+  .empty-state {
+    text-align: center;
+    padding: 3rem 1rem;
+    color: var(--color-muted);
+  }
+  .empty-state i {
+    font-size: 2rem;
+    margin-bottom: 0.75rem;
+    display: block;
+  }
+  .hash-mono {
+    font-family: monospace;
+    font-size: 0.75rem;
+    color: var(--color-muted);
+  }
+</style>
+{% endblock %}
+
+{% block app_content %}
+<div class="page-header">
+  <h1>Reportes de Auditoría</h1>
+  <div class="actions">
+    <a href="{% url 'documentos:auditoria_lista' %}" class="btn btn--secondary btn--sm">
+      <i class="fa-solid fa-arrow-left"></i> Volver a Auditoría
+    </a>
+  </div>
+</div>
+
+<div class="filters-card">
+  <p class="filter-note">
+    <i class="fa-solid fa-circle-info"></i>
+    Historial de los informes de auditoría exportados a PDF. Cada informe se
+    conserva en disco privado con su hash SHA-256 para verificar su integridad
+    (ISO 27001). Se eliminan automáticamente al cumplir {{ retencion_anios }}
+    años de retención.
+  </p>
+  <p class="filter-note"><strong>Total de informes conservados:</strong> {{ total }}</p>
+</div>
+
+<div class="table-container">
+  <table class="table table--hover">
+    <thead>
+      <tr>
+        <th>Código</th>
+        <th>Período</th>
+        <th>Registros</th>
+        <th>Generado por</th>
+        <th>Fecha</th>
+        <th>Tamaño</th>
+        <th>Hash SHA-256</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for reporte in reportes %}
+      <tr>
+        <td><strong>{{ reporte.codigo }}</strong></td>
+        <td>{{ reporte.periodo }}</td>
+        <td>{{ reporte.total_registros }}</td>
+        <td>{{ reporte.generado_por.get_full_name|default:reporte.generado_por.username|default:"sistema" }}</td>
+        <td>{{ reporte.fecha_generacion|date:"d/m/Y H:i" }}</td>
+        <td>{{ reporte.tamano_bytes|filesizeformat }}</td>
+        <td><span class="hash-mono">{{ reporte.hash_sha256|truncatechars:19 }}</span></td>
+        <td>
+          <a href="{% url 'documentos:auditoria_reporte_descarga' reporte.uuid %}" class="btn btn--success btn--sm">
+            <i class="fa-solid fa-download"></i> Descargar
+          </a>
+        </td>
+      </tr>
+      {% empty %}
+      <tr>
+        <td colspan="8">
+          <div class="empty-state">
+            <i class="fa-solid fa-file-circle-xmark"></i>
+            <p>No hay informes exportados todavía.</p>
+            <p>Use <strong>Exportar PDF</strong> en la auditoría para generar el primero.</p>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

@@ -5,7 +5,11 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from datetime import date, timedelta
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
+import hashlib
 import json
+import os
+import shutil
+import tempfile
 import uuid
 from tests_base import BaseDocumentosTest
 from documentos.models import (
@@ -1731,13 +1735,14 @@ class EdgeCasesTest(BaseDocumentosTest):
         self.assertEqual(hash1, hash2)
 
     def test_cedula_en_ruta_archivo(self):
-        """La ruta del archivo debe incluir la cédula del propietario."""
+        """La ruta del archivo debe incluir el username del propietario (sin V-)."""
         ruta = generar_ruta_archivo(self.doc_activo, 'test.pdf')
-        self.assertIn('V-jefe_ti', ruta)
+        self.assertIn('jefe_ti', ruta)
+        self.assertNotIn('V-jefe_ti', ruta)
         self.assertIn('TI-PRG-001', ruta)
 
     def test_cedula_en_ruta_version(self):
-        """La ruta de la versión debe incluir la cédula del propietario."""
+        """La ruta de la versión debe incluir el username del propietario (sin V-)."""
         v = VersionDocumento.objects.create(
             documento=self.doc_activo,
             numero_version='1.0',
@@ -1745,7 +1750,8 @@ class EdgeCasesTest(BaseDocumentosTest):
             creado_por=self.user_jefe_ti,
         )
         ruta = generar_ruta_version(v, 'test.pdf')
-        self.assertIn('V-jefe_ti', ruta)
+        self.assertIn('jefe_ti', ruta)
+        self.assertNotIn('V-jefe_ti', ruta)
 
     def test_documento_borrador_con_fecha_vencimiento_pasada(self):
         """Edge case: borrador con vencimiento pasado NO se vence (solo activos)."""
@@ -2962,6 +2968,110 @@ class CeleryBeatScheduleTest(TestCase):
         self.assertTrue(settings.CELERY_BEAT_SCHEDULE)
         for cfg in settings.CELERY_BEAT_SCHEDULE.values():
             self.assertIn(cfg['task'], celery_app.tasks, cfg['task'])
+
+
+class ReporteAuditoriaPersistenciaTest(BaseDocumentosTest):
+    """Persistencia del reporte de auditoría exportado a PDF (ISO 15489 §6.5).
+
+    El informe se conserva en disco privado (fuera de MEDIA_ROOT, no servible
+    por URL) junto a su hash SHA-256, para demostrar que no fue alterado.
+    """
+
+    URL_REPORTE = '/documentos/configuracion/auditoria/reporte-pdf/'
+    URL_HISTORIAL = '/documentos/configuracion/auditoria/reportes/'
+
+    def setUp(self):
+        super().setUp()
+        self._tmpdir = tempfile.mkdtemp(prefix='polidoc_reportes_auditoria_')
+        self._override = override_settings(AUDITORIA_REPORTES_DIR=self._tmpdir)
+        self._override.enable()
+        self.addCleanup(self._override.disable)
+        self.addCleanup(lambda: shutil.rmtree(self._tmpdir, ignore_errors=True))
+
+    def _generar(self, username='admin01'):
+        from auditoria.models import ReporteAuditoria
+        self.client.login(username=username, password='testpass123')
+        with patch('auditoria.services.obtener_logs', return_value=[]):
+            resp = self.client.get(self.URL_REPORTE)
+        return resp, ReporteAuditoria
+
+    def test_generar_conserva_el_archivo_en_storage_privado(self):
+        resp, ReporteAuditoria = self._generar()
+        self.assertEqual(resp.status_code, 200)
+
+        reporte = ReporteAuditoria.objects.get()
+        self.assertTrue(reporte.archivo)
+
+        ruta = os.path.abspath(reporte.archivo.path)
+        self.assertTrue(
+            ruta.startswith(os.path.abspath(self._tmpdir) + os.sep),
+            f'El reporte no quedó en AUDITORIA_REPORTES_DIR: {ruta}',
+        )
+        self.assertTrue(ruta.endswith('.pdf'))
+        # Carpeta por username, sin el prefijo V-.
+        self.assertIn(f'admin01{os.sep}', ruta)
+        self.assertNotIn('V-admin01', ruta)
+
+    def test_hash_sha256_coincide_con_el_contenido(self):
+        _, ReporteAuditoria = self._generar()
+        reporte = ReporteAuditoria.objects.get()
+
+        contenido = reporte.archivo.open('rb').read()
+        self.assertEqual(hashlib.sha256(contenido).hexdigest(), reporte.hash_sha256)
+        self.assertEqual(len(contenido), reporte.tamano_bytes)
+
+    def test_codigo_unico_entre_generaciones(self):
+        from auditoria.models import ReporteAuditoria
+        self._generar()
+        self._generar()
+
+        self.assertEqual(ReporteAuditoria.objects.count(), 2)
+        codigos = set(ReporteAuditoria.objects.values_list('codigo', flat=True))
+        self.assertEqual(len(codigos), 2)
+
+    @patch('auditoria.services.get_mongo_client')
+    def test_registra_log_iso_del_reporte(self, mock_mongo):
+        """Queda trazabilidad ISO de cada generación en MongoDB."""
+        db = MagicMock()
+        mock_mongo.return_value = db
+        self._generar()
+
+        log = db.audit_logs.insert_one.call_args[0][0]
+        self.assertEqual(log['accion']['tipo'], 'reporte_auditoria')
+        self.assertEqual(log['recurso']['tipo'], 'reporte_auditoria')
+
+    def test_historial_solo_admin(self):
+        self._generar()
+
+        self.client.login(username='jefe_ti', password='testpass123')
+        self.assertEqual(self.client.get(self.URL_HISTORIAL).status_code, 302)
+
+        self.client.login(username='admin01', password='testpass123')
+        resp = self.client.get(self.URL_HISTORIAL)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'SGC-RPT-AUD-')
+
+    def test_descarga_admin_ok(self):
+        from auditoria.models import ReporteAuditoria
+        self._generar()
+        reporte = ReporteAuditoria.objects.get()
+
+        self.client.login(username='admin01', password='testpass123')
+        url = f'{self.URL_HISTORIAL}{reporte.uuid}/descargar/'
+        resp = self.client.get(url)
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('attachment', resp['Content-Disposition'])
+        self.assertEqual(resp['Content-Type'], 'application/pdf')
+
+    def test_descarga_trabajador_denegado(self):
+        from auditoria.models import ReporteAuditoria
+        self._generar()
+        reporte = ReporteAuditoria.objects.get()
+
+        self.client.login(username='trab01', password='testpass123')
+        url = f'{self.URL_HISTORIAL}{reporte.uuid}/descargar/'
+        self.assertEqual(self.client.get(url).status_code, 302)
 
 
 # =============================================================================

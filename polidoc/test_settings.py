@@ -31,6 +31,10 @@ CELERY_TASK_ALWAYS_EAGER = True
 import tempfile as _tempfile  # noqa: E402
 AUDIT_BUFFER_DIR = _tempfile.mkdtemp(prefix='polidoc_audit_buffer_')
 
+# Los informes de auditoría exportados a PDF se conservan en disco (ISO 15489);
+# en tests se redirigen a un directorio temporal para no ensuciar data/.
+AUDITORIA_REPORTES_DIR = _tempfile.mkdtemp(prefix='polidoc_reportes_auditoria_')
+
 # Estáticos: sin manifest de WhiteNoise (requiere `collectstatic`) y sin
 # django-compressor, para que los tests rendericen las plantillas tal cual.
 STORAGES = {

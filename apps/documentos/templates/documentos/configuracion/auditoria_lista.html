@@ -126,6 +126,11 @@
     <a href="{% url 'documentos:auditoria_reporte_pdf' %}?tipo=registro&fecha_inicio={{ fecha_inicio }}&fecha_fin={{ fecha_fin }}{% if usuario_filtro %}&usuario={{ usuario_filtro }}{% endif %}{% if accion_tipo %}&accion_tipo={{ accion_tipo }}{% endif %}{% if accion_categoria %}&accion_categoria={{ accion_categoria }}{% endif %}" class="btn btn--success btn--sm export-btn">
       <i class="fa-solid fa-file-pdf"></i> Exportar PDF
     </a>
+    {% if request.user.perfil.es_administrador %}
+    <a href="{% url 'documentos:auditoria_reportes_lista' %}" class="btn btn--secondary btn--sm">
+      <i class="fa-solid fa-clock-rotate-left"></i> Historial de reportes
+    </a>
+    {% endif %}
   </div>
 </div>
 

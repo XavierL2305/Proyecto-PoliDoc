@@ -117,6 +117,9 @@ urlpatterns = [
 
     path('configuracion/auditoria/', views.auditoria_lista, name='auditoria_lista'),
     path('configuracion/auditoria/reporte-pdf/', views.auditoria_reporte_pdf, name='auditoria_reporte_pdf'),
+    path('configuracion/auditoria/reportes/', views.auditoria_reportes_lista, name='auditoria_reportes_lista'),
+    path('configuracion/auditoria/reportes/<uuid:reporte_uuid>/descargar/',
+         views.auditoria_reporte_descarga, name='auditoria_reporte_descarga'),
     path('configuracion/auditoria/<str:log_id>/', views.auditoria_detalle, name='auditoria_detalle'),
     path('configuracion/ciclo-vida/', views.ciclo_vida, name='ciclo_vida'),
     path('configuracion/departamentos/', views.departamentos_lista, name='departamentos_lista'),

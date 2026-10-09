@@ -129,6 +129,16 @@
     <p class="config-card-desc">Registro de actividades del sistema ISO 9001:9.2.</p>
   </a>
 
+  {% if request.user.perfil.es_administrador %}
+  <a href="{% url 'documentos:auditoria_reportes_lista' %}" class="config-card">
+    <div class="config-card-icon config-card-icon--primary">
+      <i class="fa-solid fa-file-pdf"></i>
+    </div>
+    <h3 class="config-card-title">Reportes de Auditoría</h3>
+    <p class="config-card-desc">Historial de informes PDF exportados, con su hash de integridad.</p>
+  </a>
+  {% endif %}
+
   <a href="{% url 'documentos:roles_permisos' %}" class="config-card">
     <div class="config-card-icon config-card-icon--primary">
       <i class="fa-solid fa-shield-halved"></i>

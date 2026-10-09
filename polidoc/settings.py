@@ -375,6 +375,17 @@ AUDIT_BUFFER_DIR = os.getenv(
     'AUDIT_BUFFER_DIR', str(BASE_DIR / 'data' / 'audit_buffer')
 )
 
+# Reportes de auditoría exportados a PDF: se guardan en disco privado (fuera de
+# MEDIA_ROOT, no servible por URL) para que quede constancia auditable del
+# informe (ISO 15489: §6.5 control de la información documentada). La tarea
+# purgar-reportes-auditoria los elimina al cumplir la retención.
+AUDITORIA_REPORTES_DIR = os.getenv(
+    'AUDITORIA_REPORTES_DIR', str(BASE_DIR / 'data' / 'auditoria_reportes')
+)
+AUDITORIA_REPORTES_RETENCION_ANIOS = int(
+    os.getenv('AUDITORIA_REPORTES_RETENCION_ANIOS', '10')
+)
+
 # Tareas periódicas (Celery Beat)
 CELERY_BEAT_SCHEDULE = {
     'verificar-vencimientos-diario': {
@@ -392,6 +403,10 @@ CELERY_BEAT_SCHEDULE = {
     'reprocesar-logs-buffer': {
         'task': 'auditoria.tasks.reprocesar_logs_buffer',
         'schedule': timedelta(minutes=5),
+    },
+    'purgar-reportes-auditoria': {
+        'task': 'auditoria.tasks.purgar_reportes_auditoria',
+        'schedule': crontab(hour=2, minute=0),  # 2:00 AM diario
     },
 }
 
