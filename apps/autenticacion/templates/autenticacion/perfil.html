@@ -165,6 +165,63 @@
       </div>
     </div>
   </div>
+
+  {% if mis_solicitudes_descarga %}
+  <div class="profile-card" style="margin-top: 1.5rem;">
+    <div class="profile-card-header">
+      <h3>Mis solicitudes de descarga</h3>
+      <p class="profile-card-subtitle">Seguimiento de lo que has solicitado descargar</p>
+    </div>
+    {% for solicitud in mis_solicitudes_descarga %}
+    <div class="profile-info-row" style="flex-wrap: wrap; align-items: flex-start; gap: 0.5rem;">
+      <span class="profile-info-label" style="flex: 1 1 240px; min-width: 0;">
+        {% if solicitud.documento %}
+        <a href="{% url 'documentos:detalle' tipo=solicitud.documento.tipo_id documento_id=solicitud.documento.uuid %}" style="font-weight: 500;">
+          {{ solicitud.documento.nombre }}
+        </a>
+        <span style="display: block; color: var(--color-muted); font-size: 0.75rem;">{{ solicitud.documento.codigo }}</span>
+        {% else %}
+        Documento no disponible
+        {% endif %}
+      </span>
+      <span style="flex: 0 0 auto;">
+        {% if solicitud.estado == 'pendiente' %}
+        <span class="badge badge--warning"><i class="fa-solid fa-clock"></i> Pendiente</span>
+        {% elif solicitud.estado == 'aprobada' %}
+        <span class="badge badge--success"><i class="fa-solid fa-check"></i> Aprobada</span>
+        {% elif solicitud.estado == 'rechazada' %}
+        <span class="badge badge--danger"><i class="fa-solid fa-xmark"></i> Rechazada</span>
+        {% endif %}
+      </span>
+      <span class="profile-info-value" style="flex: 0 0 auto;">
+        {{ solicitud.fecha_solicitud|date:"d/m/Y H:i" }}
+      </span>
+    </div>
+    <div style="padding: 0 1rem 0.75rem; font-size: 0.8125rem; color: var(--color-muted);">
+      {% if solicitud.motivo %}
+      <div style="margin-bottom: 0.25rem;"><strong>Motivo:</strong> {{ solicitud.motivo }}</div>
+      {% endif %}
+      {% if solicitud.estado == 'pendiente' %}
+        En trámite desde el {{ solicitud.fecha_solicitud|date:"d/m/Y" }}.{% if solicitud.aprobaciones.all %} Faltan por resolver:
+        {% for aprobacion in solicitud.aprobaciones.all %}{% if aprobacion.estado == 'pendiente' %}{{ aprobacion.get_rol_aprobador_display }}{% if not forloop.last %}, {% endif %}{% endif %}{% endfor %}.
+        {% endif %}
+      {% else %}
+        {% if solicitud.fecha_resolucion %}Resuelta el {{ solicitud.fecha_resolucion|date:"d/m/Y H:i" }}{% if solicitud.resuelto_por %} por {{ solicitud.resuelto_por.get_full_name|default:solicitud.resuelto_por.username }}{% endif %}.{% endif %}
+        {% if solicitud.resolucion_observaciones %} <strong>Motivo:</strong> {{ solicitud.resolucion_observaciones }}{% endif %}
+        {% if solicitud.estado == 'aprobada' and solicitud.fecha_expiracion %}
+          Autorización {% if solicitud.esta_vigente %}vigente{% else %}vencida{% endif %}
+          hasta el {{ solicitud.fecha_expiracion|date:"d/m/Y H:i" }} (versión {{ solicitud.version_aprobada|default:"—" }}).
+        {% endif %}
+      {% endif %}
+    </div>
+    {% endfor %}
+    {% if mas_solicitudes_descarga %}
+    <div style="padding: 0.75rem 1rem; font-size: 0.8125rem; color: var(--color-muted);">
+      <i class="fa-solid fa-circle-info"></i> Solo se muestran las 10 solicitudes más recientes.
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
 </div>
 {% endblock %}
 

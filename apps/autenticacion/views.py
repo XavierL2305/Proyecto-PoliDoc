@@ -307,9 +307,15 @@ def perfil_usuario(request):
 
     total_docs = Documento.objects.filter(propietario=request.user).count()
 
-    solicitudes_descarga = SolicitudDescarga.objects.filter(
-        solicitado_por=request.user
-    ).count()
+    solicitudes_qs = (
+        SolicitudDescarga.objects
+        .filter(solicitado_por=request.user)
+        .select_related('documento', 'documento__departamento')
+        .prefetch_related('aprobaciones__aprobador')
+    )
+    solicitudes_descarga = solicitudes_qs.count()
+    # Listado "Mis solicitudes": el solicitante sigue lo que pidió.
+    mis_solicitudes_descarga = list(solicitudes_qs[:10])
 
     asignaciones = AsignacionDocumento.objects.filter(
         coordinador=request.user,
@@ -321,6 +327,8 @@ def perfil_usuario(request):
         'perfil': perfil,
         'total_documentos': total_docs,
         'solicitudes_descarga': solicitudes_descarga,
+        'mis_solicitudes_descarga': mis_solicitudes_descarga,
+        'mas_solicitudes_descarga': solicitudes_descarga > len(mis_solicitudes_descarga),
         'asignaciones': asignaciones,
     })
 

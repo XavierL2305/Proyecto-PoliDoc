@@ -114,6 +114,7 @@ def reasignar_pendientes_departamento(departamento, nuevo_aprobador, actor):
             qs_descargas = (AprobacionDescarga.objects
                             .filter(
                                 solicitud__documento__departamento=departamento,
+                                solicitud__estado='pendiente',
                                 estado='pendiente',
                             )
                             .exclude(aprobador=nuevo_aprobador)

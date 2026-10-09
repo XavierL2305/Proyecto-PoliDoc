@@ -600,12 +600,13 @@ def bandeja_aprobaciones(request):
         Q(departamento_origen=dept, rol_aprobador='evaluador', estado='pendiente')
     ).distinct().count()
     descargas = AprobacionDescarga.objects.filter(
-        aprobador=request.user
+        aprobador=request.user, solicitud__estado='pendiente',
     ).select_related('solicitud', 'solicitud__documento', 'solicitud__solicitado_por')
     if filtro_estado:
         descargas = descargas.filter(estado=filtro_estado)
     total_pendientes_descarga = AprobacionDescarga.objects.filter(
-        aprobador=request.user, estado='pendiente'
+        aprobador=request.user, estado='pendiente',
+        solicitud__estado='pendiente',
     ).count()
     return render(request, 'documentos/bandeja_aprobaciones.html', {
         'solicitudes': solicitudes_page,
@@ -1296,10 +1297,30 @@ def detalle_documento(request, tipo, documento_id):
     hoy = date.today()
     dias7 = hoy + timedelta(days=7)
 
+    # Solo cuentan aprobaciones de solicitudes todavía en trámite: una
+    # solicitud ya resuelta no debe ofrecer "Atender" de nuevo.
     descargas_pendientes_aprobar = AprobacionDescarga.objects.filter(
         aprobador=request.user, estado='pendiente',
+        solicitud__estado='pendiente',
         solicitud__documento=documento
     ).select_related('solicitud', 'solicitud__solicitado_por')
+
+    # Seguimiento de la última solicitud de ESTE usuario: la ficha le
+    # informa el estado, el motivo y el resultado de lo que solicitó.
+    ultima_solicitud_descarga = (
+        SolicitudDescarga.objects
+        .filter(documento=documento, solicitado_por=request.user)
+        .prefetch_related('aprobaciones__aprobador')
+        .order_by('-fecha_solicitud')
+        .first()
+    )
+    autorizacion_descarga = (
+        SolicitudDescarga.objects
+        .filter(documento=documento, solicitado_por=request.user, estado='aprobada')
+        .exclude(fecha_expiracion=None)
+        .order_by('-fecha_expiracion')
+        .first()
+    )
 
     codigos_relacionados = {}
     if documento.resumen_ia:
@@ -1365,6 +1386,8 @@ def detalle_documento(request, tipo, documento_id):
         'renovaciones': renovaciones,
         'es_propietario': es_propietario,
         'solicitud_pendiente': solicitud_pendiente,
+        'ultima_solicitud_descarga': ultima_solicitud_descarga,
+        'autorizacion_descarga': autorizacion_descarga,
         'hoy': hoy,
         'dias7': dias7,
         'solicitudes_por_operacion': solicitudes_por_operacion,
@@ -1526,103 +1549,59 @@ def destruir_documento(request, tipo, documento_id):
     })
 
 
-def _aprobadores_descarga(documento):
-    """Aprobadores ``[(usuario, rol)]`` de una descarga según clasificación.
-
-    Normal: jefe del departamento (o admin si no hay jefe). ``restringido``:
-    jefe + autorizador (admin); ISO 9001:7.5.3 (doble control).
-    """
-    from autenticacion.models import PerfilUsuario
-
-    depto = getattr(documento, 'departamento', None)
-    jefe = depto.jefe if depto and depto.jefe else None
-    admin_perfil = PerfilUsuario.objects.filter(
-        rol='administrador', usuario__is_active=True
-    ).select_related('usuario').first()
-    admin = admin_perfil.usuario if admin_perfil else None
-
-    aprobadores = []
-    if documento.clasificacion == 'restringido':
-        if jefe:
-            aprobadores.append((jefe, 'jefe'))
-        if admin and (not jefe or admin.id != jefe.id):
-            aprobadores.append((admin, 'autorizador'))
-    else:
-        if jefe:
-            aprobadores.append((jefe, 'jefe'))
-        elif admin:
-            aprobadores.append((admin, 'autorizador'))
-    return aprobadores
-
-
 @login_required(login_url='/login/')
 def solicitar_descarga(request, tipo, documento_id):
     documento = get_documento(tipo, documento_id)
     if not documento:
         raise Http404
 
-    aprobadores = _aprobadores_descarga(documento)
+    from .services.descargas import (
+        aprobadores_descarga, bloqueo_solicitud_descarga, crear_solicitud_descarga,
+    )
+
+    aprobadores = aprobadores_descarga(documento)
 
     if request.method == 'POST':
-        if not aprobadores:
-            messages.error(
-                request,
-                'No se puede realizar la solicitud en este momento. '
-                'Comuníquese con el administrador.'
-            )
-            return render(request, 'documentos/solicitar_descarga.html', {
-                'form': SolicitudDescargaForm(),
-                'documento': documento, 'tipo': tipo,
-                'aprobadores': [], 'aprobador': None, 'aprobador_tipo': None,
-            })
-        from .permissions import (
-            descarga_autorizada as _autorizada,
-            puede_descargar as _puede_descargar,
-        )
-        if _puede_descargar(request.user, documento):
-            messages.warning(request, 'Ya tienes permiso para descargar este documento.')
-            return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
-        existe_pendiente = SolicitudDescarga.objects.filter(
-            documento=documento, solicitado_por=request.user, estado='pendiente'
-        ).exists()
-        if existe_pendiente:
-            messages.warning(request, 'Ya tienes una solicitud pendiente para este documento.')
-            return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
-        if _autorizada(documento, request.user):
-            messages.warning(request, 'Ya tienes una descarga aprobada. Usa el botón "Descargar".')
-            return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
         form = SolicitudDescargaForm(request.POST)
         if form.is_valid():
-            solicitud = form.save(commit=False)
-            solicitud.documento = documento
-            solicitud.solicitado_por = request.user
-            solicitud.save()
-            from autenticacion.models import Notificacion
-            for aprobador, rol in aprobadores:
-                AprobacionDescarga.objects.create(
-                    solicitud=solicitud, aprobador=aprobador, rol_aprobador=rol,
-                )
-                Notificacion.objects.create(
-                    usuario=aprobador,
-                    titulo='Nueva solicitud de descarga',
-                    mensaje=(
-                        f'{request.user.get_full_name() or request.user.username} '
-                        f'solicita descargar "{documento.nombre}" ({documento.codigo})'
-                    ),
-                    tipo='solicitud_descarga',
-                    url_accion=f'/documentos/solicitud/{solicitud.id}/aprobar/',
-                    departamento=documento.departamento,
-                    documento=documento,
-                )
-            messages.success(request, 'Solicitud de descarga enviada correctamente.')
+            resultado = crear_solicitud_descarga(
+                documento, request.user, form.cleaned_data['motivo'],
+            )
+            if resultado.codigo == 'sin_aprobadores':
+                # Sin jefe ni admin: se informa en la propia página (200).
+                messages.error(request, resultado.mensaje)
+                return render(request, 'documentos/solicitar_descarga.html', {
+                    'form': SolicitudDescargaForm(),
+                    'documento': documento, 'tipo': tipo,
+                    'aprobadores': [], 'aprobador': None, 'aprobador_tipo': None,
+                })
+            if resultado.codigo != 'ok':
+                messages.warning(request, resultado.mensaje)
+            else:
+                messages.success(request, resultado.mensaje)
             return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
     else:
+        # GET: no se vuelve a ofrecer el formulario si ya hay una solicitud
+        # en trámite o una autorización vigente; se redirige a la ficha.
+        bloqueo = bloqueo_solicitud_descarga(documento, request.user)
+        if bloqueo and bloqueo.codigo != 'sin_aprobadores':
+            messages.warning(request, bloqueo.mensaje)
+            return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
         form = SolicitudDescargaForm()
+    # Historial reciente del usuario en este documento (para avisar en el
+    # formulario si su solicitud anterior fue rechazada o ya venció).
+    solicitud_reciente = (
+        SolicitudDescarga.objects
+        .filter(documento=documento, solicitado_por=request.user)
+        .order_by('-fecha_solicitud')
+        .first()
+    )
     return render(request, 'documentos/solicitar_descarga.html', {
         'form': form, 'documento': documento, 'tipo': tipo,
         'aprobadores': aprobadores,
         'aprobador': aprobadores[0][0] if aprobadores else None,
         'aprobador_tipo': aprobadores[0][1] if aprobadores else None,
+        'solicitud_reciente': solicitud_reciente,
     })
 
 
@@ -1967,50 +1946,11 @@ def resumen_ia(request, tipo, documento_id):
     ))
 
 
-def _finalizar_descarga(solicitud, aprobador):
-    """Fija vigencia/versión, crea la distribución y audita la autorización."""
-    from auditoria.middleware import get_client_ip
-    from auditoria.services import registrar_distribucion
-
-    documento = solicitud.documento
-    dias = getattr(settings, 'DESCARGA_VIGENCIA_DIAS', 30)
-    solicitud.estado = 'aprobada'
-    solicitud.version_aprobada = documento.version_actual
-    solicitud.fecha_expiracion = timezone.now() + timedelta(days=dias)
-    solicitud.fecha_resolucion = timezone.now()
-    solicitud.save(update_fields=[
-        'estado', 'version_aprobada', 'fecha_expiracion', 'fecha_resolucion',
-    ])
-    try:
-        dist = DistribucionDocumento.objects.create(
-            documento=documento,
-            usuario=solicitud.solicitado_por,
-            metodo='sistema',
-            distribuido_por=aprobador,
-            observaciones=f'Autorizado por solicitud #{solicitud.id}',
-        )
-        registrar_distribucion(
-            usuario=aprobador,
-            recurso_tipo=documento.tipo_id or '',
-            recurso_id=str(documento.uuid),
-            destinatario=solicitud.solicitado_por.username,
-            metodo='sistema',
-            codigo=documento.codigo,
-            distribucion_id=dist.id,
-            correlacion=f'descarga-{solicitud.id}',
-            correlation_id=f'descarga-{solicitud.id}',
-            ip_address=get_client_ip(),
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.error(
-            "No se pudo registrar la distribución de la solicitud #%s: %s",
-            solicitud.id, exc,
-        )
-
-
 @login_required(login_url='/login/')
 def aprobar_descarga(request, solicitud_id):
-    solicitud = get_object_or_404(SolicitudDescarga, id=solicitud_id)
+    solicitud = get_object_or_404(
+        SolicitudDescarga.objects.select_related('documento'), id=solicitud_id,
+    )
     documento = solicitud.documento
     aprobacion = AprobacionDescarga.objects.filter(
         solicitud=solicitud, aprobador=request.user
@@ -2018,53 +1958,33 @@ def aprobar_descarga(request, solicitud_id):
     if not aprobacion:
         messages.error(request, 'No tienes una aprobación asignada para esta solicitud.')
         return redirect('documentos:mis_documentos')
+
     if request.method == 'POST':
-        accion = request.POST.get('accion')
-        observaciones = request.POST.get('observaciones', '')
-        aprobacion.observaciones = observaciones
-        aprobacion.fecha_aprobacion = timezone.now()
-        if accion == 'aprobar':
-            aprobacion.estado = 'aprobada'
-            aprobacion.save()
-            pendientes = solicitud.aprobaciones.exclude(estado='aprobada').exists()
-            if pendientes:
-                # Doble control (restringido): falta el autorizador.
-                messages.success(
-                    request, 'Evaluación registrada. Pendiente de autorización final.',
-                )
-                return redirect('documentos:documentos_departamento')
-            _finalizar_descarga(solicitud, request.user)
-            messages.success(request, 'Descarga aprobada.')
-            tipo_notif = 'aprobacion_descarga'
-            titulo_notif = 'Descarga aprobada'
-            mensaje_notif = (
-                f'La solicitud de descarga de "{documento.nombre}" '
-                f'({documento.codigo}) ha sido aprobada.'
-            )
-        else:
-            aprobacion.estado = 'rechazada'
-            aprobacion.save()
-            solicitud.estado = 'rechazada'
-            solicitud.observaciones = observaciones
-            solicitud.fecha_resolucion = timezone.now()
-            solicitud.save(update_fields=['estado', 'observaciones', 'fecha_resolucion'])
-            messages.warning(request, 'Descarga rechazada.')
-            tipo_notif = 'rechazo_descarga'
-            titulo_notif = 'Descarga rechazada'
-            mensaje_notif = (
-                f'La solicitud de descarga de "{documento.nombre}" '
-                f'({documento.codigo}) ha sido rechazada.'
-            )
-        from autenticacion.models import Notificacion
-        Notificacion.objects.create(
-            usuario=solicitud.solicitado_por,
-            titulo=titulo_notif,
-            mensaje=mensaje_notif,
-            tipo=tipo_notif,
-            url_accion=f'/documentos/{documento.tipo_id}/{documento.uuid}/',
-            departamento=documento.departamento,
-            documento=documento,
+        from .services.descargas import resolver_aprobacion
+
+        resultado = resolver_aprobacion(
+            solicitud, request.user,
+            aprobar=(request.POST.get('accion') == 'aprobar'),
+            observaciones=request.POST.get('observaciones', ''),
         )
+        if resultado.codigo in ('ok', 'parcial'):
+            messages.success(request, resultado.mensaje)
+        elif resultado.codigo == 'rechazada':
+            messages.warning(request, resultado.mensaje)
+        else:  # ya_resuelta / sin_pendiente / no_existe
+            messages.error(request, resultado.mensaje)
+        return redirect('documentos:documentos_departamento')
+
+    # GET: el formulario solo se ofrece mientras la solicitud siga en
+    # trámite y a este usuario le quede evaluación pendiente.
+    if solicitud.estado != 'pendiente':
+        messages.warning(
+            request,
+            f'Esta solicitud ya fue {solicitud.get_estado_display().lower()}.',
+        )
+        return redirect('documentos:documentos_departamento')
+    if aprobacion.estado != 'pendiente':
+        messages.warning(request, 'Tu evaluación ya fue registrada.')
         return redirect('documentos:documentos_departamento')
     return render(request, 'documentos/aprobar_descarga.html', {
         'solicitud': solicitud, 'documento': documento,

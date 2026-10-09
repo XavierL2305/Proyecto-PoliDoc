@@ -114,6 +114,20 @@
           <span class="badge badge--warning" style="display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.375rem 0.75rem;">
             <i class="fa-solid fa-clock"></i> Solicitud pendiente de aprobación
           </span>
+          {% elif ultima_solicitud_descarga and ultima_solicitud_descarga.estado == 'rechazada' %}
+          <span class="badge badge--danger" style="display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.375rem 0.75rem;">
+            <i class="fa-solid fa-xmark"></i> Solicitud rechazada
+          </span>
+          <a href="{% url 'documentos:solicitar_descarga' tipo=tipo documento_id=documento.uuid %}" class="btn btn--secondary btn--sm">
+            <i class="fa-solid fa-download"></i> Solicitar Descarga
+          </a>
+          {% elif autorizacion_descarga and not autorizacion_descarga.esta_vigente %}
+          <span class="badge badge--warning" style="display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.375rem 0.75rem;">
+            <i class="fa-solid fa-clock-rotate-left"></i> Autorización vencida
+          </span>
+          <a href="{% url 'documentos:solicitar_descarga' tipo=tipo documento_id=documento.uuid %}" class="btn btn--secondary btn--sm">
+            <i class="fa-solid fa-download"></i> Solicitar Descarga
+          </a>
           {% else %}
           <a href="{% url 'documentos:solicitar_descarga' tipo=tipo documento_id=documento.uuid %}" class="btn btn--secondary btn--sm">
             <i class="fa-solid fa-download"></i> Solicitar Descarga
@@ -893,6 +907,66 @@
             </div>
           </div>
           {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      {% if ultima_solicitud_descarga %}
+      <div class="detail-card" style="margin-top: 1.5rem;">
+        <div class="detail-header">
+          <h3>
+            <i class="fa-solid fa-download"></i> Mi solicitud de descarga
+            {% if ultima_solicitud_descarga.estado == 'pendiente' %}
+            <span class="badge badge--warning" style="margin-left: 0.5rem;">
+              <i class="fa-solid fa-clock"></i> Pendiente
+            </span>
+            {% elif ultima_solicitud_descarga.estado == 'aprobada' %}
+            <span class="badge badge--success" style="margin-left: 0.5rem;">
+              <i class="fa-solid fa-check"></i> Aprobada
+            </span>
+            {% elif ultima_solicitud_descarga.estado == 'rechazada' %}
+            <span class="badge badge--danger" style="margin-left: 0.5rem;">
+              <i class="fa-solid fa-xmark"></i> Rechazada
+            </span>
+            {% endif %}
+          </h3>
+        </div>
+        <div class="detail-body">
+          <div class="version-item">
+            <div>
+              <span class="detail-label">Motivo</span>
+              <span style="font-size: 0.875rem; color: var(--color-text);">
+                {{ ultima_solicitud_descarga.motivo|default:"—" }}
+              </span>
+            </div>
+            <div style="font-size: 0.8125rem; color: var(--color-muted); margin-top: 0.25rem;">
+              <strong>Solicitada el:</strong> {{ ultima_solicitud_descarga.fecha_solicitud|date:"d/m/Y H:i" }}
+            </div>
+            {% if ultima_solicitud_descarga.fecha_resolucion %}
+            <div style="font-size: 0.8125rem; color: var(--color-muted); margin-top: 0.25rem;">
+              <strong>Resuelta el:</strong> {{ ultima_solicitud_descarga.fecha_resolucion|date:"d/m/Y H:i" }}
+              {% if ultima_solicitud_descarga.resuelto_por %}
+                por {{ ultima_solicitud_descarga.resuelto_por.get_full_name|default:ultima_solicitud_descarga.resuelto_por.username }}
+              {% endif %}
+            </div>
+            {% endif %}
+            {% if ultima_solicitud_descarga.resolucion_observaciones %}
+            <div style="font-size: 0.8125rem; color: var(--color-muted); margin-top: 0.25rem;">
+              <strong>Observaciones:</strong> {{ ultima_solicitud_descarga.resolucion_observaciones }}
+            </div>
+            {% endif %}
+            {% if ultima_solicitud_descarga.estado == 'aprobada' %}
+            <div style="font-size: 0.8125rem; color: var(--color-muted); margin-top: 0.25rem;">
+              <strong>Autorizada:</strong> versión {{ ultima_solicitud_descarga.version_aprobada|default:"—" }}
+              {% if ultima_solicitud_descarga.fecha_expiracion %}
+                · vence {{ ultima_solicitud_descarga.fecha_expiracion|date:"d/m/Y H:i" }}
+                {% if not ultima_solicitud_descarga.esta_vigente %}
+                <span class="badge badge--warning" style="margin-left: 0.375rem;">Vencida</span>
+                {% endif %}
+              {% endif %}
+            </div>
+            {% endif %}
+          </div>
         </div>
       </div>
       {% endif %}

@@ -36,6 +36,17 @@
             </div>
           </div>
 
+          {% if solicitud_reciente and solicitud_reciente.estado != 'pendiente' %}
+          <div class="alert alert--{% if solicitud_reciente.estado == 'aprobada' %}success{% else %}danger{% endif %}" style="margin-bottom: 1.5rem; padding: 0.75rem 1rem; border-radius: var(--radius); font-size: 0.8125rem;">
+            <i class="fa-solid {% if solicitud_reciente.estado == 'aprobada' %}fa-circle-check{% else %}fa-circle-xmark{% endif %}"></i>
+            Tu solicitud anterior del {{ solicitud_reciente.fecha_solicitud|date:"d/m/Y" }}
+            fue {% if solicitud_reciente.estado == 'aprobada' %}aprobada y venció{% else %}rechazada{% endif %}.
+            {% if solicitud_reciente.resolucion_observaciones %}
+            <div style="margin-top: 0.375rem;"><strong>Motivo:</strong> {{ solicitud_reciente.resolucion_observaciones }}</div>
+            {% endif %}
+          </div>
+          {% endif %}
+
           <form method="post">
             {% csrf_token %}
             <div class="form-group">

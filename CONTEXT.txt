@@ -194,25 +194,54 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
 
 6. FLUJO DE APROBACIÓN DE DESCARGAS
 -------------------------------------------------------------------
+  6.0 SERVICIO ÚNICO (`apps/documentos/services/descargas.py`):
+      - Fuente única de verdad: `crear_solicitud_descarga` (alta),
+        `bloqueo_solicitud_descarga` (motivo por el que no procede) y
+        `resolver_aprobacion` (decisión). Las vistas y la bandeja solo
+        delegan; no hay segunda implementación.
+      - `resolver_aprobacion` corre con `transaction.atomic()` +
+        `select_for_update`: el doble control concurrente no puede
+        resolver dos veces ni dejar la vigencia sin fijar.
+      - Idempotencia: una solicitud ya resuelta devuelve `ya_resuelta`
+        (no se re-finaliza, no se duplica la `DistribucionDocumento` ni se
+        reinicia `fecha_expiracion`).
+      - Estados de `AprobacionDescarga`: pendiente / aprobada / rechazada
+        / **cancelada** (las hermanas de una solicitud rechazada).
+
   6.1 SOLICITUD:
       - Usuario solicita descargar un documento
       - El sistema identifica al Jefe del departamento PROPIETARIO del documento
       - Se crea SolicitudDescarga con estado: "pendiente"
+      - En GET el formulario no se reofrece si ya hay una solicitud en
+        trámite o una autorización vigente: se redirige a la ficha.
 
   6.2 APROBACIÓN:
       - `interno`/`confidencial`: 1 aprobación (jefe del depto propietario; si
-        no hay jefe, un admin).
+        no hay jefe, un admin **activo**).
       - `restringido`: **doble control** (jefe + admin); la solicitud queda
         "aprobada" solo cuando todas las aprobaciones están aprobadas.
       - Al aprobar (paso final): fija `version_aprobada` y `fecha_expiracion`
         (30 días) y crea la `DistribucionDocumento`; el solicitante ve
         "Descargar".
-      - Rechazo → notifica al solicitante y no crea distribución.
+      - Rechazo → cierra la solicitud, cancela las aprobaciones hermanas,
+        notifica al solicitante y no crea distribución.
+      - El aprobador ya no puede actuar sobre una solicitud resuelta: la
+        ficha, la bandeja y el formulario de aprobación lo omiten.
 
   6.3 Trazabilidad:
       - Todo intento, solicitud, aprobación, distribución y descarga queda
         registrado en MongoDB, con IP/usuario/fecha y `correlation_id`
         `descarga-<id_solicitud>` para reconstruir el ciclo.
+
+  6.4 SEGUIMIENTO DEL SOLICITANTE:
+      - Ficha del documento: tarjeta "Mi solicitud de descarga" con estado,
+        motivo, fechas, observaciones del aprobador y vigencia; y badge
+        "Solicitud rechazada" / "Autorización vencida" con botón de
+        re-solicitud.
+      - Perfil: sección "Mis solicitudes de descarga" (las 10 más
+        recientes) con estado y motivo de cada una.
+      - Se apoya en `SolicitudDescarga.resolucion`,
+        `resolucion_observaciones`, `resuelto_por` y `esta_vigente`.
 
 7. GESTIÓN Y PLANILLA DE CAMBIOS (VERSIONES)
 -------------------------------------------------------------------
@@ -421,8 +450,12 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
        `registrar_consulta`, fail-closed, HMAC-SHA256) con `correlation_id`
        `descarga-<id_solicitud>`; la creación de distribución también se audita
        (`registrar_distribucion`) además del espejo en `distribuciones_documento`.
-       Aprobadores: jefe del depto (admin si no hay jefe); `restringido` jefe +
-       admin. `SolicitudDescarga.motivo` OBLIGATORIO.
+        Aprobadores: jefe del depto (admin **activo** si no hay jefe);
+        `restringido` jefe + admin. `SolicitudDescarga.motivo` OBLIGATORIO.
+        Implementación: `services/descargas.py` (única vía de aprobación).
+        El endpoint JSON `api_responder_solicitud_descarga` fue **eliminado**
+        (no tenía llamadores y no aplicaba doble control ni finalizaba la
+        autorización); las notificaciones enlazan al formulario web.
 
       10.4 NOTIFICACIONES (Botón Campana):
         - Solicitud de descarga recibida

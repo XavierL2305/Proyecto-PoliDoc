@@ -614,12 +614,53 @@ class SolicitudDescarga(models.Model):
     def __str__(self):
         return f"Solicitud #{self.id} - {self.documento.codigo}"
 
+    @property
+    def resolucion(self):
+        """Aprobación que resolvió la solicitud (rechazada > aprobada).
+
+        Devuelve ``None`` si la solicitud sigue pendiente. Se usa para
+        mostrar al solicitante quién decidió y con qué observaciones.
+        """
+        resolutoras = (
+            self.aprobaciones.all()
+            .exclude(estado__in=('pendiente', 'cancelada'))
+            .order_by('-fecha_aprobacion')
+        )
+        for aprobacion in resolutoras:
+            if aprobacion.estado == 'rechazada':
+                return aprobacion
+        return resolutoras.first()
+
+    @property
+    def resolucion_observaciones(self):
+        """Observaciones del aprobador que resolvió (o las de la solicitud)."""
+        resolucion = self.resolucion
+        if resolucion and resolucion.observaciones:
+            return resolucion.observaciones
+        return self.observaciones
+
+    @property
+    def resuelto_por(self):
+        """Usuario que resolvió la solicitud (o ``None``)."""
+        resolucion = self.resolucion
+        return resolucion.aprobador if resolucion else None
+
+    @property
+    def esta_vigente(self):
+        """True si la autorización sigue vigente (versión actual y no vencida)."""
+        if self.estado != 'aprobada' or not self.fecha_expiracion:
+            return False
+        if self.fecha_expiracion <= timezone.now():
+            return False
+        return bool(self.documento) and self.version_aprobada == self.documento.version_actual
+
 
 class AprobacionDescarga(models.Model):
     ESTADO_CHOICES = [
         ('pendiente', 'Pendiente'),
         ('aprobada', 'Aprobada'),
         ('rechazada', 'Rechazada'),
+        ('cancelada', 'Cancelada'),
     ]
     ROL_CHOICES = [
         ('jefe', 'Jefe de Departamento'),

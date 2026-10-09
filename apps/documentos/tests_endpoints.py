@@ -2395,3 +2395,272 @@ class DPRPermisosTest(BaseDocumentosTest):
         self.client.login(username='trab01', password='testpass123')
         resp = self.client.get('/documentos/nuevo/descripcion_procesos/')
         self.assertEqual(resp.status_code, 302)
+
+
+# =============================================================================
+# INTEGRIDAD DEL FLUJO DE DESCARGA (SERVICIO UNICO) + FEEDBACK AL SOLICITANTE
+# =============================================================================
+
+class DescargaIntegridadTest(BaseDocumentosTest):
+    """Idempotencia y doble control del flujo de aprobación de descargas."""
+
+    def setUp(self):
+        super().setUp()
+        self.client = Client()
+
+    def _solicitud(self, aprobadores, documento=None, **extra):
+        doc = documento or self.doc_activo
+        sol = SolicitudDescarga.objects.create(
+            documento=doc, solicitado_por=self.user_trabajador,
+            motivo='Integridad', estado='pendiente', **extra,
+        )
+        for aprobador in aprobadores:
+            AprobacionDescarga.objects.create(
+                solicitud=sol, aprobador=aprobador,
+            )
+        return sol
+
+    def _restringido_ti(self):
+        return Documento.objects.create(
+            tipo=self.tipo_formulario, nombre='Formulario Restringido',
+            codigo='TI-FOR-097', estado='activo',
+            propietario=self.user_trabajador, departamento=self.depto_ti,
+            clasificacion='restringido', version_actual='1.0',
+        )
+
+    def test_reaprobacion_no_duplica_distribucion_ni_reinicia_vigencia(self):
+        """El segundo POST de aprobación no vuelve a finalizar la descarga."""
+        sol = self._solicitud([self.user_jefe_ti])
+        url = f'/documentos/solicitud/{sol.id}/aprobar/'
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.post(url, data={'accion': 'aprobar'})
+        self.assertEqual(resp.status_code, 302)
+        sol.refresh_from_db()
+        self.assertEqual(sol.estado, 'aprobada')
+        vigencia_primera = sol.fecha_expiracion
+        self.assertEqual(
+            DistribucionDocumento.objects.filter(
+                documento=self.doc_activo, usuario=self.user_trabajador,
+            ).count(), 1,
+        )
+
+        resp = self.client.post(url, data={'accion': 'aprobar'})
+        sol.refresh_from_db()
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(sol.estado, 'aprobada')
+        self.assertEqual(sol.fecha_expiracion, vigencia_primera)
+        self.assertEqual(
+            DistribucionDocumento.objects.filter(
+                documento=self.doc_activo, usuario=self.user_trabajador,
+            ).count(), 1,
+        )
+
+    def test_rechazo_tras_aprobacion_no_invierte_el_resultado(self):
+        """Tras aprobar, el mismo aprobador ya no puede rechazar."""
+        sol = self._solicitud([self.user_jefe_ti])
+        url = f'/documentos/solicitud/{sol.id}/aprobar/'
+        self.client.login(username='jefe_ti', password='testpass123')
+        self.client.post(url, data={'accion': 'aprobar'})
+        self.client.post(url, data={'accion': 'rechazar'})
+        sol.refresh_from_db()
+        self.assertEqual(sol.estado, 'aprobada')
+        aprobacion = AprobacionDescarga.objects.get(
+            solicitud=sol, aprobador=self.user_jefe_ti
+        )
+        self.assertEqual(aprobacion.estado, 'aprobada')
+
+    def test_doble_control_rechazo_cancela_hermana(self):
+        """Restringido: el rechazo cierra la solicitud y libera al otro control."""
+        sol = self._solicitud(
+            [self.user_jefe_ti, self.user_admin], documento=self._restringido_ti()
+        )
+        url = f'/documentos/solicitud/{sol.id}/aprobar/'
+
+        self.client.login(username='jefe_ti', password='testpass123')
+        self.client.post(url, data={'accion': 'aprobar'})
+        sol.refresh_from_db()
+        self.assertEqual(sol.estado, 'pendiente')
+
+        self.client.logout()
+        self.client.login(username='admin01', password='testpass123')
+        self.client.post(
+            url, data={'accion': 'rechazar', 'observaciones': 'Sin respaldo'}
+        )
+        sol.refresh_from_db()
+        self.assertEqual(sol.estado, 'rechazada')
+        self.assertEqual(
+            AprobacionDescarga.objects.get(
+                solicitud=sol, aprobador=self.user_jefe_ti
+            ).estado, 'aprobada',
+        )
+        self.assertEqual(
+            AprobacionDescarga.objects.get(
+                solicitud=sol, aprobador=self.user_admin
+            ).estado, 'rechazada',
+        )
+        self.assertEqual(
+            DistribucionDocumento.objects.filter(
+                usuario=self.user_trabajador, documento=sol.documento,
+            ).count(), 0,
+        )
+
+    def test_doble_control_ambos_aprueban_finaliza_una_vez(self):
+        """Restringido: ambos aprueban y solo entonces se distribuye."""
+        sol = self._solicitud(
+            [self.user_jefe_ti, self.user_admin], documento=self._restringido_ti()
+        )
+        url = f'/documentos/solicitud/{sol.id}/aprobar/'
+
+        self.client.login(username='jefe_ti', password='testpass123')
+        self.client.post(url, data={'accion': 'aprobar'})
+        sol.refresh_from_db()
+        self.assertEqual(sol.estado, 'pendiente')
+        self.assertEqual(
+            DistribucionDocumento.objects.filter(
+                usuario=self.user_trabajador, documento=sol.documento,
+            ).count(), 0,
+        )
+
+        self.client.logout()
+        self.client.login(username='admin01', password='testpass123')
+        self.client.post(url, data={'accion': 'aprobar'})
+        sol.refresh_from_db()
+        self.assertEqual(sol.estado, 'aprobada')
+        self.assertEqual(
+            DistribucionDocumento.objects.filter(
+                usuario=self.user_trabajador, documento=sol.documento,
+            ).count(), 1,
+        )
+
+    def test_ficha_no_ofrece_atender_sobre_solicitud_resuelta(self):
+        """Una solicitud resuelta deja de aparecer en la ficha del aprobador."""
+        sol = self._solicitud([self.user_jefe_ti])
+        sol.estado = 'rechazada'
+        sol.save(update_fields=['estado'])
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.get(
+            f'/documentos/procedimientos_generales/{self.doc_activo.uuid}/'
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotContains(resp, 'Solicitudes de Descarga Pendientes')
+
+    def test_bandeja_no_muestra_solicitud_resuelta(self):
+        """La bandeja tampoco ofrece resolver una solicitud ya resuelta."""
+        sol = self._solicitud([self.user_jefe_ti])
+        sol.estado = 'rechazada'
+        sol.save(update_fields=['estado'])
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.get('/documentos/bandeja-aprobaciones/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotContains(resp, f'/documentos/solicitud/{sol.id}/aprobar/')
+
+    def test_get_solicitar_con_pendiente_redirige(self):
+        """GET del formulario con solicitud en tramite redirige a la ficha."""
+        self._solicitud([self.user_jefe_ti])
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get(
+            f'/documentos/procedimientos_generales/{self.doc_activo.uuid}/solicitar-descarga/',
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn(
+            f'/documentos/procedimientos_generales/{self.doc_activo.uuid}/', resp.url,
+        )
+
+
+class FeedbackSolicitanteTest(BaseDocumentosTest):
+    """El solicitante ve el estado de lo que pidió (ficha, formulario y perfil)."""
+
+    def setUp(self):
+        super().setUp()
+        self.client = Client()
+
+    def test_ficha_muestra_rechazo_y_motivo(self):
+        """La ficha informa el rechazo y las observaciones del aprobador."""
+        sol = SolicitudDescarga.objects.create(
+            documento=self.doc_activo, solicitado_por=self.user_trabajador,
+            motivo='Lo necesito', estado='rechazada', observaciones='Documento reservado',
+        )
+        AprobacionDescarga.objects.create(
+            solicitud=sol, aprobador=self.user_jefe_ti,
+            estado='rechazada', observaciones='Documento reservado',
+        )
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get(
+            f'/documentos/procedimientos_generales/{self.doc_activo.uuid}/'
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Mi solicitud de descarga')
+        self.assertContains(resp, 'Documento reservado')
+        self.assertContains(resp, 'Solicitud rechazada')
+
+    def test_ficha_muestra_autorizacion_vencida(self):
+        """Con una aprobación vencida la ficha ofrece solicitar de nuevo."""
+        from django.utils import timezone
+
+        SolicitudDescarga.objects.create(
+            documento=self.doc_activo, solicitado_por=self.user_trabajador,
+            motivo='Antigua', estado='aprobada',
+            version_aprobada=self.doc_activo.version_actual,
+            fecha_expiracion=timezone.now() - timedelta(days=1),
+        )
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get(
+            f'/documentos/procedimientos_generales/{self.doc_activo.uuid}/'
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Autorización vencida')
+        self.assertContains(resp, 'Solicitar Descarga')
+
+    def test_formulario_avisa_solicitud_anterior_rechazada(self):
+        """El formulario avisa si la solicitud anterior fue rechazada."""
+        SolicitudDescarga.objects.create(
+            documento=self.doc_activo, solicitado_por=self.user_trabajador,
+            motivo='Anterior', estado='rechazada',
+        )
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get(
+            f'/documentos/procedimientos_generales/{self.doc_activo.uuid}/solicitar-descarga/',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'solicitud anterior')
+        self.assertContains(resp, 'fue rechazada')
+
+    def test_perfil_lista_mis_solicitudes(self):
+        """El perfil lista las solicitudes del usuario con su estado."""
+        SolicitudDescarga.objects.create(
+            documento=self.doc_activo, solicitado_por=self.user_trabajador,
+            motivo='Para perfil', estado='rechazada',
+        )
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get('/perfil/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Mis solicitudes de descarga')
+        self.assertContains(resp, 'Para perfil')
+        self.assertContains(resp, 'Rechazada')
+
+    def test_perfil_no_lista_solicitudes_de_otros(self):
+        """El listado del perfil solo muestra las solicitudes del propio usuario."""
+        jefe_doc = Documento.objects.create(
+            tipo=self.tipo_formulario, nombre='Doc Jefe',
+            codigo='TI-FOR-096', estado='activo',
+            propietario=self.user_jefe_ti, departamento=self.depto_ti,
+            clasificacion='interno', version_actual='1.0',
+        )
+        SolicitudDescarga.objects.create(
+            documento=jefe_doc, solicitado_por=self.user_jefe_ti,
+            motivo='Del jefe', estado='pendiente',
+        )
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get('/perfil/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotContains(resp, 'Del jefe')
+
+    def test_endpoint_descarga_desde_notificaciones_eliminado(self):
+        """El antiguo endpoint JSON de descarga ya no existe (404)."""
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.post(
+            '/api/notificaciones/solicitud-descarga/1/responder/',
+            data=json.dumps({'accion': 'aprobar'}),
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 404)

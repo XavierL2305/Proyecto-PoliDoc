@@ -20,5 +20,4 @@ urlpatterns = [
     path('api/notificaciones/', api.api_notificaciones, name='api_notificaciones'),
     path('api/notificaciones/<int:notificacion_id>/leer/', api.api_marcar_leida, name='api_marcar_leida'),
     path('api/notificaciones/leer-todas/', api.api_marcar_todas_leidas, name='api_marcar_todas_leidas'),
-    path('api/notificaciones/solicitud-descarga/<int:solicitud_id>/responder/', api.api_responder_solicitud_descarga, name='api_responder_solicitud_descarga'),
 ]

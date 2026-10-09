@@ -140,6 +140,31 @@ En ambos casos, contacta al administrador (ver
 La consulta de esos registros y el reporte PDF corresponden al rol de
 administrador (Tomo 2).
 
+## 8. Seguimiento de tu solicitud
+
+Siempre puedes saber en qué va lo que pediste, sin buscar en la campana:
+
+1. **En la ficha del documento** aparece la tarjeta **"Mi solicitud de
+   descarga"** con:
+   - el **estado** (Pendiente, Aprobada o Rechazada),
+   - el **motivo** que escribiste y la fecha de solicitud,
+   - quién la resolvió y cuándo,
+   - las **observaciones** del aprobador (por ejemplo, el motivo del rechazo),
+   - si fue aprobada: la versión autorizada y hasta cuándo está vigente
+     (con la marca **Vencida** cuando caducó).
+2. El botón de la cabecera cambia según el caso: *Solicitud pendiente de
+   aprobación*, *Solicitud rechazada* o *Autorización vencida*; en los
+   últimos dos puedes volver a pulsar **Solicitar Descarga**.
+3. **En tu perfil** (Menú superior → Mi Perfil) la sección **"Mis solicitudes
+   de descarga"** lista tus solicitudes más recientes con su estado, motivo y
+   vigencia, para verlas todas en un solo lugar.
+4. Si tu solicitud anterior fue rechazada, el formulario de una nueva
+   solicitud te lo recuerda arriba del todo para que sepas por qué volver a
+   pedirla.
+
+Un jefe no puede resolver dos veces la misma solicitud: cuando ya está
+resuelta deja de aparecer en su ficha y en su bandeja.
+
 ---
 
 **Anterior:** [07. Versionado y Planilla de Cambios](07-versionado-planilla.md) ·
