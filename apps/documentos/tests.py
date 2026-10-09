@@ -54,6 +54,33 @@ class DepartamentoModelTest(BaseDocumentosTest):
         )
         self.assertTrue(d.activo)
 
+    def test_guardar_departamento_no_revienta_si_cache_caida(self):
+        """Si Redis no responde, la invalidación de caché del signal post_save
+        debe degradar con gracia (fail-open), nunca tumbar el guardado."""
+        boom = ConnectionError('Error 111 connecting to localhost:6379')
+        with patch('documentos.cache_utils.cache.get', side_effect=boom), \
+                patch('documentos.cache_utils.cache.set', side_effect=boom), \
+                patch('documentos.cache_utils.cache.delete', side_effect=boom):
+            d = Departamento.objects.create(
+                nombre='Sin Redis', codigo='SRE', activo=True
+            )
+            d.nombre = 'Sin Redis Actualizado'
+            d.save()
+        self.assertEqual(
+            Departamento.objects.get(pk=d.pk).nombre, 'Sin Redis Actualizado'
+        )
+
+    def test_departamentos_activos_sin_cache_consulta_bd(self):
+        """Con Redis caído, el catálogo se sirve directo de la BD."""
+        boom = ConnectionError('Error 111 connecting to localhost:6379')
+        with patch('documentos.cache_utils.cache.get', side_effect=boom), \
+                patch('documentos.cache_utils.cache.set', side_effect=boom):
+            from documentos.cache_utils import departamentos_activos
+            data = departamentos_activos()
+        codigos = [d.codigo for d in data]
+        self.assertIn('TI', codigos)
+        self.assertIn('GG', codigos)
+
 
 class SubAreaModelTest(BaseDocumentosTest):
     """Tests del modelo SubArea."""
