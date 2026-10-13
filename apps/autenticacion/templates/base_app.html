@@ -100,6 +100,7 @@
           <div class="navbar-dropdown">
             <a href="{% url 'autenticacion:perfil' %}" class="navbar-dropdown-item"><i class="fa-solid fa-user"></i> Mi Perfil</a>
             <a href="{% url 'documentos:mis_documentos' %}" class="navbar-dropdown-item"><i class="fa-solid fa-file-lines"></i> Mis Documentos</a>
+            <a href="{% url 'documentos:mis_solicitudes' %}" class="navbar-dropdown-item"><i class="fa-solid fa-inbox"></i> Mis solicitudes</a>
             <div class="navbar-dropdown-divider"></div>
             <form method="post" action="{% url 'autenticacion:logout' %}" style="display:inline;margin:0;">
               {% csrf_token %}

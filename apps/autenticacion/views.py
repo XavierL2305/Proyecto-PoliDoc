@@ -314,8 +314,9 @@ def perfil_usuario(request):
         .prefetch_related('aprobaciones__aprobador')
     )
     solicitudes_descarga = solicitudes_qs.count()
-    # Listado "Mis solicitudes": el solicitante sigue lo que pidió.
-    mis_solicitudes_descarga = list(solicitudes_qs[:10])
+    # Resumen "Mis solicitudes de descarga": el listado completo vive en
+    # documentos:mis_solicitudes, aquí solo se adelantan las 3 más recientes.
+    mis_solicitudes_descarga = list(solicitudes_qs[:3])
 
     asignaciones = AsignacionDocumento.objects.filter(
         coordinador=request.user,

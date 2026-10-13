@@ -238,10 +238,50 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
         motivo, fechas, observaciones del aprobador y vigencia; y badge
         "Solicitud rechazada" / "Autorización vencida" con botón de
         re-solicitud.
-      - Perfil: sección "Mis solicitudes de descarga" (las 10 más
-        recientes) con estado y motivo de cada una.
+      - Perfil: sección "Mis solicitudes de descarga" como RESUMEN de las 3
+        más recientes, con enlace "Ver todas" a la vista completa (6.5).
       - Se apoya en `SolicitudDescarga.resolucion`,
         `resolucion_observaciones`, `resuelto_por` y `esta_vigente`.
+
+  6.5 MIS SOLICITUDES (HISTORIAL UNIFICADO):
+      - URL `/documentos/mis-solicitudes/` (`views.mis_solicitudes`),
+        `@login_required` SIN restricción de rol: lo ve cualquier usuario,
+        incluido el trabajador. Entra por el dropdown del usuario
+        (`base_app.html`) como "Mis solicitudes", tras "Mis Documentos".
+      - Servicio `apps/documentos/services/solicitudes.py` (solo consulta,
+        no escribe): `mis_solicitudes(usuario, estado, tipo)` devuelve
+        `(items, totales)`. Normaliza a `ItemSolicitud` (dataclass) las
+        tres familias de lo que el USUARIO ha pedido:
+          * `SolicitudDescarga`     -> tipo 'descarga'
+          * `SolicitudAprobacionDocumento` -> tipo = `accion_solicitud`
+          * `SolicitudAccesoDocumento`     -> tipo 'acceso'
+        Ordenadas por `fecha_solicitud` DESC; los contadores `totales` se
+        calculan SIEMPRE sobre el conjunto completo (antes de filtrar) para
+        que las pestañas no cambien de número al filtrar.
+      - ESTADO NORMALIZADO: pendiente | esperando | aprobada | rechazada |
+        cancelada | **vencida**. 'vencida' se deriva en `_item_descarga`
+        cuando `estado == 'aprobada' and not esta_vigente` (vencida, versión
+        cambiada o sin `fecha_expiracion`): siempre significa "debes volver
+        a solicitar". `PENDIENTES = ('pendiente', 'esperando')`.
+      - `FILTRO_ESTADOS` mapea el valor del filtro de la UI a la tupla de
+        estados; la vista descarta valores desconocidos (queda '' = todas).
+      - Acciones por tarjeta (`url_accion`/`url_accion_label`):
+          * descarga vigente   -> `.../descargar/`    ("Descargar")
+          * descarga rechazada o vencida -> `.../solicitar-descarga/`
+            ("Solicitar de nuevo"; el GET redirige a la ficha si hay
+            bloqueo, así que siempre es seguro)
+          * cambios/accesos     -> solo `url_detalle` ("Ver documento")
+        `url_detalle` se construye con `_url_detalle()`, que devuelve '' si
+        `documento` es None o no tiene `tipo_id`/`uuid` (accesos sin
+        documento no rompen la vista).
+      - `aprobadores` es una lista de dicts {nombre, rol, rol_label, estado,
+        estado_label, fecha}; nombre = 'Pendiente de asignar' si el usuario
+        es None (cadena de cambios de estado en 'esperando').
+      - La plantilla `documentos/mis_solicitudes.html` usa los componentes
+        globales `.tabs-nav` (pestañas por estado con contadores) y
+        `.badge`/`.btn`, más estilos locales tipo `solicitud-card`.
+      - Fase 1: NO incluye `AprobacionPlanilla` ni `SolicitudCambio` (SGC).
+        `cancelar` no existe (solo lectura + re-solicitud).
 
 7. GESTIÓN Y PLANILLA DE CAMBIOS (VERSIONES)
 -------------------------------------------------------------------
@@ -1784,6 +1824,12 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
       las asignadas al usuario (Q(aprobador=user)) + las del depto del jefe
       (Q(departamento_origen=perfil.departamento, rol_aprobador='evaluador'));
       el filtro `estado` se aplica después, sin quedar hardcodeado.
+      La sección de cambios de estado hoy tiene TÍTULO ("Cambios de estado")
+      y la de descargas ("Solicitudes de Descarga"). El título de cada
+      tarjeta usa `sol.documento.nombre`/`.codigo` con guard de documento
+      nulo; antes se referenciaba `sol.nombre_documento`/`sol.codigo_documento`,
+      que NO existen en el modelo y salían vacíos. Los filtros de acción y
+      los badges cubren las 7 acciones de `ACCION_CHOICES` (antes solo 4).
       Los endpoints API (aprobar/rechazar_creacion_documento) resuelven
       estrictamente por `documento + estado='pendiente' + aprobador=user`
       (sin fallback por depto ni auto-reasignación).

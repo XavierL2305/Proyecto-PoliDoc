@@ -618,6 +618,39 @@ def bandeja_aprobaciones(request):
     })
 
 
+@login_required(login_url='/login/')
+def mis_solicitudes(request):
+    """Historial de lo que el usuario ha solicitado en el sistema.
+
+    Descargas, cambios de estado y accesos, normalizados por
+    ``services.solicitudes``. Visible para cualquier usuario autenticado.
+    """
+    from django.core.paginator import Paginator
+
+    from .services.solicitudes import FILTRO_ESTADOS, TIPOS_LABEL
+    from .services.solicitudes import mis_solicitudes as _mis_solicitudes
+
+    filtro_estado = request.GET.get('estado', '')
+    if filtro_estado not in FILTRO_ESTADOS:
+        filtro_estado = ''
+    filtro_tipo = request.GET.get('tipo', '')
+    if filtro_tipo not in TIPOS_LABEL:
+        filtro_tipo = ''
+
+    items, totales = _mis_solicitudes(
+        request.user, estado=filtro_estado, tipo=filtro_tipo,
+    )
+    items_page = Paginator(items, 20).get_page(request.GET.get('page', 1))
+    opciones_tipo = sorted(TIPOS_LABEL.items(), key=lambda par: par[1])
+    return render(request, 'documentos/mis_solicitudes.html', {
+        'items': items_page,
+        'totales': totales,
+        'filtro_estado': filtro_estado,
+        'filtro_tipo': filtro_tipo,
+        'opciones_tipo': opciones_tipo,
+    })
+
+
 def _grupos_documentos(departamentos, clasificacion='', vigencia='', usuario=None):
     """Agrupa documentos por departamento (propio | afectado) y por tipo, con
     consultas fijas (sin N+1). Reutilizado por jefe y admin.

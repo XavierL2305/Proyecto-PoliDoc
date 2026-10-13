@@ -10,7 +10,7 @@ alfabético.
 | **Asignación** | Permiso que un jefe otorga a un coordinador sobre un documento, con las facultades leer / editar / eliminar |
 | **Auditoría** | Registro inmutable de quién hizo qué y cuándo (login, descargas, aprobaciones, eliminaciones). En ISO 27001/15489 |
 | **Autorizador** | Segundo paso de la cadena: el jefe de Gerencia General (GG). Solo él activa el documento |
-| **Bandeja de Aprobaciones** | Pantalla del jefe/administrador con las solicitudes pendientes, aprobadas y rechazadas |
+| **Bandeja de Aprobaciones** | Pantalla del jefe/administrador con lo que debe resolver: la sección *Cambios de estado* y la de *Solicitudes de Descarga*. No confundir con *Mis solicitudes* |
 | **Borrador** | Estado de un documento en elaboración: no está aprobado ni es visible para los demás |
 | **Cadena de aprobación** | Los dos pasos obligatorios: Evaluación → Autorización |
 | **Clasificación de seguridad** | Nivel de confidencialidad: Público, Interno, Confidencial o Restringido. Decide quién ve y quién descarga |
@@ -26,6 +26,7 @@ alfabético.
 | **GG** | Gerencia General: departamento cuyo jefe actúa como Autorizador |
 | **Habilitar / Inhabilitar** | Reactivar un documento obsoleto / pasarlo a obsoleto. Exige UNA aprobación: la aplica directo el administrador o el jefe de Gerencia General; los demás reciben el botón como *Solicitar Reactivación* / *Solicitar Inhabilitación* |
 | **Jefe de departamento** | Rol que gestiona todo su departamento: aprueba, asigna, distribuye, transfiere e inhabilita |
+| **Mis solicitudes** | Pantalla (menú del usuario) donde cualquier usuario ve el historial de lo que pidió: descargas, cambios de estado y accesos, con estado y quién debe resolverla |
 | **Obsoleto** | Estado del documento vencido o inhabilitado: solo lectura histórica, no se distribuye |
 | **Período de retención** | Tiempo mínimo que un documento se conserva tras dejar de estar activo, antes de poder destruirse |
 | **Planilla de Cambios** | Trámite formal para modificar un documento activo; al aprobarse, genera la nueva versión |

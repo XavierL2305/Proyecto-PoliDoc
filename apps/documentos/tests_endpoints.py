@@ -2664,3 +2664,204 @@ class FeedbackSolicitanteTest(BaseDocumentosTest):
             content_type='application/json',
         )
         self.assertEqual(resp.status_code, 404)
+
+
+# =============================================================================
+# MIS SOLICITUDES (HISTORIAL NORMALIZADO DEL USUARIO)
+# =============================================================================
+
+class MisSolicitudesTest(BaseDocumentosTest):
+    """La vista "Mis solicitudes" unifica lo que el usuario ha pedido."""
+
+    def setUp(self):
+        super().setUp()
+        self.client = Client()
+
+    def _descarga(self, estado='pendiente', **extra):
+        return SolicitudDescarga.objects.create(
+            documento=self.doc_activo, solicitado_por=self.user_trabajador,
+            motivo='Necesito el PDF', estado=estado, **extra,
+        )
+
+    def _cambio(self, accion='inhabilitar'):
+        return SolicitudAprobacionDocumento.objects.create(
+            documento=self.doc_activo, accion_solicitud=accion,
+            solicitante=self.user_trabajador, propietario=self.user_jefe_ti,
+            aprobador=self.user_jefe_ti, departamento_origen=self.depto_ti,
+            rol_aprobador='evaluador', estado='pendiente',
+        )
+
+    def _acceso(self, solicitante=None, documento=False):
+        if documento is False:
+            documento = self.doc_activo
+        return SolicitudAccesoDocumento.objects.create(
+            documento=documento,
+            solicitante=solicitante or self.user_trabajador,
+            jefe_destino=self.user_jefe_ti,
+            departamento_destino=self.depto_ti,
+            estado='pendiente', motivo='Apoyo en el área',
+        )
+
+    def test_trabajador_accede_sin_rol_de_jefe(self):
+        """A diferencia de la bandeja, aquí no se redirige al trabajador."""
+        self._descarga()
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get('/documentos/mis-solicitudes/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Mis solicitudes')
+
+    def test_muestra_solo_las_propias(self):
+        self._descarga()
+        SolicitudDescarga.objects.create(
+            documento=self.doc_activo, solicitado_por=self.user_trabajador_otro,
+            motivo='De otro usuario', estado='pendiente',
+        )
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get('/documentos/mis-solicitudes/')
+        self.assertContains(resp, 'Necesito el PDF')
+        self.assertNotContains(resp, 'De otro usuario')
+
+    def test_unifica_los_tres_tipos(self):
+        self._descarga()
+        self._cambio()
+        self._acceso()
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get('/documentos/mis-solicitudes/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Descarga')
+        self.assertContains(resp, 'Inhabilitar')
+        self.assertContains(resp, 'Acceso a documento')
+
+    def test_descarga_vigente_ofrece_descargar(self):
+        from django.utils import timezone
+
+        sol = self._descarga(
+            estado='aprobada',
+            version_aprobada=self.doc_activo.version_actual,
+            fecha_expiracion=timezone.now() + timedelta(days=10),
+        )
+        AprobacionDescarga.objects.create(
+            solicitud=sol, aprobador=self.user_jefe_ti, estado='aprobada',
+        )
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get('/documentos/mis-solicitudes/')
+        self.assertContains(resp, 'Descargar')
+        self.assertContains(
+            resp,
+            f'/documentos/procedimientos_generales/{self.doc_activo.uuid}/descargar/',
+        )
+
+    def test_descarga_vencida_marca_estado_y_re_solicitud(self):
+        from django.utils import timezone
+
+        self._descarga(
+            estado='aprobada',
+            version_aprobada=self.doc_activo.version_actual,
+            fecha_expiracion=timezone.now() - timedelta(days=1),
+        )
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get('/documentos/mis-solicitudes/')
+        self.assertContains(resp, 'Vencida')
+        self.assertContains(resp, 'Solicitar de nuevo')
+
+    def test_filtro_por_estado(self):
+        from django.utils import timezone
+
+        self._descarga(
+            estado='aprobada', fecha_resolucion=timezone.now(),
+            version_aprobada=self.doc_activo.version_actual,
+            fecha_expiracion=timezone.now() + timedelta(days=10),
+        )
+        self._cambio()
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get('/documentos/mis-solicitudes/?estado=aprobada')
+        self.assertEqual(len(resp.context['items']), 1)
+        self.assertEqual(resp.context['items'][0].estado, 'aprobada')
+        self.assertContains(resp, 'Necesito el PDF')
+
+    def test_filtro_por_tipo(self):
+        self._descarga()
+        self._cambio()
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get('/documentos/mis-solicitudes/?tipo=descarga')
+        self.assertEqual(len(resp.context['items']), 1)
+        self.assertEqual(resp.context['items'][0].tipo, 'descarga')
+        self.assertContains(resp, 'Necesito el PDF')
+
+    def test_estado_desconocido_muestra_todas(self):
+        self._descarga()
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get('/documentos/mis-solicitudes/?estado=inexistente')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['filtro_estado'], '')
+        self.assertContains(resp, 'Necesito el PDF')
+
+    def test_contadores_de_estado(self):
+        from django.utils import timezone
+
+        from documentos.services.solicitudes import mis_solicitudes
+
+        self._descarga(
+            estado='aprobada', fecha_resolucion=timezone.now(),
+            version_aprobada=self.doc_activo.version_actual,
+            fecha_expiracion=timezone.now() + timedelta(days=10),
+        )
+        self._cambio()
+        items, totales = mis_solicitudes(self.user_trabajador)
+        self.assertEqual(len(items), 2)
+        self.assertEqual(totales['todas'], 2)
+        self.assertEqual(totales['pendiente'], 1)
+        self.assertEqual(totales['aprobada'], 1)
+
+    def test_servicio_lista_aprobadores(self):
+        from documentos.services.solicitudes import mis_solicitudes
+
+        sol = self._descarga()
+        AprobacionDescarga.objects.create(
+            solicitud=sol, aprobador=self.user_jefe_ti, rol_aprobador='jefe',
+        )
+        items, _ = mis_solicitudes(self.user_trabajador)
+        self.assertEqual(len(items[0].aprobadores), 1)
+        self.assertEqual(items[0].aprobadores[0]['rol'], 'jefe')
+        self.assertEqual(items[0].aprobadores[0]['nombre'], 'Jefe TI')
+
+    def test_acceso_sin_documento_no_rompe(self):
+        """Una solicitud de acceso sin documento asociado se lista igual."""
+        self._acceso(documento=None)
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get('/documentos/mis-solicitudes/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Documento no disponible')
+
+    def test_dropdown_usuario_enlaza_mis_solicitudes(self):
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get('/documentos/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Mis solicitudes')
+
+    def test_perfil_enlaza_ver_todas(self):
+        self._descarga()
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get('/perfil/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Ver todas')
+
+    def test_perfil_resumen_es_corto(self):
+        """El perfil solo adelanta las 3 más recientes."""
+        from django.utils import timezone
+
+        base = timezone.now()
+        for dia in range(5):
+            sol = SolicitudDescarga.objects.create(
+                documento=self.doc_activo, solicitado_por=self.user_trabajador,
+                motivo=f'Pedido {dia}', estado='aprobada', fecha_resolucion=base,
+            )
+            SolicitudDescarga.objects.filter(pk=sol.pk).update(
+                fecha_solicitud=base - timedelta(days=dia),
+            )
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get('/perfil/')
+        self.assertContains(resp, 'Ver todas')
+        self.assertContains(resp, 'Pedido 0')
+        self.assertContains(resp, 'Pedido 2')
+        self.assertNotContains(resp, 'Pedido 4')

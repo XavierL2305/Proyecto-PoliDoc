@@ -67,15 +67,25 @@ pantalla. Se abre desde cualquiera de estos puntos de entrada:
 (No existe en el menú lateral: esos botones son el acceso normal. Solo
 aparecen si eres jefe de departamento o administrador.)
 
+La bandeja agrupa lo que debes resolver en dos secciones:
+
+| Sección | Qué lista |
+|---|---|
+| **Cambios de estado** | Creación, edición, inhabilitar, reactivar, renovar, nueva versión y eliminar versión |
+| **Solicitudes de Descarga** | Las descargas que te toca autorizar |
+
 1. Abre la bandeja.
 2. Usa los filtros:
    - Estado: **Pendientes** · Aprobadas · Rechazadas · Todas.
    - Acción: **Todas las acciones** · Creación · Edición · Inhabilitar ·
-     Nueva Versión.
-3. Abre la solicitud que te corresponde resolver; allí verás también las
-   **solicitudes de descarga** pendientes.
+     Reactivar · Renovar Vencimiento · Nueva Versión · Eliminar Versión.
+3. Abre la solicitud que te corresponde resolver.
 
 ![Bandeja de aprobaciones](imagenes/aprobaciones/bandeja-aprobaciones.png)
+
+> La bandeja es **la cola de lo que debes aprobar**. Para ver el estado de
+> lo que *tú* has pedido usa **Mis solicitudes** (menú del usuario),
+> descrita en el [capítulo 11](11-guia-trabajador-coordinador.md).
 
 ### Resolver la solicitud
 

@@ -47,6 +47,37 @@ en POLIDOC, con enlaces al capítulo detallado de cada flujo.
 | Eliminar una versión | Historial de versiones (solo si eres propietario o admin) | 07 |
 | Descargar un documento que no es tuyo | **Solicitar Descarga** con motivo | 08 |
 
+### Seguir tus solicitudes
+
+Cualquier usuario (trabajador, coordinador o jefe) puede ver el historial
+de lo que ha pedido: **Mis solicitudes**
+(`/documentos/mis-solicitudes/`).
+
+1. Abre el menú del usuario (arriba a la derecha) y pulsa **Mis solicitudes**.
+2. La página unifica en un solo listado tus solicitudes de **descarga**,
+   de **cambios de estado** (inhabilitar, reactivar, renovar, nueva
+   versión) y de **acceso a documentos**.
+3. Filtra por estado con las pestañas **Todas · Pendientes · Aprobadas ·
+   Rechazadas · Vencidas**, o por tipo con el desplegable.
+4. Cada tarjeta muestra el documento, el motivo que escribiste, la fecha,
+   quién debe o resolvió la solicitud y el resultado (con el motivo del
+   rechazo si lo hay).
+
+Según el estado de la tarjeta encuentras además estos botones:
+
+| Estado | Qué puedes hacer |
+|---|---|
+| **Aprobada** y descarga vigente | **Descargar** el documento directamente |
+| **Rechazada** o **Vencida** | **Solicitar de nuevo** el documento |
+| Cualquiera | **Ver documento** para abrir su ficha |
+
+En **Mi Perfil** hay un resumen con tus 3 solicitudes de descarga más
+recientes y el enlace *Ver todas*.
+
+> No confundas esta página con la **Bandeja de Aprobaciones**
+> ([capítulo 06](06-aprobaciones.md)): esa es la cola de lo que *otros*
+> te envían a aprobar y solo es para jefes y administradores.
+
 ### Lo que un trabajador no puede hacer
 
 - Editar documentos de otros ni documentos activos directamente.

@@ -112,12 +112,18 @@
   .accion-badge--creacion { background: #DBEAFE; color: #1E40AF; }
   .accion-badge--edicion { background: #E0E7FF; color: #3730A3; }
   .accion-badge--inhabilitar { background: #FEE2E2; color: #991B1B; }
+  .accion-badge--reactivar { background: #D1FAE5; color: #065F46; }
+  .accion-badge--renovar { background: #EDE9FE; color: #5B21B6; }
   .accion-badge--version { background: #D1FAE5; color: #065F46; }
+  .accion-badge--eliminar_version { background: #F3F4F6; color: #374151; }
   .accion-badge--descarga { background: #FEF3C7; color: #92400E; }
   [data-theme="dark"] .accion-badge--creacion { background: #1E3A5F; color: #93C5FD; }
   [data-theme="dark"] .accion-badge--edicion { background: #312E81; color: #A5B4FC; }
   [data-theme="dark"] .accion-badge--inhabilitar { background: #7F1D1D; color: #FCA5A5; }
+  [data-theme="dark"] .accion-badge--reactivar { background: #064E3B; color: #6EE7B7; }
+  [data-theme="dark"] .accion-badge--renovar { background: #4C1D95; color: #C4B5FD; }
   [data-theme="dark"] .accion-badge--version { background: #064E3B; color: #6EE7B7; }
+  [data-theme="dark"] .accion-badge--eliminar_version { background: #1F2937; color: #D1D5DB; }
   [data-theme="dark"] .accion-badge--descarga { background: #78350F; color: #FCD34D; }
   .empty-state {
     text-align: center;
@@ -190,17 +196,29 @@
     <option value="creacion" {% if filtro_tipo == 'creacion' %}selected{% endif %}>Creación</option>
     <option value="edicion" {% if filtro_tipo == 'edicion' %}selected{% endif %}>Edición</option>
     <option value="inhabilitar" {% if filtro_tipo == 'inhabilitar' %}selected{% endif %}>Inhabilitar</option>
+    <option value="reactivar" {% if filtro_tipo == 'reactivar' %}selected{% endif %}>Reactivar</option>
+    <option value="renovar" {% if filtro_tipo == 'renovar' %}selected{% endif %}>Renovar Vencimiento</option>
     <option value="version" {% if filtro_tipo == 'version' %}selected{% endif %}>Nueva Versión</option>
+    <option value="eliminar_version" {% if filtro_tipo == 'eliminar_version' %}selected{% endif %}>Eliminar Versión</option>
   </select>
 </form>
 
 {% if solicitudes %}
+<h2 style="font-size: 1.125rem; font-weight: 600; margin: 0 0 1rem; color: var(--color-text);">
+  <i class="fa-solid fa-file-signature"></i> Cambios de estado
+  {% if total_pendientes > 0 %}
+  <span class="page-badge" style="margin-left: 0.5rem;">
+    <i class="fa-solid fa-clock"></i> {{ total_pendientes }} pendiente{{ total_pendientes|pluralize }}
+  </span>
+  {% endif %}
+</h2>
+
 {% for sol in solicitudes %}
 <div class="solicitud-card" id="solicitud-{{ sol.id }}">
   <div class="solicitud-header">
     <div class="solicitud-info">
-      <h4>{{ sol.nombre_documento }}</h4>
-      <p>{{ sol.codigo_documento }}</p>
+      <h4>{% if sol.documento %}{{ sol.documento.nombre }}{% else %}Documento no disponible{% endif %}</h4>
+      <p>{% if sol.documento %}{{ sol.documento.codigo }}{% endif %}</p>
     </div>
     <span class="accion-badge accion-badge--{{ sol.accion_solicitud }}">
       {% if sol.accion_solicitud == 'creacion' %}
@@ -209,8 +227,14 @@
         <i class="fa-solid fa-pen"></i> Edición
       {% elif sol.accion_solicitud == 'inhabilitar' %}
         <i class="fa-solid fa-ban"></i> Inhabilitar
+      {% elif sol.accion_solicitud == 'reactivar' %}
+        <i class="fa-solid fa-rotate-left"></i> Reactivar
+      {% elif sol.accion_solicitud == 'renovar' %}
+        <i class="fa-solid fa-calendar-check"></i> Renovar
       {% elif sol.accion_solicitud == 'version' %}
         <i class="fa-solid fa-code-branch"></i> Versión
+      {% elif sol.accion_solicitud == 'eliminar_version' %}
+        <i class="fa-solid fa-trash-can"></i> Eliminar versión
       {% endif %}
     </span>
     <span class="accion-badge" style="background: {% if sol.rol_aprobador == 'evaluador' %}#FEF3C7;color:#92400E{% else %}#E0E7FF;color:#3730A3{% endif %};">

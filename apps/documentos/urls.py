@@ -49,6 +49,9 @@ urlpatterns = [
     # Bandeja de aprobaciones (Jefe/Admin)
     path('bandeja-aprobaciones/', views.bandeja_aprobaciones, name='bandeja_aprobaciones'),
 
+    # Mis solicitudes (cualquier usuario)
+    path('mis-solicitudes/', views.mis_solicitudes, name='mis_solicitudes'),
+
     # Documentos del departamento (Jefe)
     path('departamento/', views.documentos_departamento, name='documentos_departamento'),
 
