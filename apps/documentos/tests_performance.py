@@ -5,7 +5,7 @@ lo que controlamos con estas optimizaciones:
 
 * `contadores_documentos` debe hacer un número FIJO de consultas aunque haya
   más tipos activos (antes: 1 consulta por tipo).
-* `_conteos_vigencia` debe resolverse con un único aggregate (antes: 4).
+* `calcular_conteos_vigencia` debe resolverse con un único aggregate (antes: 4).
 * Guardar un `Documento` debe hacer UN solo SELECT de estado/clasificación
   previos (antes: dos, uno en pre_save y otro en post_save).
 * Guardar un documento que YA estaba activo no debe consultar las referencias
@@ -22,7 +22,7 @@ from django.urls import reverse
 
 from tests_base import BaseDocumentosTest
 from documentos.models import Documento, TipoDocumento
-from documentos.views import _conteos_vigencia
+from documentos.services.vigencia import calcular_conteos_vigencia
 
 
 def _queries(fn):
@@ -78,12 +78,12 @@ class ConteosVigenciaPerformanceTest(BaseDocumentosTest):
         # calentamos para medir SOLO el aggregate.
         self.user_jefe_ti.perfil
         queries = _queries(
-            lambda: _conteos_vigencia([self.depto_ti], '', self.user_jefe_ti)
+            lambda: calcular_conteos_vigencia([self.depto_ti], '', self.user_jefe_ti)
         )
         self.assertEqual(len(queries), 1)
 
     def test_conteos_correctos(self):
-        conteos = _conteos_vigencia([self.depto_ti], '', self.user_jefe_ti)
+        conteos = calcular_conteos_vigencia([self.depto_ti], '', self.user_jefe_ti)
         self.assertGreaterEqual(conteos['vencidos'], 1)      # doc_vencido
         self.assertGreaterEqual(conteos['vence_pronto'], 1)  # doc_por_vencer
         self.assertIn('vigentes', conteos)

@@ -168,9 +168,14 @@
 
   {% if mis_solicitudes_descarga %}
   <div class="profile-card" style="margin-top: 1.5rem;">
-    <div class="profile-card-header">
-      <h3>Mis solicitudes de descarga</h3>
-      <p class="profile-card-subtitle">Seguimiento de lo que has solicitado descargar</p>
+    <div class="profile-card-header" style="display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; flex-wrap:wrap;">
+      <div>
+        <h3>Mis solicitudes de descarga</h3>
+        <p class="profile-card-subtitle">Seguimiento de lo que has solicitado descargar</p>
+      </div>
+      <a href="{% url 'documentos:mis_solicitudes' %}" class="btn btn--ghost btn--sm">
+        <i class="fa-solid fa-inbox"></i> Ver todas
+      </a>
     </div>
     {% for solicitud in mis_solicitudes_descarga %}
     <div class="profile-info-row" style="flex-wrap: wrap; align-items: flex-start; gap: 0.5rem;">
@@ -217,7 +222,8 @@
     {% endfor %}
     {% if mas_solicitudes_descarga %}
     <div style="padding: 0.75rem 1rem; font-size: 0.8125rem; color: var(--color-muted);">
-      <i class="fa-solid fa-circle-info"></i> Solo se muestran las 10 solicitudes más recientes.
+      <i class="fa-solid fa-circle-info"></i> Solo se muestran las 3 más recientes.
+      <a href="{% url 'documentos:mis_solicitudes' %}">Ver todas tus solicitudes</a>.
     </div>
     {% endif %}
   </div>

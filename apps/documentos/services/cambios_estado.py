@@ -66,18 +66,23 @@ def aprobador_de_cambio(documento, usuario):
 
     Regla de negocio confirmada:
 
-    * Si el solicitante es jefe (de cualquier departamento) → aprueba el
-      jefe de Gerencia General.
+    * Si el solicitante **ejerce jefatura** (jefe natural o delegado vigente)
+      → aprueba el jefe de Gerencia General.
     * Si no lo es → aprueba el jefe del departamento del documento.
     * Si el documento **no tiene jefe de departamento** → cae al jefe de
       Gerencia General (no queda en espera).
 
+    Tratar al delegado como jefe evita que éste se autoapruebe una solicitud
+    cuyo aprobador sería su propio jefe delegante.
+
     ``(None, None)`` significa que no hay con quién aprobar (queda
     ``'esperando'``); el rol indica qué valores se autocompletan al aprobar.
     """
+    from ..jefatura import es_delegado_vigente
+
     perfil = usuario.perfil
-    if perfil.es_jefe:
-        # Jefe de cualquier departamento → jefe de Gerencia General.
+    if perfil.es_jefe or es_delegado_vigente(usuario):
+        # Jefe (o delegado) de cualquier departamento → jefe de Gerencia General.
         return jefe_gerencia_general(), 'autorizador'
     departamento = documento.departamento
     jefe_depto = departamento.jefe if departamento and departamento.jefe_id else None

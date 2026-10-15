@@ -78,11 +78,12 @@ planillas (creación, Planilla de Cambios, SGC-FOR-001 de inhabilitación).
 ### Roles y permisos
 
 `Configuración → Roles y Permisos`: la matriz de referencia de quién puede
-hacer qué, y los dos **departamentos clave** del modelo de aprobación:
+hacer qué, y el **departamento clave** del modelo de aprobación:
 
-- El **departamento evaluador** (código por defecto `SGC`).
-- **Gerencia General** (código `GG`): su jefe aprueba los cambios de
-  estado que piden los jefes de departamento.
+- **Gerencia General** (código `GG`): su jefe es el **único aprobador** de
+  lo que envían los jefes de departamento (creación y Planillas de Cambios),
+  y el autorizador final del resto de flujos. También aprueba los cambios de
+  estado que piden los jefes.
 
 ![Matriz de roles y permisos](imagenes/ampliacion/roles-permisos.png)
 

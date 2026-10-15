@@ -141,6 +141,33 @@ class PerfilUsuario(models.Model):
     def puede_aprobar(self):
         return self.rol in ('administrador', 'jefe_departamento')
 
+    @property
+    def ejerce_jefatura(self):
+        """True si es jefe natural **o** tiene una delegación de jefatura vigente.
+
+        Es la bandera que usan las plantillas y las vistas para abrir los
+        controles departamentales al delegado (vacaciones). El resultado se
+        memoriza en la instancia para no repetir la query por página.
+        """
+        if self.es_jefe:
+            return True
+        if not hasattr(self, '_ejerce_jefatura'):
+            from documentos.jefatura import es_delegado_vigente
+
+            self._ejerce_jefatura = es_delegado_vigente(self.usuario)
+        return self._ejerce_jefatura
+
+    @property
+    def delegacion_vigente(self):
+        """Delegación que está ejerciendo hoy, o None (memorizada)."""
+        if not hasattr(self, '_delegacion_vigente'):
+            from documentos.jefatura import delegacion_activa
+
+            self._delegacion_vigente = (
+                None if self.es_jefe else delegacion_activa(self.usuario)
+            )
+        return self._delegacion_vigente
+
 
 class Notificacion(models.Model):
     TIPO_CHOICES = [

@@ -232,7 +232,7 @@
 
   <script>
     const userIsAdmin = {{ user.perfil.es_administrador|yesno:"true,false" }};
-    const userIsJefe = {{ user.perfil.es_jefe|yesno:"true,false" }};
+    const userIsJefe = {{ user.perfil.ejerce_jefatura|yesno:"true,false" }};
   </script>
   <script src="{% static 'js/documentos.js' %}"></script>
 {% endblock %}

@@ -83,10 +83,14 @@ Tienes dos botones al final del formulario:
 
 ## 4. Qué pasa después de enviar
 
-Al pulsar **Enviar a Revisión** se crea una cadena de aprobación de dos pasos:
+Al pulsar **Enviar a Revisión** se crea la cadena de aprobación:
 
-1. **Evaluación** — tu jefe de departamento (o un jefe par, si tú lo eres).
-2. **Autorización** — jefe de Gerencia General.
+- **Si eres jefe de departamento** → **UN solo paso**: **Autorización** del
+  jefe de Gerencia General. (Si eres tú el jefe de GG, la autorización queda
+  como **tarea pendiente a tu nombre** y la resuelves desde tu bandeja.)
+- **Si no lo eres** → **dos pasos**:
+  1. **Evaluación** — tu jefe de departamento.
+  2. **Autorización** — jefe de Gerencia General.
 
 El documento queda en *En Revisión* hasta que se resuelva. Mientras tanto
 puedes ver su estado en la ficha y en la notificación. El flujo completo,

@@ -424,8 +424,6 @@ CACHES = {
 
 # Horas sin respuesta antes de escalar una aprobación a administración
 APROBACION_ESCALADO_HORAS = int(os.getenv('APROBACION_ESCALADO_HORAS', '48'))
-# Departamento cuyo jefe evalúa documentos creados por el jefe de GG
-APROBACION_EVALUADOR_DEPTO_GG = os.getenv('APROBACION_EVALUADOR_DEPTO_GG', 'SGC')
 
 # =============================================================================
 # CONFIGURACIÓN DE APROBACIÓN DE DOCUMENTOS

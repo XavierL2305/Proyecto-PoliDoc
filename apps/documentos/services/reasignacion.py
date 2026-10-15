@@ -174,6 +174,8 @@ def reasignar_autorizadores_gg(nuevo_jefe_gg, actor):
 
     Los pasos cuyo evaluador ya aprobó pasan a 'pendiente' y notifican al
     jefe de GG; los que aún no fueron evaluados quedan en 'esperando'.
+    Los pasos de UN solo aprobador (solicitante jefe, sin cadena de
+    evaluación) son accionables de inmediato: quedan 'pendiente'.
     Aplica a documentos y planillas.
     """
     from documentos.models import SolicitudAprobacionDocumento, AprobacionPlanilla
@@ -193,7 +195,12 @@ def reasignar_autorizadores_gg(nuevo_jefe_gg, actor):
                 accion_solicitud=sol.accion_solicitud,
                 rol_aprobador='evaluador',
             ).order_by('id').first()
-            evaluado = bool(evaluador and evaluador.estado == 'aprobada')
+            if evaluador is None:
+                # Un solo paso (solicitante jefe): no hay cadena de
+                # evaluación, así que el autorizador es accionable de inmediato.
+                evaluado = True
+            else:
+                evaluado = evaluador.estado == 'aprobada'
             sol.aprobador = nuevo_jefe_gg
             sol.estado = 'pendiente' if evaluado else 'esperando'
             sol.save(update_fields=['aprobador', 'estado'])
@@ -218,7 +225,11 @@ def reasignar_autorizadores_gg(nuevo_jefe_gg, actor):
             evaluador = AprobacionPlanilla.objects.filter(
                 planilla=ap.planilla, rol_aprobador='evaluador',
             ).order_by('id').first()
-            evaluado = bool(evaluador and evaluador.estado == 'aprobada')
+            if evaluador is None:
+                # Un solo paso (responsable jefe): accionable de inmediato.
+                evaluado = True
+            else:
+                evaluado = evaluador.estado == 'aprobada'
             ap.aprobador = nuevo_jefe_gg
             ap.estado = 'pendiente' if evaluado else 'esperando'
             ap.save(update_fields=['aprobador', 'estado'])

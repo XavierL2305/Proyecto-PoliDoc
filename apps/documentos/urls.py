@@ -49,6 +49,9 @@ urlpatterns = [
     # Bandeja de aprobaciones (Jefe/Admin)
     path('bandeja-aprobaciones/', views.bandeja_aprobaciones, name='bandeja_aprobaciones'),
 
+    # Mis solicitudes (cualquier usuario)
+    path('mis-solicitudes/', views.mis_solicitudes, name='mis_solicitudes'),
+
     # Documentos del departamento (Jefe)
     path('departamento/', views.documentos_departamento, name='documentos_departamento'),
 
@@ -61,6 +64,10 @@ urlpatterns = [
     path('planilla-cambios/<uuid:planilla_uuid>/', views.detalle_planilla, name='detalle_planilla'),
     path('planilla-cambios/<uuid:planilla_uuid>/aprobar/', views.aprobar_planilla, name='aprobar_planilla'),
     path('planilla-cambios/<uuid:planilla_uuid>/enviar/', views.enviar_planilla, name='enviar_planilla'),
+
+    # Delegación de jefatura (vacaciones): alta, listado y revocación.
+    path('delegaciones/', views.delegaciones_jefatura, name='delegaciones_jefatura'),
+    path('delegaciones/<int:deleg_id>/revocar/', views.revocar_delegacion, name='revocar_delegacion'),
 
     # Detalle, editar, eliminar (genérico - DEBE ir después de rutas específicas)
     path('<str:tipo>/<uuid:documento_id>/', views.detalle_documento, name='detalle'),
@@ -126,6 +133,7 @@ urlpatterns = [
     path('configuracion/departamentos/nuevo/', views.departamento_crear, name='departamento_crear'),
     path('configuracion/departamentos/<int:depto_id>/editar/', views.departamento_editar, name='departamento_editar'),
     path('configuracion/departamentos/<int:depto_id>/eliminar/', views.departamento_eliminar, name='departamento_eliminar'),
+    path('configuracion/transferencia-masiva/', views.transferencia_masiva, name='transferencia_masiva'),
     path('configuracion/roles-permisos/', views.roles_permisos, name='roles_permisos'),
     path('configuracion/formatos/', views.formatos_lista, name='formatos_lista'),
     path('configuracion/formatos/nuevo/', views.formato_crear, name='formato_crear'),

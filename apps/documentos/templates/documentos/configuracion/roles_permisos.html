@@ -182,9 +182,11 @@
   <div class="detail-header"><h3><i class="fa-solid fa-stamp" style="color: var(--color-primary);"></i> Flujo de aprobación</h3></div>
   <div class="detail-body">
     <p style="font-size: .875rem; color: var(--color-text); margin-top: 0;">
-      Al crear, modificar o eliminar un documento (y en la Planilla de Cambios) siempre se generan
-      <strong>dos pasos</strong>: primero <strong>evalúa</strong> y luego <strong>autoriza</strong>.
-      El autorizador es siempre el <strong>jefe de GG</strong>.
+      Si quien crea es un <strong>jefe de departamento</strong> (o envía una Planilla de Cambios como jefe)
+      hay <strong>UN solo aprobador</strong>: el <strong>jefe de GG</strong>. La evaluación de un jefe par
+      (<strong>SGC</strong>) ya <strong>no aplica</strong>.<br>
+      Para el resto de roles la cadena conserva <strong>dos pasos</strong>: primero <strong>evalúa</strong>
+      el jefe del departamento y luego <strong>autoriza</strong> el <strong>jefe de GG</strong>.
     </p>
 
     <table class="table" style="min-width: 640px; margin-top: 1rem;">
@@ -197,15 +199,8 @@
       </thead>
       <tbody>
         <tr>
-          <td>Jefe de departamento</td>
-          <td>
-            <strong>{{ evaluador_depto.nombre|default:"SGC" }}</strong>
-            {% if evaluador_jefe %}
-              — {{ evaluador_jefe.get_full_name|default:evaluador_jefe.username }}
-            {% else %}
-              — <span style="color: var(--color-muted);">Sin jefe asignado</span>
-            {% endif %}
-          </td>
+          <td><strong>Jefe de departamento</strong> <span style="color: var(--color-muted);">(UN solo paso)</span></td>
+          <td><span style="color: var(--color-muted);">— no aplica</span></td>
           <td>
             Jefe de GG
             {% if gg_jefe %}— {{ gg_jefe.get_full_name|default:gg_jefe.username }}{% else %}— <span style="color: var(--color-muted);">Sin asignar</span>{% endif %}
@@ -225,10 +220,10 @@
     </table>
 
     <p style="font-size: .8rem; color: var(--color-muted); margin-top: 1rem; margin-bottom: 0;">
-      <strong>Casos especiales:</strong> si el jefe de GG crea, evalúa {{ evaluador_depto.nombre|default:"SGC" }}
-      y GG autoriza (autofirma); si crea el jefe de {{ evaluador_depto.nombre|default:"SGC" }}, evalúa el primer
-      departamento con jefe y GG autoriza. Si no hay jefe disponible, el paso queda "en espera" hasta que se asigne.
-      El evaluador y el autorizador pueden coincidir (ese jefe hace los dos pasos).
+      <strong>Casos especiales:</strong> si el jefe de GG crea (o envía una planilla) se le genera una
+      <strong>tarea de autorización pendiente</strong> que él mismo aprueba. Si no hay jefe de GG,
+      el paso queda "en espera" hasta que se asigne. Si el mismo jefe ocupa ambos roles en la cadena
+      de dos pasos (coordinador/trabajador de un departamento sin jefe), hace los dos pasos.
     </p>
   </div>
 </div>

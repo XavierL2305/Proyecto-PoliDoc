@@ -1,0 +1,375 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Mis Solicitudes - POLIDOC{% endblock %}
+
+{% block extra_css %}
+<style>
+  .page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+  .page-header h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--color-text);
+    margin: 0;
+  }
+  .page-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.25rem 0.75rem;
+    background: var(--color-warning-light);
+    color: #92400E;
+    border-radius: 50px;
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+  [data-theme="dark"] .page-badge {
+    background: #78350F;
+    color: #FCD34D;
+  }
+  .filter-bar {
+    display: flex;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .filter-bar select {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    font-size: 0.875rem;
+    font-family: inherit;
+    background: var(--color-bg);
+    color: var(--color-text);
+  }
+  .solicitud-card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 0.75rem;
+    transition: all var(--transition);
+  }
+  .solicitud-card:hover {
+    border-color: var(--color-primary);
+    box-shadow: var(--shadow);
+  }
+  .solicitud-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+    flex-wrap: wrap;
+  }
+  .solicitud-info {
+    min-width: 0;
+  }
+  .solicitud-info h4 {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--color-text);
+    margin: 0 0 0.25rem 0;
+  }
+  .solicitud-info h4 a {
+    color: inherit;
+    text-decoration: none;
+  }
+  .solicitud-info h4 a:hover {
+    color: var(--color-primary);
+    text-decoration: underline;
+  }
+  .solicitud-info p {
+    font-size: 0.8125rem;
+    color: var(--color-muted);
+    margin: 0;
+  }
+  .solicitud-badges {
+    display: flex;
+    gap: 0.375rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .solicitud-meta {
+    display: flex;
+    gap: 1rem;
+    font-size: 0.8125rem;
+    color: var(--color-muted);
+    margin-bottom: 0.75rem;
+    flex-wrap: wrap;
+  }
+  .solicitud-meta span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+  }
+  .solicitud-meta .meta-alert {
+    color: #991B1B;
+    font-weight: 600;
+  }
+  [data-theme="dark"] .solicitud-meta .meta-alert {
+    color: #FCA5A5;
+  }
+  .solicitud-texto {
+    font-size: 0.8125rem;
+    color: var(--color-text);
+    margin: 0 0 0.75rem 0;
+  }
+  .solicitud-obs {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.375rem;
+    font-size: 0.8125rem;
+    color: var(--color-muted);
+    margin: 0 0 0.75rem 0;
+  }
+  .solicitud-obs i {
+    margin-top: 0.125rem;
+  }
+  .aprobadores {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.75rem;
+  }
+  .aprobador-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.25rem 0.625rem;
+    border-radius: 50px;
+    font-size: 0.75rem;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    color: var(--color-text);
+  }
+  .aprobador-chip strong {
+    font-weight: 600;
+  }
+  .aprobador-chip--aprobada { border-color: var(--color-success); color: #065F46; }
+  .aprobador-chip--rechazada { border-color: var(--color-danger); color: #991B1B; }
+  [data-theme="dark"] .aprobador-chip--aprobada { color: #6EE7B7; }
+  [data-theme="dark"] .aprobador-chip--rechazada { color: #FCA5A5; }
+  .solicitud-actions {
+    display: flex;
+    gap: 0.5rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--color-border);
+    flex-wrap: wrap;
+  }
+  .empty-state {
+    text-align: center;
+    padding: 3rem;
+    color: var(--color-muted);
+  }
+  .empty-state i {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    display: block;
+  }
+  .pagination {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 1.5rem;
+  }
+  .pagination a,
+  .pagination span {
+    padding: 0.375rem 0.75rem;
+    border-radius: var(--radius);
+    font-size: 0.875rem;
+    text-decoration: none;
+    color: var(--color-text);
+    border: 1px solid var(--color-border);
+  }
+  .pagination a:hover {
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+  }
+  .pagination .current {
+    background: var(--color-primary);
+    color: #fff;
+    border-color: var(--color-primary);
+  }
+</style>
+{% endblock %}
+
+{% block app_content %}
+<div class="page-header">
+  <div style="display: flex; align-items: center; gap: 0.75rem;">
+    <h1>Mis solicitudes</h1>
+    {% if totales.pendiente %}
+    <span class="page-badge">
+      <i class="fa-solid fa-clock"></i> {{ totales.pendiente }} pendiente{{ totales.pendiente|pluralize }}
+    </span>
+    {% endif %}
+  </div>
+</div>
+
+<div class="tabs">
+  <nav class="tabs-nav">
+    <a class="tab-item {% if not filtro_estado %}active{% endif %}" href="?estado=&tipo={{ filtro_tipo }}">
+      <i class="fa-solid fa-list"></i> Todas <span class="badge badge--secondary badge--sm">{{ totales.todas }}</span>
+    </a>
+    <a class="tab-item {% if filtro_estado == 'pendiente' %}active{% endif %}" href="?estado=pendiente&tipo={{ filtro_tipo }}">
+      <i class="fa-solid fa-clock"></i> Pendientes <span class="badge badge--warning badge--sm">{{ totales.pendiente|default:0 }}</span>
+    </a>
+    <a class="tab-item {% if filtro_estado == 'aprobada' %}active{% endif %}" href="?estado=aprobada&tipo={{ filtro_tipo }}">
+      <i class="fa-solid fa-check"></i> Aprobadas <span class="badge badge--success badge--sm">{{ totales.aprobada|default:0 }}</span>
+    </a>
+    <a class="tab-item {% if filtro_estado == 'rechazada' %}active{% endif %}" href="?estado=rechazada&tipo={{ filtro_tipo }}">
+      <i class="fa-solid fa-xmark"></i> Rechazadas <span class="badge badge--danger badge--sm">{{ totales.rechazada|default:0 }}</span>
+    </a>
+    <a class="tab-item {% if filtro_estado == 'vencida' %}active{% endif %}" href="?estado=vencida&tipo={{ filtro_tipo }}">
+      <i class="fa-solid fa-triangle-exclamation"></i> Vencidas <span class="badge badge--danger badge--sm">{{ totales.vencida|default:0 }}</span>
+    </a>
+  </nav>
+</div>
+
+<form method="get" class="filter-bar">
+  <input type="hidden" name="estado" value="{{ filtro_estado }}">
+  <select name="tipo" onchange="this.form.submit()">
+    <option value="">Todos los tipos</option>
+    {% for valor, etiqueta in opciones_tipo %}
+    <option value="{{ valor }}" {% if filtro_tipo == valor %}selected{% endif %}>{{ etiqueta }}</option>
+    {% endfor %}
+  </select>
+</form>
+
+{% if items %}
+{% for item in items %}
+<div class="solicitud-card">
+  <div class="solicitud-header">
+    <div class="solicitud-info">
+      <h4>
+        {% if item.url_detalle %}
+        <a href="{{ item.url_detalle }}">{{ item.nombre_documento }}</a>
+        {% else %}
+        {{ item.nombre_documento }}
+        {% endif %}
+      </h4>
+      {% if item.codigo_documento %}
+      <p>{{ item.codigo_documento }}</p>
+      {% endif %}
+    </div>
+    <div class="solicitud-badges">
+      <span class="badge badge--info badge--sm"><i class="fa-solid {{ item.icono }}"></i> {{ item.tipo_label }}</span>
+      {% if item.estado == 'pendiente' %}
+      <span class="badge badge--warning badge--sm"><i class="fa-solid fa-clock"></i> {{ item.estado_label }}</span>
+      {% elif item.estado == 'esperando' %}
+      <span class="badge badge--secondary badge--sm"><i class="fa-solid fa-hourglass-half"></i> {{ item.estado_label }}</span>
+      {% elif item.estado == 'aprobada' %}
+      <span class="badge badge--success badge--sm"><i class="fa-solid fa-check"></i> {{ item.estado_label }}</span>
+      {% elif item.estado == 'rechazada' %}
+      <span class="badge badge--danger badge--sm"><i class="fa-solid fa-xmark"></i> {{ item.estado_label }}</span>
+      {% elif item.estado == 'cancelada' %}
+      <span class="badge badge--secondary badge--sm"><i class="fa-solid fa-ban"></i> {{ item.estado_label }}</span>
+      {% elif item.estado == 'vencida' %}
+      <span class="badge badge--danger badge--sm"><i class="fa-solid fa-triangle-exclamation"></i> {{ item.estado_label }}</span>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="solicitud-meta">
+    {% if item.departamento %}
+    <span><i class="fa-solid fa-building"></i> {{ item.departamento }}</span>
+    {% endif %}
+    <span><i class="fa-solid fa-calendar"></i> {{ item.fecha_solicitud|date:"d/m/Y H:i" }}</span>
+    {% if item.version %}
+    <span><i class="fa-solid fa-code-branch"></i> Versión {{ item.version }}</span>
+    {% endif %}
+    {% if item.fecha_propuesta %}
+    <span><i class="fa-solid fa-calendar-day"></i> Propuesta al {{ item.fecha_propuesta|date:"d/m/Y" }}</span>
+    {% endif %}
+    {% if item.fecha_resolucion %}
+    <span><i class="fa-solid fa-flag-checkered"></i> Resuelta {{ item.fecha_resolucion|date:"d/m/Y H:i" }}</span>
+    {% endif %}
+    {% if item.fecha_vence %}
+    <span {% if item.es_vencida %}class="meta-alert"{% endif %}>
+      <i class="fa-solid fa-hourglass-end"></i> {% if item.es_vencida %}Vencida el{% else %}Vence el{% endif %} {{ item.fecha_vence|date:"d/m/Y H:i" }}
+    </span>
+    {% endif %}
+  </div>
+
+  {% if item.motivo %}
+  <p class="solicitud-texto"><strong>Motivo:</strong> {{ item.motivo }}</p>
+  {% endif %}
+
+  {% if item.aprobadores %}
+  <div class="aprobadores">
+    {% for a in item.aprobadores %}
+    <span class="aprobador-chip aprobador-chip--{{ a.estado }}">
+      <i class="fa-solid {% if a.estado == 'aprobada' %}fa-check{% elif a.estado == 'rechazada' %}fa-xmark{% elif a.estado == 'esperando' %}fa-hourglass-half{% else %}fa-clock{% endif %}"></i>
+      <strong>{{ a.nombre }}</strong> · {{ a.rol_label }}
+    </span>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if item.observaciones %}
+  <p class="solicitud-obs"><i class="fa-solid fa-comment"></i> {{ item.observaciones }}</p>
+  {% endif %}
+
+  <div class="solicitud-actions">
+    {% if item.url_detalle %}
+    <a href="{{ item.url_detalle }}" class="btn btn--ghost btn--sm">
+      <i class="fa-solid fa-eye"></i> Ver documento
+    </a>
+    {% endif %}
+    {% if item.url_accion and item.url_accion_label == 'Descargar' %}
+    <a href="{{ item.url_accion }}" class="btn btn--success btn--sm">
+      <i class="fa-solid fa-download"></i> Descargar
+    </a>
+    {% elif item.url_accion and item.url_accion_label %}
+    <a href="{{ item.url_accion }}" class="btn btn--ghost btn--sm">
+      <i class="fa-solid fa-rotate-right"></i> {{ item.url_accion_label }}
+    </a>
+    {% endif %}
+  </div>
+</div>
+{% endfor %}
+
+{% if items.has_other_pages %}
+<nav class="pagination">
+  {% if items.has_previous %}
+  <a href="?page={{ items.previous_page_number }}&estado={{ filtro_estado }}&tipo={{ filtro_tipo }}">&laquo; Anterior</a>
+  {% else %}
+  <span>&laquo; Anterior</span>
+  {% endif %}
+  {% for num in items.paginator.page_range %}
+  {% if items.number == num %}
+  <span class="current">{{ num }}</span>
+  {% elif num > items.number|add:'-3' and num < items.number|add:'3' %}
+  <a href="?page={{ num }}&estado={{ filtro_estado }}&tipo={{ filtro_tipo }}">{{ num }}</a>
+  {% endif %}
+  {% endfor %}
+  {% if items.has_next %}
+  <a href="?page={{ items.next_page_number }}&estado={{ filtro_estado }}&tipo={{ filtro_tipo }}">Siguiente &raquo;</a>
+  {% else %}
+  <span>Siguiente &raquo;</span>
+  {% endif %}
+</nav>
+{% endif %}
+
+{% else %}
+<div class="empty-state">
+  <i class="fa-solid fa-inbox"></i>
+  <p>
+    {% if filtro_estado or filtro_tipo %}
+    No hay solicitudes que coincidan con el filtro.
+    {% else %}
+    Aún no has realizado ninguna solicitud.
+    {% endif %}
+  </p>
+</div>
+{% endif %}
+{% endblock %}

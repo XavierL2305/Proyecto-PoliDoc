@@ -205,7 +205,7 @@
             <div class="doc-actions">
               <a href="{% url 'documentos:detalle' tipo=tipo.key documento_id=doc.uuid %}" class="btn btn--ghost btn--sm"><i class="fa-solid fa-eye"></i> Ver</a>
               {% if doc.estado != 'obsoleto' and doc.estado != 'en_revision' %}
-                {% if doc.propietario == request.user or request.user.perfil.es_jefe or request.user.perfil.es_administrador %}
+                {% if doc.propietario == request.user or request.user.perfil.ejerce_jefatura or request.user.perfil.es_administrador %}
                   {% if doc.estado == 'borrador' %}
                 <a href="{% url 'documentos:editar_borrador' tipo=tipo.key documento_id=doc.uuid %}" class="btn btn--ghost btn--sm"><i class="fa-solid fa-pen-to-square"></i> Editar Borrador</a>
                   {% else %}
@@ -220,9 +220,9 @@
                 {% endif %}
               {% endif %}
               {% if doc.estado != 'obsoleto' and doc.estado != 'en_revision' %}
-                {% if doc.propietario == request.user or request.user.perfil.es_jefe or request.user.perfil.es_administrador %}
+                {% if doc.propietario == request.user or request.user.perfil.ejerce_jefatura or request.user.perfil.es_administrador %}
                 <a href="{% url 'documentos:eliminar' tipo=tipo.key documento_id=doc.uuid %}" class="btn btn--ghost btn--sm" style="color: var(--color-danger);">
-                  {% if request.user.perfil.es_jefe or request.user.perfil.es_administrador %}
+                  {% if request.user.perfil.ejerce_jefatura or request.user.perfil.es_administrador %}
                   <i class="fa-solid fa-trash"></i> Inhabilitar
                   {% else %}
                   <i class="fa-solid fa-ban"></i> Solicitar Eliminación

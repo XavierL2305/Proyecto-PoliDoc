@@ -8,6 +8,15 @@
   .app-content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .page-content { flex: 1; min-height: 0; min-width: 0; padding: 2rem; overflow-x: hidden; overflow-y: auto; }
   .app-messages { flex: 0 0 auto; padding: 1rem 2rem 0; display: flex; flex-direction: column; gap: 0.75rem; }
+  /* Indicador de delegación de jefatura en curso (solo para delegados). */
+  .app-delegacion { flex: 0 0 auto; margin: 1rem 2rem 0; display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem;
+    padding: 0.65rem 1rem; border-radius: 8px; font-size: 0.85rem;
+    background: var(--color-primary-light, #E0F2FE); color: var(--color-primary, #005A9C);
+    border-left: 4px solid var(--color-primary, #005A9C); }
+  .app-delegacion i { color: var(--color-primary, #005A9C); }
+  .app-delegacion .app-delegacion-link { margin-left: auto; font-weight: 600; color: var(--color-primary, #005A9C);
+    text-decoration: underline; text-underline-offset: 2px; }
+  @media (max-width: 639px) { .app-delegacion { margin: 1rem 1rem 0; } .app-delegacion .app-delegacion-link { margin-left: 0; } }
   /* Entrada escalonada de las vistas: hijos directos de .page-content. */
   @media (prefers-reduced-motion: no-preference) {
     .page-content > * { animation: viewItem 380ms ease-out both; }
@@ -39,7 +48,7 @@
       <a href="{% url 'documentos:seleccionar_tipo' %}" class="sidebar-item sidebar-item--primary {% if request.resolver_match.url_name == 'seleccionar_tipo' %}active{% endif %}">
         <i class="fa-solid fa-plus-circle"></i><span>Nuevo Documento</span>
       </a>
-      {% if user.perfil.es_jefe or user.perfil.es_administrador %}
+      {% if user.perfil.ejerce_jefatura or user.perfil.es_administrador %}
       <a href="{% url 'documentos:documentos_departamento' %}" class="sidebar-item {% if request.resolver_match.url_name == 'documentos_departamento' %}active{% endif %}">
         <i class="fa-solid fa-building"></i><span>Departamento</span>
       </a>
@@ -100,6 +109,7 @@
           <div class="navbar-dropdown">
             <a href="{% url 'autenticacion:perfil' %}" class="navbar-dropdown-item"><i class="fa-solid fa-user"></i> Mi Perfil</a>
             <a href="{% url 'documentos:mis_documentos' %}" class="navbar-dropdown-item"><i class="fa-solid fa-file-lines"></i> Mis Documentos</a>
+            <a href="{% url 'documentos:mis_solicitudes' %}" class="navbar-dropdown-item"><i class="fa-solid fa-inbox"></i> Mis solicitudes</a>
             <div class="navbar-dropdown-divider"></div>
             <form method="post" action="{% url 'autenticacion:logout' %}" style="display:inline;margin:0;">
               {% csrf_token %}
@@ -112,6 +122,20 @@
       </div>
     </nav>
     {% include 'partials/_messages.html' %}
+
+    {% if user.perfil.ejerce_jefatura and not user.perfil.es_jefe %}
+    {% with d=user.perfil.delegacion_vigente %}
+    <div class="app-delegacion" role="status">
+      <i class="fa-solid fa-user-shield"></i>
+      <span>
+        Estás actuando como <strong>Jefe de Departamento</strong>
+        {% if d %}de <strong>{{ d.departamento.nombre }}</strong> desde {{ d.fecha_inicio|date:"d/m/Y" }}{% endif %}
+        {% if d and d.fecha_fin %} hasta el {{ d.fecha_fin|date:"d/m/Y" }}{% endif %}.
+      </span>
+      <a class="app-delegacion-link" href="{% url 'documentos:delegaciones_jefatura' %}">Gestionar delegación</a>
+    </div>
+    {% endwith %}
+    {% endif %}
 
     <main class="page-content">
       {% block app_content %}{% endblock %}

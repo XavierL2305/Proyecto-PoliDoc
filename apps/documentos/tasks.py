@@ -384,13 +384,15 @@ def generar_resumen_ia(self, documento_id):
 def escalar_aprobaciones_vencidas(self):
     """Notifica a los administradores las aprobaciones estancadas.
 
-    Se consideran estancadas las solicitudes en estado pendiente/esperando
-    cuya fecha de solicitud supera `APROBACION_ESCALADO_HORAS` (default 48h)
-    y que no hayan sido escaladas antes.
+    Se consideran estancadas las solicitudes de documento y los pasos de
+    aprobación de planillas de cambios en estado pendiente/esperando cuya
+    activación supera `APROBACION_ESCALADO_HORAS` (default 48h) y que no
+    hayan sido escaladas antes. Los pasos de planilla también avisan al
+    aprobador pendiente, no solo a administradores.
     """
     from datetime import timedelta
     from django.utils import timezone
-    from .models import SolicitudAprobacionDocumento
+    from .models import AprobacionPlanilla, SolicitudAprobacionDocumento
     from autenticacion.models import PerfilUsuario, Notificacion
 
     horas = int(getattr(settings, 'APROBACION_ESCALADO_HORAS', 48))
@@ -436,11 +438,61 @@ def escalar_aprobaciones_vencidas(self):
         solicitud.save(update_fields=['fecha_escalado'])
         escaladas += 1
 
+    planillas_escaladas = 0
+    pasos_planilla = AprobacionPlanilla.objects.filter(
+        estado='pendiente',
+        fecha_activacion__lte=limite,
+        fecha_escalado__isnull=True,
+    ).select_related('planilla', 'planilla__documento', 'aprobador')
+
+    for paso in pasos_planilla:
+        planilla = paso.planilla
+        doc = planilla.documento
+        aprobador = paso.aprobador
+        aprobador_txt = (
+            (aprobador.get_full_name() or aprobador.username)
+            if aprobador else 'sin asignar'
+        )
+        url = f'/documentos/planilla-cambios/{planilla.uuid}/'
+        mensaje = (
+            f'El paso de {paso.get_rol_aprobador_display()} de la planilla '
+            f'{planilla.codigo} lleva más de {horas}h sin respuesta. '
+            f'Aprobador: {aprobador_txt}.'
+        )
+        if aprobador and aprobador not in admins:
+            Notificacion.objects.create(
+                usuario=aprobador,
+                titulo='Planilla de Cambios pendiente (+%sh)' % horas,
+                mensaje=mensaje,
+                tipo='planilla_pendiente',
+                url_accion=url,
+                departamento=getattr(doc, 'departamento', None),
+                documento=doc,
+            )
+        for admin in admins:
+            Notificacion.objects.create(
+                usuario=admin,
+                titulo='Aprobación de planilla estancada (+%sh)' % horas,
+                mensaje=mensaje,
+                tipo='aprobacion_escalada',
+                url_accion=url,
+                departamento=getattr(doc, 'departamento', None),
+                documento=doc,
+            )
+        paso.fecha_escalado = ahora
+        paso.save(update_fields=['fecha_escalado'])
+        planillas_escaladas += 1
+
     logger.info(
-        "Escalado de aprobaciones: %s solicitudes, %s administradores",
-        escaladas, len(admins),
+        "Escalado de aprobaciones: %s solicitudes, %s planillas, %s administradores",
+        escaladas, planillas_escaladas, len(admins),
     )
-    return {'escaladas': escaladas, 'admins': len(admins)}
+    return {
+        'escaladas': escaladas + planillas_escaladas,
+        'solicitudes_escaladas': escaladas,
+        'planillas_escaladas': planillas_escaladas,
+        'admins': len(admins),
+    }
 
 
 @shared_task(bind=True, max_retries=1)

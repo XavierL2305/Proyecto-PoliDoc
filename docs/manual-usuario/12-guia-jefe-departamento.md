@@ -4,6 +4,16 @@ El **jefe de departamento** es la autoridad operativa de sus documentos:
 aprueba, asigna, distribuye y controla su vigencia. Los flujos detallados
 están en los capítulos 06, 07, 08 y 10; aquí va el resumen de tu trabajo.
 
+## Las mismas tarjetas en Inicio
+
+Entra a **Inicio** (`/inicio/`): bajo las estadísticas verás la tarjeta
+**"Vigencia del departamento"**, con los mismos cuatro conteos del panel
+Departamento (vencidos, vence en 7 días, vigentes y sin vigencia).
+
+Cada tarjeta abre **Departamento** ya filtrada por esa vigencia, para que
+pases directo a lo que urge. Solo tú, como jefe, ves esta tarjeta; tus
+coordinadores y trabajadores no la ven.
+
 ## El panel Departamento
 
 Entra a **Departamento** (`/documentos/departamento/`): es tu vista de
@@ -24,12 +34,16 @@ control.
 
 ## Aprobar
 
-Como jefe resuelves dos cadenas de aprobación (detalladas en el
+Como jefe resuelves los flujos de aprobación (detallados en el
 [capítulo 06](06-aprobaciones.md)):
 
-1. **Evaluación** de creaciones y Planillas de Cambios de tu departamento
-   (y de los documentos que te asignaron como evaluador).
-2. **Autorización** cuando el flujo lo requiere.
+1. **Evaluación** de creaciones y Planillas de Cambios que envían los
+   **trabajadores y coordinadores** de tu departamento (y de lo que la
+   bandeja te asignó como evaluador). **Los jefes no pasan por evaluación**:
+   su envío va directo a autorización.
+2. **Autorización** si eres el jefe de **Gerencia General**: es el único
+   paso de lo que envían los demás jefes, y también de tus propios documentos
+   y planillas, que aparecen como **tarea pendiente a tu nombre**.
 3. **Solicitudes de descarga** de los documentos de tu departamento.
 4. **Cambios de estado** (inhabilitar, reactivar, renovar) de los
    documentos de tu departamento cuando los pide el propietario o un
@@ -37,7 +51,8 @@ Como jefe resuelves dos cadenas de aprobación (detalladas en el
 
 Si tú mismo pides un cambio de estado de **tu** departamento, lo aprueba
 el jefe de **Gerencia General**; si lo pide un jefe de otro departamento,
-también lo aprueba Gerencia General. Tú nunca te apruebas a ti mismo.
+también lo aprueba Gerencia General. Tú nunca te apruebas a ti mismo en los
+cambios de estado (esa regla no cambia).
 
 ![Aprobación de Planilla de Cambios](imagenes/ampliacion/aprobar-planilla.png)
 
@@ -92,7 +107,7 @@ Como jefe puedes **ver** (no editar):
 - **Períodos de vigencia** y **tipos de documento**
   (`/documentos/configuracion/`).
 - La **matriz de roles y permisos**, incluida quién es el jefe de Gerencia
-  General y del departamento evaluador.
+  General (el único aprobador de lo que envían los jefes).
 - La **auditoría de tus propias acciones**
   (`/documentos/configuracion/auditoria/`): el sistema te muestra solo tus
   propios registros. Ver [capítulo 14](14-auditoria-e-informes.md).

@@ -11,7 +11,7 @@
   .dept-header { margin: 2rem 0 0.5rem; padding-bottom: 0.5rem; border-bottom: 2px solid var(--color-border); }
   .dept-header:first-of-type { margin-top: 0; }
   .dept-header h2 { font-size: 1.25rem; font-weight: 700; color: var(--color-text); margin: 0; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
-  .doc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; }
+  .doc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; align-items: start; }
   .doc-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: 1rem; transition: all var(--transition); }
   .doc-card:hover { box-shadow: var(--shadow-md); }
   .doc-card-header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; }
@@ -20,19 +20,15 @@
   .doc-info p { font-size: 0.75rem; color: var(--color-muted); margin: 0; }
   .doc-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; font-size: 0.75rem; color: var(--color-muted); }
   .doc-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--color-border); }
+  .doc-actions--extras { margin-top: 0; padding-top: 0; border-top: none; }
+  .doc-card-acciones { border: none; border-top: 1px solid var(--color-border); border-radius: 0; background: transparent; box-shadow: none; }
+  .doc-card-acciones:hover, .doc-card-acciones.active { box-shadow: none; }
+  .doc-card-acciones-toggle { justify-content: center; gap: 0.5rem; padding: 0.625rem 0.25rem; font-size: 0.8125rem; font-weight: 600; color: var(--color-muted); }
+  .doc-card-acciones-toggle:hover { background: transparent; color: var(--color-primary); }
+  .doc-card-acciones .accordion-body { padding: 0 0 0.75rem; }
   .doc-card { min-width: 0; }
   .dept-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 1.25rem; }
   .dept-filter select { max-width: 260px; }
-  .vigencia-panel { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem; margin-bottom: 1.25rem; }
-  .vigencia-card { display: flex; flex-direction: column; gap: 0.15rem; padding: 0.85rem 1rem; border: 1px solid var(--color-border); border-left-width: 4px; border-radius: var(--radius-lg); background: var(--color-surface); text-decoration: none; transition: all var(--transition); }
-  .vigencia-card:hover { box-shadow: var(--shadow-md); }
-  .vigencia-card.is-active { box-shadow: var(--shadow-md); background: var(--color-bg-alt); }
-  .vigencia-card--danger { border-left-color: var(--color-danger); }
-  .vigencia-card--warning { border-left-color: var(--color-warning); }
-  .vigencia-card--success { border-left-color: var(--color-success); }
-  .vigencia-card--muted { border-left-color: var(--color-muted); }
-  .vigencia-num { font-size: 1.35rem; font-weight: 700; color: var(--color-text); }
-  .vigencia-label { font-size: 0.75rem; color: var(--color-muted); }
 </style>
 {% endblock %}
 
@@ -45,7 +41,7 @@
           </p>
         </div>
         <div style="display: flex; gap: 0.5rem;">
-          {% if user.perfil.es_jefe or user.perfil.es_administrador %}
+          {% if user.perfil.ejerce_jefatura or user.perfil.es_administrador %}
           <a href="{% url 'documentos:bandeja_aprobaciones' %}" class="btn btn--primary btn--sm">
             <i class="fa-solid fa-stamp"></i> Bandeja de Aprobaciones
           </a>
@@ -65,28 +61,7 @@
       </div>
       {% endif %}
 
-      <div class="vigencia-panel">
-        <a href="?vigencia=vencido{% if clasificacion_filter %}&clasificacion={{ clasificacion_filter }}{% endif %}"
-           class="vigencia-card vigencia-card--danger{% if vigencia_filter == 'vencido' %} is-active{% endif %}">
-          <span class="vigencia-num">{{ conteos_vigencia.vencidos }}</span>
-          <span class="vigencia-label">Vencidos</span>
-        </a>
-        <a href="?vigencia=vence_pronto{% if clasificacion_filter %}&clasificacion={{ clasificacion_filter }}{% endif %}"
-           class="vigencia-card vigencia-card--warning{% if vigencia_filter == 'vence_pronto' %} is-active{% endif %}">
-          <span class="vigencia-num">{{ conteos_vigencia.vence_pronto }}</span>
-          <span class="vigencia-label">Vence en 7 días</span>
-        </a>
-        <a href="?vigencia=vigente{% if clasificacion_filter %}&clasificacion={{ clasificacion_filter }}{% endif %}"
-           class="vigencia-card vigencia-card--success{% if vigencia_filter == 'vigente' %} is-active{% endif %}">
-          <span class="vigencia-num">{{ conteos_vigencia.vigentes }}</span>
-          <span class="vigencia-label">Vigentes</span>
-        </a>
-        <a href="?vigencia=sin_vigencia{% if clasificacion_filter %}&clasificacion={{ clasificacion_filter }}{% endif %}"
-           class="vigencia-card vigencia-card--muted{% if vigencia_filter == 'sin_vigencia' %} is-active{% endif %}">
-          <span class="vigencia-num">{{ conteos_vigencia.sin_vigencia }}</span>
-          <span class="vigencia-label">Sin vigencia</span>
-        </a>
-      </div>
+      {% include 'documentos/_vigencia_panel.html' with conteos_vigencia=conteos_vigencia vigencia_filter=vigencia_filter clasificacion_filter=clasificacion_filter %}
 
       <form method="get" class="dept-filter">
         <select name="clasificacion" class="form-input" onchange="this.form.submit()" aria-label="Clasificación">
@@ -153,4 +128,26 @@
         </p>
       </div>
       {% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  // Despliega las acciones rápidas del card (Departamento) reutilizando la
+  // animación de altura de `window.toggleAccordion` (accordion.js). Además
+  // garantiza que solo haya UNA card desplegada a la vez en la página.
+  function toggleDocAccion(btn) {
+    const acc = btn.closest('.accordion');
+    if (!acc) return;
+    const abriendo = !acc.classList.contains('active');
+    if (abriendo) {
+      document.querySelectorAll('.doc-card .accordion.active').forEach(function (otra) {
+        if (otra === acc) return;
+        const enc = otra.querySelector('.accordion-header');
+        if (enc) window.toggleAccordion(enc);
+      });
+    }
+    window.toggleAccordion(btn);
+    btn.setAttribute('aria-expanded', abriendo ? 'true' : 'false');
+  }
+</script>
 {% endblock %}

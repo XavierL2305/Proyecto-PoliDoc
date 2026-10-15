@@ -198,6 +198,20 @@
       </div>
       {% endif %}
 
+      {% if mi_aprobacion_pendiente %}
+      <div class="detail-card" style="margin-bottom: 1rem; border-color: var(--color-primary);">
+        <div class="detail-body" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.75rem;">
+          <div>
+            <strong><i class="fa-solid fa-user-clock" style="color: var(--color-primary); margin-right: 0.5rem;"></i> Tienes un paso pendiente en esta planilla ({{ mi_aprobacion_pendiente.get_rol_aprobador_display }}).</strong>
+            <p style="margin: 0.25rem 0 0; font-size: 0.875rem; color: var(--color-muted);">Revísala y aprueba o rechaza para desbloquear el documento.</p>
+          </div>
+          <a href="{% url 'documentos:aprobar_planilla' planilla_uuid=planilla.uuid %}" class="btn btn--success">
+            <i class="fa-solid fa-check"></i> Revisar y aprobar
+          </a>
+        </div>
+      </div>
+      {% endif %}
+
       <div class="detail-card">
         <div class="detail-header"><h3>Aprobaciones</h3></div>
         <div class="detail-body">

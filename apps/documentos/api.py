@@ -13,6 +13,7 @@ from .permissions import (
 )
 from .services.planillas import aplicar_planilla_al_documento
 from .cache_utils import tipos_activos
+from .jefatura import aprobadores_que_repr, es_delegado_vigente
 from auditoria.services import registrar_aprobacion_planilla, registrar_rechazo_planilla
 
 
@@ -438,7 +439,8 @@ def solicitar_acceso_documento(request):
     user = request.user
     documento_id = data.get('documento_id')
     motivo = data.get('motivo', '')
-    if not (user.perfil.es_jefe or user.perfil.es_administrador):
+    if not (user.perfil.es_jefe or user.perfil.es_administrador
+            or es_delegado_vigente(user)):
         return JsonResponse({'error': 'Solo los Jefes de Departamento y Administradores pueden solicitar acceso'}, status=403)
     try:
         doc = Documento.objects.get(uuid=documento_id)
@@ -477,13 +479,14 @@ def responder_solicitud_acceso(request, solicitud_id):
     if request.method != 'POST':
         return JsonResponse({'error': 'Método no permitido'}, status=405)
     user = request.user
-    if not (user.perfil.es_jefe or user.perfil.es_administrador):
+    if not (user.perfil.es_jefe or user.perfil.es_administrador
+            or es_delegado_vigente(user)):
         return JsonResponse({'error': 'Solo los Jefes de Departamento y Administradores pueden responder solicitudes'}, status=403)
     try:
         solicitud = SolicitudAccesoDocumento.objects.get(id=solicitud_id)
     except SolicitudAccesoDocumento.DoesNotExist:
         return JsonResponse({'error': 'Solicitud no encontrada'}, status=404)
-    if solicitud.jefe_destino != user:
+    if solicitud.jefe_destino_id not in aprobadores_que_repr(user):
         return JsonResponse({'error': 'No tiene permisos para responder esta solicitud'}, status=403)
     try:
         data = json.loads(request.body)
@@ -512,10 +515,11 @@ def responder_solicitud_acceso(request, solicitud_id):
 @login_required(login_url='/login/')
 def solicitudes_acceso_pendientes(request):
     user = request.user
-    if not (user.perfil.es_jefe or user.perfil.es_administrador):
+    if not (user.perfil.es_jefe or user.perfil.es_administrador
+            or es_delegado_vigente(user)):
         return JsonResponse({'solicitudes': [], 'total': 0})
     solicitudes = SolicitudAccesoDocumento.objects.filter(
-        jefe_destino=user, estado='pendiente'
+        jefe_destino_id__in=aprobadores_que_repr(user), estado='pendiente'
     ).select_related('solicitante', 'departamento_destino', 'documento')
     lista = []
     for s in solicitudes:
@@ -540,13 +544,14 @@ def solicitudes_acceso_pendientes(request):
 @login_required(login_url='/login/')
 def solicitudes_aprobacion_pendientes(request):
     user = request.user
-    if not (user.perfil.es_jefe or user.perfil.es_administrador):
+    if not (user.perfil.es_jefe or user.perfil.es_administrador
+            or es_delegado_vigente(user)):
         return JsonResponse({'solicitudes': [], 'total': 0})
     dept = user.perfil.departamento
     solicitudes = SolicitudAprobacionDocumento.objects.filter(
         estado='pendiente',
     ).filter(
-        Q(aprobador=user) |
+        Q(aprobador_id__in=aprobadores_que_repr(user)) |
         Q(departamento_origen=dept, rol_aprobador='evaluador')
     ).select_related('solicitante', 'departamento_origen', 'documento').distinct()
     lista = [{
@@ -624,14 +629,15 @@ def aprobar_creacion_documento(request, tipo, documento_id):
     if request.method != 'POST':
         return JsonResponse({'success': False, 'mensaje': 'Método no permitido'}, status=405)
     user = request.user
-    if not user.perfil.es_jefe:
+    if not (user.perfil.es_jefe or es_delegado_vigente(user)):
         return JsonResponse({'success': False, 'mensaje': 'No tienes permisos'}, status=403)
     try:
         doc = Documento.objects.get(uuid=documento_id, tipo=tipo)
     except Documento.DoesNotExist:
         return JsonResponse({'success': False, 'mensaje': 'Documento no encontrado'}, status=404)
     solicitud = SolicitudAprobacionDocumento.objects.filter(
-        documento=doc, estado='pendiente', aprobador=user,
+        documento=doc, estado='pendiente',
+        aprobador_id__in=aprobadores_que_repr(user),
     ).order_by('-fecha_solicitud').first()
     if not solicitud:
         return JsonResponse({'success': False, 'mensaje': 'Solicitud no encontrada'}, status=404)
@@ -682,14 +688,15 @@ def rechazar_creacion_documento(request, tipo, documento_id):
     if request.method != 'POST':
         return JsonResponse({'success': False, 'mensaje': 'Método no permitido'}, status=405)
     user = request.user
-    if not user.perfil.es_jefe:
+    if not (user.perfil.es_jefe or es_delegado_vigente(user)):
         return JsonResponse({'success': False, 'mensaje': 'No tienes permisos'}, status=403)
     try:
         doc = Documento.objects.get(uuid=documento_id, tipo=tipo)
     except Documento.DoesNotExist:
         return JsonResponse({'success': False, 'mensaje': 'Documento no encontrado'}, status=404)
     solicitud = SolicitudAprobacionDocumento.objects.filter(
-        documento=doc, estado='pendiente', aprobador=user,
+        documento=doc, estado='pendiente',
+        aprobador_id__in=aprobadores_que_repr(user),
     ).order_by('-fecha_solicitud').first()
     if not solicitud:
         return JsonResponse({'success': False, 'mensaje': 'Solicitud no encontrada'}, status=404)
@@ -741,10 +748,11 @@ def rechazar_creacion_documento(request, tipo, documento_id):
 @login_required(login_url='/login/')
 def planillas_pendientes(request):
     user = request.user
-    if not (user.perfil.es_jefe or user.perfil.es_administrador):
+    if not (user.perfil.es_jefe or user.perfil.es_administrador
+            or es_delegado_vigente(user)):
         return JsonResponse({'planillas': [], 'total': 0})
     aprobaciones_pendientes = AprobacionPlanilla.objects.filter(
-        aprobador=user, estado='pendiente'
+        aprobador_id__in=aprobadores_que_repr(user), estado='pendiente'
     ).select_related('planilla', 'planilla__documento')
     lista = [{
         'id': ap.planilla.id,
@@ -767,11 +775,14 @@ def aprobar_planilla(request, planilla_uuid):
     if request.method != 'POST':
         return JsonResponse({'success': False, 'mensaje': 'Método no permitido'}, status=405)
     user = request.user
-    if not user.perfil.es_jefe:
+    if not (user.perfil.es_jefe or es_delegado_vigente(user)):
         return JsonResponse({'success': False, 'mensaje': 'No tienes permisos'}, status=403)
     try:
         planilla = PlanillaCambios.objects.get(uuid=planilla_uuid)
-        aprobacion = AprobacionPlanilla.objects.get(planilla=planilla, aprobador=user, estado='pendiente')
+        aprobacion = AprobacionPlanilla.objects.get(
+            planilla=planilla, aprobador_id__in=aprobadores_que_repr(user),
+            estado='pendiente',
+        )
     except (PlanillaCambios.DoesNotExist, AprobacionPlanilla.DoesNotExist):
         return JsonResponse({'success': False, 'mensaje': 'Planilla no encontrada'}, status=404)
     data = json.loads(request.body) if request.body else {}
@@ -803,20 +814,8 @@ def aprobar_planilla(request, planilla_uuid):
             documento=planilla.documento
         )
         return JsonResponse({'success': True, 'mensaje': 'Planilla aprobada y cambios aplicados correctamente'})
-    hermano = AprobacionPlanilla.objects.filter(
-        planilla=planilla, rol_aprobador='autorizador', estado='esperando',
-    ).exclude(id=aprobacion.id).order_by('id').first()
-    if hermano and hermano.aprobador_id:
-        hermano.estado = 'pendiente'
-        hermano.save(update_fields=['estado'])
-    from autenticacion.models import Notificacion
-    Notificacion.objects.create(
-        usuario=planilla.responsable, titulo='Planilla de Cambios en autorización',
-        mensaje=f'Tu planilla {planilla.codigo} ha sido evaluada. Pendiente de autorización final.',
-        tipo='aprobacion_documento', url_accion=f'/documentos/planilla-cambios/{planilla.uuid}/',
-        departamento=planilla.documento.departamento,
-        documento=planilla.documento
-    )
+    from .services.aprobaciones import promover_autorizador
+    promover_autorizador(planilla, aprobacion, user)
     return JsonResponse({'success': True, 'mensaje': 'Evaluación registrada, pendiente de autorización'})
 
 
@@ -826,11 +825,14 @@ def rechazar_planilla(request, planilla_uuid):
     if request.method != 'POST':
         return JsonResponse({'success': False, 'mensaje': 'Método no permitido'}, status=405)
     user = request.user
-    if not user.perfil.es_jefe:
+    if not (user.perfil.es_jefe or es_delegado_vigente(user)):
         return JsonResponse({'success': False, 'mensaje': 'No tienes permisos'}, status=403)
     try:
         planilla = PlanillaCambios.objects.get(uuid=planilla_uuid)
-        aprobacion = AprobacionPlanilla.objects.get(planilla=planilla, aprobador=user, estado='pendiente')
+        aprobacion = AprobacionPlanilla.objects.get(
+            planilla=planilla, aprobador_id__in=aprobadores_que_repr(user),
+            estado='pendiente',
+        )
     except (PlanillaCambios.DoesNotExist, AprobacionPlanilla.DoesNotExist):
         return JsonResponse({'success': False, 'mensaje': 'Planilla no encontrada'}, status=404)
     data = json.loads(request.body) if request.body else {}

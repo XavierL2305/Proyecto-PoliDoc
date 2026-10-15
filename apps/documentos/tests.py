@@ -1161,7 +1161,7 @@ class SolicitudAprobacionDocumentoTest(BaseDocumentosTest):
         self.assertEqual(self.doc_activo.version_actual, '1.0')
 
     def test_aplicar_eliminacion_version_ultima(self):
-        """Eliminar la última versión → documento obsoleto."""
+        """La última versión no se elimina: el documento se conserva."""
         v1 = VersionDocumento.objects.create(
             documento=self.doc_activo,
             numero_version='1.0',
@@ -1180,8 +1180,11 @@ class SolicitudAprobacionDocumentoTest(BaseDocumentosTest):
             version_a_eliminar=v1,
         )
         sol.aprobar()
+        v1.refresh_from_db()
+        self.assertTrue(v1.activa)
         self.doc_activo.refresh_from_db()
-        self.assertEqual(self.doc_activo.estado, 'obsoleto')
+        self.assertEqual(self.doc_activo.estado, 'activo')
+        self.assertEqual(self.doc_activo.version_actual, '1.0')
 
     def test_fecha_respuesta_al_aprobar(self):
         self.assertIsNone(self.solicitud.fecha_respuesta)
@@ -3494,6 +3497,10 @@ class ControlAccesoDepartamentoTest(BaseDocumentosTest):
             documento=self.doc_activo, numero_version='1.0',
             archivo=SimpleUploadedFile('v.pdf', b'c'), creado_por=self.user_jefe_ti,
         )
+        VersionDocumento.objects.create(
+            documento=self.doc_activo, numero_version='1.1',
+            archivo=SimpleUploadedFile('v2.pdf', b'c'), creado_por=self.user_jefe_ti,
+        )
         self.client.login(username='jefe_th', password='testpass123')
         url = (f'/documentos/{self.doc_activo.tipo_id}/{self.doc_activo.uuid}'
                f'/eliminar-version/{version.id}/')
@@ -3504,6 +3511,10 @@ class ControlAccesoDepartamentoTest(BaseDocumentosTest):
         version = VersionDocumento.objects.create(
             documento=self.doc_activo, numero_version='1.0',
             archivo=SimpleUploadedFile('v.pdf', b'c'), creado_por=self.user_jefe_ti,
+        )
+        VersionDocumento.objects.create(
+            documento=self.doc_activo, numero_version='1.1',
+            archivo=SimpleUploadedFile('v2.pdf', b'c'), creado_por=self.user_jefe_ti,
         )
         self.client.login(username='jefe_ti', password='testpass123')
         url = (f'/documentos/{self.doc_activo.tipo_id}/{self.doc_activo.uuid}'
@@ -3879,8 +3890,11 @@ class AfectaTodosTest(BaseDocumentosTest):
         resp = self.client.get('/documentos/departamento/')
         self.assertEqual(resp.status_code, 200)
         html = resp.content.decode()
-        uuid = str(self.doc_activo.uuid)
-        self.assertEqual(html.count(uuid), 1)
+        # El card del documento ahora lleva varios enlaces de acciones
+        # rápidas (todos con el uuid en la URL), así que se cuenta el
+        # `codigo` — que aparece una sola vez por card — para verificar
+        # que el doc general NO se duplica.
+        self.assertEqual(html.count(self.doc_activo.codigo), 1)
         for g in resp.context['grupos']:
             codigos = [
                 doc.codigo for t in g['tipos_documento'] for doc in t['documentos']
@@ -3956,111 +3970,121 @@ class CheckboxGrupoAutoTest(BaseDocumentosTest):
 
 
 # =============================================================================
-# EVALUADOR CUANDO EL JEFE DE GG CREA
+# APROBACIÓN ÚNICA (GG) CUANDO EL SOLICITANTE ES JEFE
 # =============================================================================
 
-class EvaluadorGGTest(BaseDocumentosTest):
-    """Si el jefe de GG crea, evalúa un jefe par (SGC por defecto)."""
+class AprobacionUnicaJefeTest(BaseDocumentosTest):
+    """Si el solicitante es jefe hay UN solo aprobador: el jefe de GG.
 
-    def setUp(self):
-        super().setUp()
-        self.depto_sgc = Departamento.objects.create(
-            codigo='SGC', nombre='Sistema de Gestión de la Calidad', activo=True,
+    El evaluador par (SGC) ya no participa. Si el creador es el jefe de GG,
+    se le genera una tarea pendiente que él mismo aprueba.
+    """
+
+    def _cadena(self, usuario, departamento, accion='creacion'):
+        from documentos.views import crear_cadena_aprobacion_documento
+        return crear_cadena_aprobacion_documento(
+            documento=self.doc_en_revision, usuario=usuario,
+            departamento=departamento, accion=accion,
         )
 
-    def test_gg_con_sgc_jefe(self):
-        from documentos.views import determinar_evaluador
-        self.depto_sgc.jefe = self.user_coordinador
-        self.depto_sgc.save(update_fields=['jefe'])
-        self.assertEqual(
-            determinar_evaluador(self.user_jefe_gg, self.depto_gg),
-            self.user_coordinador,
+    def _pasos(self):
+        return SolicitudAprobacionDocumento.objects.filter(
+            documento=self.doc_en_revision, accion_solicitud='creacion',
         )
 
-    def test_gg_sin_sgc_jefe_usa_primer_depto_con_jefe(self):
-        from documentos.views import determinar_evaluador
-        # SGC sin jefe; GG es el solicitante (excluido) → primer depto por
-        # código con jefe (TH antes que TI).
-        evaluador = determinar_evaluador(self.user_jefe_gg, self.depto_gg)
-        self.assertEqual(evaluador, self.user_jefe_th)
+    def test_jefe_crea_un_solo_paso_autorizador(self):
+        sol = self._cadena(self.user_jefe_ti, self.depto_ti)
+        self.assertEqual(sol.rol_aprobador, 'autorizador')
+        self.assertTrue(sol.es_final)
+        self.assertEqual(sol.aprobador, self.user_jefe_gg)
+        self.assertEqual(sol.estado, 'pendiente')
+        self.assertEqual(self._pasos().count(), 1)
 
-    def test_gg_sin_jefes_par_devuelve_none(self):
-        from documentos.views import determinar_evaluador
-        Departamento.objects.filter(codigo__in=['TI', 'TH']).update(jefe=None)
-        self.assertIsNone(determinar_evaluador(self.user_jefe_gg, self.depto_gg))
+    def test_jefe_de_gg_crea_tarea_pendiente_para_si(self):
+        Notificacion.objects.all().delete()
+        sol = self._cadena(self.user_jefe_gg, self.depto_gg)
+        self.assertEqual(sol.aprobador, self.user_jefe_gg)
+        self.assertEqual(sol.estado, 'pendiente')
+        self.assertTrue(sol.es_final)
+        self.assertEqual(self._pasos().count(), 1)
+        # Se aprueba a sí mismo: NO se auto-notifica.
+        self.assertFalse(Notificacion.objects.filter(usuario=self.user_jefe_gg).exists())
 
-    def test_no_jefe_crea_sin_cambios(self):
-        from documentos.views import determinar_evaluador
-        self.assertEqual(
-            determinar_evaluador(self.user_trabajador, self.depto_ti),
-            self.user_jefe_ti,
-        )
+    def test_jefe_sin_jefe_gg_queda_en_espera(self):
+        self.depto_gg.jefe = None
+        self.depto_gg.save(update_fields=['jefe'])
+        sol = self._cadena(self.user_jefe_ti, self.depto_ti)
+        self.assertIsNone(sol.aprobador)
+        self.assertEqual(sol.estado, 'esperando')
+        self.assertTrue(sol.es_final)
 
-    def test_jefe_depto_crea_evalua_sgc(self):
-        from documentos.views import determinar_evaluador
-        self.depto_sgc.jefe = self.user_coordinador
-        self.depto_sgc.save(update_fields=['jefe'])
-        # Cualquier jefe que crea → evalúa SGC (no GG).
-        self.assertEqual(
-            determinar_evaluador(self.user_jefe_ti, self.depto_ti),
-            self.user_coordinador,
-        )
+    def test_no_jefe_conserva_dos_pasos(self):
+        sol = self._cadena(self.user_trabajador, self.depto_ti)
+        self.assertEqual(sol.rol_aprobador, 'evaluador')
+        self.assertFalse(sol.es_final)
+        self.assertEqual(sol.aprobador, self.user_jefe_ti)
+        self.assertEqual(sol.estado, 'pendiente')
+        pasos = self._pasos()
+        self.assertEqual(pasos.count(), 2)
+        autorizador = pasos.get(rol_aprobador='autorizador')
+        self.assertEqual(autorizador.aprobador, self.user_jefe_gg)
+        self.assertEqual(autorizador.estado, 'esperando')
+        self.assertTrue(autorizador.es_final)
 
-
-class ReajustarEvaluadorTest(BaseDocumentosTest):
-    """Comando reajustar_evaluador_pendientes."""
-
-    def setUp(self):
-        super().setUp()
-        self.depto_sgc = Departamento.objects.create(
-            codigo='SGC', nombre='Sistema de Gestión de la Calidad', activo=True,
-            jefe=self.user_coordinador,
-        )
-
-    def _crear_paso(self, solicitante, aprobador):
-        return SolicitudAprobacionDocumento.objects.create(
-            documento=self.doc_en_revision, solicitante=solicitante,
-            aprobador=aprobador, rol_aprobador='evaluador',
-            es_final=False, estado='pendiente', departamento_origen=self.depto_ti,
-        )
-
-    def test_reajusta_documento_de_jefe(self):
-        from django.core.management import call_command
-        Notificacion.objects.create(
-            usuario=self.user_jefe_gg, titulo='x', mensaje='x',
-            tipo='solicitud_aprobacion', documento=self.doc_en_revision,
-        )
-        paso = self._crear_paso(self.user_jefe_ti, self.user_jefe_gg)
-        call_command('reajustar_evaluador_pendientes')
-        paso.refresh_from_db()
-        self.assertEqual(paso.aprobador, self.user_coordinador)
-        self.assertEqual(paso.estado, 'pendiente')
+    def test_jefe_crea_y_se_notifica_a_gg(self):
+        # El único aprobador (GG) sí se notifica.
+        Notificacion.objects.all().delete()
+        self._cadena(self.user_jefe_ti, self.depto_ti)
         self.assertTrue(Notificacion.objects.filter(
-            usuario=self.user_coordinador, tipo='solicitud_aprobacion',
-            documento=self.doc_en_revision,
-        ).exists())
-        self.assertFalse(Notificacion.objects.filter(
             usuario=self.user_jefe_gg, tipo='solicitud_aprobacion',
             documento=self.doc_en_revision,
         ).exists())
 
-    def test_no_jefe_sin_cambios(self):
-        from django.core.management import call_command
-        paso = self._crear_paso(self.user_trabajador, self.user_jefe_ti)
-        call_command('reajustar_evaluador_pendientes')
-        paso.refresh_from_db()
-        self.assertEqual(paso.aprobador, self.user_jefe_ti)
+    def test_planilla_de_jefe_un_solo_paso(self):
+        from documentos.views import crear_cadena_aprobacion_planilla
+        planilla = PlanillaCambios.objects.create(
+            codigo='PC-UNICA-001', documento=self.doc_en_revision,
+            tipo_cambio='modificacion', justificacion='Prueba',
+            responsable=self.user_jefe_ti, version_destino='2',
+        )
+        ap = crear_cadena_aprobacion_planilla(
+            planilla=planilla, usuario=self.user_jefe_ti,
+            documento=self.doc_en_revision,
+        )
+        self.assertEqual(ap.rol_aprobador, 'autorizador')
+        self.assertTrue(ap.es_final)
+        self.assertEqual(ap.aprobador, self.user_jefe_gg)
+        self.assertEqual(AprobacionPlanilla.objects.filter(planilla=planilla).count(), 1)
 
-    def test_idempotente(self):
-        from django.core.management import call_command
-        paso = self._crear_paso(self.user_jefe_ti, self.user_jefe_gg)
-        call_command('reajustar_evaluador_pendientes')
-        paso.refresh_from_db()
-        primero = paso.aprobador
-        call_command('reajustar_evaluador_pendientes')
-        paso.refresh_from_db()
-        self.assertEqual(paso.aprobador, primero)
-        self.assertEqual(primero, self.user_coordinador)
+    def test_planilla_de_no_jefe_conserva_dos_pasos(self):
+        from documentos.views import crear_cadena_aprobacion_planilla
+        planilla = PlanillaCambios.objects.create(
+            codigo='PC-UNICA-002', documento=self.doc_en_revision,
+            tipo_cambio='modificacion', justificacion='Prueba',
+            responsable=self.user_trabajador, version_destino='2',
+        )
+        ap = crear_cadena_aprobacion_planilla(
+            planilla=planilla, usuario=self.user_trabajador,
+            documento=self.doc_en_revision,
+        )
+        self.assertEqual(ap.rol_aprobador, 'evaluador')
+        self.assertEqual(AprobacionPlanilla.objects.filter(planilla=planilla).count(), 2)
+
+    def test_determinar_evaluador_es_solo_para_no_jefes(self):
+        from documentos.views import determinar_evaluador
+        # No-jefe → jefe del departamento de origen.
+        self.assertEqual(
+            determinar_evaluador(self.user_trabajador, self.depto_ti),
+            self.user_jefe_ti,
+        )
+        # Sin jefe de departamento → jefe de GG.
+        self.depto_th.jefe = None
+        self.depto_th.save(update_fields=['jefe'])
+        self.assertEqual(
+            determinar_evaluador(self.user_trabajador, self.depto_th),
+            self.user_jefe_gg,
+        )
+
 
 
 # =============================================================================

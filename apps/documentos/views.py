@@ -19,6 +19,7 @@ from .models import (
     DocumentoAsociadoPlanilla, DistribucionDocumento, SolicitudAccesoDocumento,
     RenovacionVencimiento, ReferenciaDocumento, Formato, SeccionFormato, CampoFormato,
     SolicitudCambio, Periodo, FormatoPublicacion, respuestas_planilla_actual,
+    DelegacionJefatura,
 )
 from .forms import (
     DocumentoForm, SolicitudDescargaForm, PlanillaCambiosForm,
@@ -26,7 +27,13 @@ from .forms import (
     validar_respuestas, validar_respuestas_guardadas,
 )
 from .icons import ICONOS_DISPONIBLES
+from .jefatura import es_jefe_efectivo
+from .services.aprobaciones import (
+    avisar_paso_sin_asignar, promover_autorizador,
+    notificar_aprobador as _notificar_aprobador,
+)
 from .services.planillas import aplicar_planilla_al_documento, invalidar_planillas_documento
+from .services.vigencia import calcular_conteos_vigencia
 from auditoria.services import registrar_aprobacion_planilla, registrar_rechazo_planilla
 from .cache_utils import tipos_activos, periodos_activos, departamentos_activos
 from . import ai
@@ -45,19 +52,32 @@ def get_documento(tipo, documento_id):
         raise Http404("Documento no encontrado")
 
 
-def determinar_evaluador(usuario, departamento):
-    """Determina el Evaluador.
+def _es_jefe(usuario):
+    """True si el solicitante **ejerce jefatura**: rol jefe_departamento o
+    delegación vigente (vacaciones).
 
-    - Si el solicitante es jefe (de cualquier departamento) → evalúa un jefe
-      par (`_evaluador_par`), evitando la autoevaluación.
-    - Si no es jefe → jefe del departamento de origen.
-    - Sin jefe de departamento → jefe de GG.
-    - Si no hay ninguno → None (la cadena queda en espera).
+    Se usa para decidir el modo de aprobación: quien ejerce jefe aprueba en un
+    solo paso con Gerencia General (ver ``_es_aprobacion_unica``), lo que
+    además evita que un delegado se autoapruebe su propio documento.
     """
     perfil = getattr(usuario, 'perfil', None)
-    if getattr(perfil, 'es_jefe', False):
-        return _evaluador_par(usuario)
+    if perfil and perfil.es_jefe:
+        return True
+    from .jefatura import es_delegado_vigente
 
+    return es_delegado_vigente(usuario)
+
+
+def determinar_evaluador(usuario, departamento):
+    """Determina el Evaluador (SOLO para solicitantes NO jefes).
+
+    - Jefe del departamento de origen.
+    - Sin jefe de departamento → jefe de GG (evitando autoevaluación).
+    - Si no hay ninguno → None (la cadena queda en espera).
+
+    Los JEFES no usan este paso: su documento se aprueba en UN solo paso por
+    Gerencia General (ver `crear_cadena_aprobacion_documento`).
+    """
     gg_jefe = None
     try:
         gg_jefe = Departamento.objects.get(codigo='GG').jefe
@@ -73,28 +93,6 @@ def determinar_evaluador(usuario, departamento):
     return None
 
 
-def _evaluador_par(usuario):
-    """Jefe par que evalúa cuando el solicitante es jefe.
-
-    1) Jefe del departamento designado (`APROBACION_EVALUADOR_DEPTO_GG`,
-       default `SGC`).
-    2) Primer departamento activo con jefe (orden por código), distinto al
-       solicitante.
-    """
-    codigo = getattr(settings, 'APROBACION_EVALUADOR_DEPTO_GG', 'SGC')
-    designado = Departamento.objects.filter(codigo=codigo, activo=True).first()
-    if designado and designado.jefe and designado.jefe != usuario:
-        return designado.jefe
-
-    candidato = Departamento.objects.filter(
-        activo=True, jefe__isnull=False,
-    ).exclude(jefe=usuario).order_by('codigo').first()
-    if candidato:
-        return candidato.jefe
-
-    return None
-
-
 def determinar_autorizador():
     """Determina el Autorizador (jefe de GG). Sin fallback a admin.
 
@@ -106,18 +104,29 @@ def determinar_autorizador():
         return None
 
 
-def crear_cadena_aprobacion_documento(documento, usuario, departamento, accion, **kwargs):
-    """Crea la cadena de aprobación (evaluador + autorizador) para un documento.
+def _es_aprobacion_unica(usuario):
+    """True cuando el solicitante es jefe: UN solo aprobador (GG).
 
-    Siempre crea dos pasos. Si no hay jefe para un paso, el paso queda en
-    'esperando' con aprobador=None hasta que se asigne el jefe correspondiente.
-    El paso evaluador nunca es final; solo el autorizador (GG) activa el documento.
-
-    Retorna la solicitud del evaluador (primer paso).
+    Regla vigente: los jefes ya no pasan por evaluación de un jefe par (SGC);
+    Gerencia General es el único aprobador. Si el creador ES el jefe de GG,
+    se le genera una tarea pendiente que él mismo aprueba.
     """
-    evaluador = determinar_evaluador(usuario, departamento)
-    autorizador = determinar_autorizador()
+    return _es_jefe(usuario)
 
+
+def crear_cadena_aprobacion_documento(documento, usuario, departamento, accion, **kwargs):
+    """Crea la solicitud de aprobación para un documento.
+
+    - Solicitante JEFE → UN solo paso (autorizador/GG, es_final=True).
+      Si no hay jefe de GG, el paso queda en 'esperando' con aprobador=None
+      hasta que se asigne uno.
+    - Solicitante NO jefe → cadena de DOS pasos (evaluador = jefe del depto,
+      autorizador = jefe de GG). El evaluador nunca es final; solo el
+      autorizador activa el documento.
+
+    Retorna la solicitud del primer paso (autorizador si es un solo paso,
+    evaluador si es la cadena de dos).
+    """
     documentos_kwargs = dict(
         documento=documento,
         accion_solicitud=accion,
@@ -126,6 +135,20 @@ def crear_cadena_aprobacion_documento(documento, usuario, departamento, accion, 
         departamento_origen=departamento,
     )
     documentos_kwargs.update(kwargs)
+
+    if _es_aprobacion_unica(usuario):
+        autorizador = determinar_autorizador()
+        sol_unica = SolicitudAprobacionDocumento.objects.create(
+            aprobador=autorizador, rol_aprobador='autorizador', es_final=True,
+            estado='pendiente' if autorizador else 'esperando',
+            **documentos_kwargs,
+        )
+        if autorizador and autorizador != usuario:
+            _notificar_aprobador(autorizador, usuario, documento, es_evaluador=False)
+        return sol_unica
+
+    evaluador = determinar_evaluador(usuario, departamento)
+    autorizador = determinar_autorizador()
 
     sol_eval = SolicitudAprobacionDocumento.objects.create(
         aprobador=evaluador, rol_aprobador='evaluador', es_final=False,
@@ -141,12 +164,30 @@ def crear_cadena_aprobacion_documento(documento, usuario, departamento, accion, 
 
 
 def crear_cadena_aprobacion_planilla(planilla, usuario, documento, **kwargs):
-    """Crea la cadena de aprobación (evaluador + autorizador) para una planilla.
+    """Crea la solicitud de aprobación para una planilla de cambios.
 
-    Mismo criterio que documentos: siempre dos pasos, sin colapso ni fallback
-    a admin. Retorna la aprobación del evaluador (primer paso).
+    Mismo criterio que documentos: UN solo paso (GG) si el responsable es
+    jefe; cadena de DOS pasos si no lo es. Retorna la aprobación del primer
+    paso.
     """
     departamento = getattr(documento, 'departamento', None)
+
+    if _es_aprobacion_unica(usuario):
+        autorizador = determinar_autorizador()
+        ap_unica = AprobacionPlanilla.objects.create(
+            planilla=planilla, aprobador=autorizador,
+            rol_aprobador='autorizador', es_final=True,
+            estado='pendiente' if autorizador else 'esperando', **kwargs,
+        )
+        if autorizador and autorizador != usuario:
+            _notificar_aprobador(
+                autorizador, usuario, documento,
+                es_evaluador=False, planilla=planilla,
+            )
+        elif not autorizador:
+            avisar_paso_sin_asignar(planilla, 'autorización')
+        return ap_unica
+
     evaluador = determinar_evaluador(usuario, departamento)
     autorizador = determinar_autorizador()
 
@@ -162,30 +203,9 @@ def crear_cadena_aprobacion_planilla(planilla, usuario, documento, **kwargs):
     )
     if evaluador:
         _notificar_aprobador(evaluador, usuario, documento, es_evaluador=True, planilla=planilla)
-    return ap_eval
-
-
-def _notificar_aprobador(aprobador, solicitante, documento, es_evaluador=False, planilla=None):
-    from autenticacion.models import Notificacion
-    if planilla:
-        titulo = 'Edición de documento pendiente de evaluación' if es_evaluador else 'Edición de documento pendiente de autorización'
-        msg = (
-            f'{solicitante.get_full_name() or solicitante.username} ha editado el documento '
-            f'"{documento.nombre}" ({documento.codigo}) y requiere tu {"evaluación" if es_evaluador else "autorización"}.'
-        )
-        url = f'/documentos/planilla-cambios/{planilla.uuid}/aprobar/'
     else:
-        titulo = 'Documento pendiente de evaluación' if es_evaluador else 'Documento pendiente de autorización'
-        msg = (
-            f'{solicitante.get_full_name() or solicitante.username} ha creado el documento '
-            f'"{documento.nombre}" ({documento.codigo}) y requiere tu {"evaluación" if es_evaluador else "autorización"}.'
-        )
-        url = f'/documentos/{documento.tipo_id}/{documento.uuid}/'
-    Notificacion.objects.create(
-        usuario=aprobador, titulo=titulo, mensaje=msg,
-        tipo='solicitud_aprobacion', url_accion=url,
-        departamento=documento.departamento, documento=documento,
-    )
+        avisar_paso_sin_asignar(planilla, 'evaluación')
+    return ap_eval
 
 
 def puede_editar_documento(user, documento):
@@ -199,6 +219,10 @@ def puede_editar_documento(user, documento):
     if documento.tipo_id and documento.tipo.key == 'descripcion_procesos':
         # DPR: cualquier jefe y los usuarios a los que se distribuyó el documento.
         if perfil.es_jefe:
+            return True
+        from .jefatura import es_jefe_efectivo
+
+        if es_jefe_efectivo(user, documento.departamento):
             return True
         if DistribucionDocumento.objects.filter(documento=documento, usuario=user, revocado=False).exists():
             return True
@@ -577,14 +601,18 @@ def buscar(request):
 @login_required(login_url='/login/')
 def bandeja_aprobaciones(request):
     perfil = request.user.perfil
-    if not (perfil.es_jefe or perfil.es_administrador):
+    from .jefatura import aprobadores_que_repr, es_delegado_vigente
+
+    if not (perfil.es_jefe or perfil.es_administrador
+            or es_delegado_vigente(request.user)):
         messages.error(request, 'No tienes permisos para acceder a esta sección.')
         return redirect('documentos:mis_documentos')
     filtro_estado = request.GET.get('estado', 'pendiente')
     filtro_tipo = request.GET.get('tipo_accion', '')
     dept = perfil.departamento
+    aprobadores = aprobadores_que_repr(request.user)
     solicitudes = SolicitudAprobacionDocumento.objects.filter(
-        Q(aprobador=request.user) |
+        Q(aprobador_id__in=aprobadores) |
         Q(departamento_origen=dept, rol_aprobador='evaluador')
     ).select_related('solicitante', 'departamento_origen', 'propietario', 'documento').distinct()
     if filtro_estado:
@@ -596,7 +624,7 @@ def bandeja_aprobaciones(request):
     page = request.GET.get('page', 1)
     solicitudes_page = paginator.get_page(page)
     total_pendientes = SolicitudAprobacionDocumento.objects.filter(
-        Q(aprobador=request.user, estado='pendiente') |
+        Q(aprobador_id__in=aprobadores, estado='pendiente') |
         Q(departamento_origen=dept, rol_aprobador='evaluador', estado='pendiente')
     ).distinct().count()
     descargas = AprobacionDescarga.objects.filter(
@@ -608,6 +636,14 @@ def bandeja_aprobaciones(request):
         aprobador=request.user, estado='pendiente',
         solicitud__estado='pendiente',
     ).count()
+    planillas = AprobacionPlanilla.objects.filter(
+        aprobador_id__in=aprobadores,
+    ).select_related('planilla', 'planilla__documento', 'planilla__responsable')
+    if filtro_estado:
+        planillas = planillas.filter(estado=filtro_estado)
+    total_pendientes_planilla = AprobacionPlanilla.objects.filter(
+        aprobador_id__in=aprobadores, estado='pendiente',
+    ).count()
     return render(request, 'documentos/bandeja_aprobaciones.html', {
         'solicitudes': solicitudes_page,
         'filtro_estado': filtro_estado,
@@ -615,6 +651,41 @@ def bandeja_aprobaciones(request):
         'total_pendientes': total_pendientes,
         'descargas': descargas,
         'total_pendientes_descarga': total_pendientes_descarga,
+        'planillas': planillas,
+        'total_pendientes_planilla': total_pendientes_planilla,
+    })
+
+
+@login_required(login_url='/login/')
+def mis_solicitudes(request):
+    """Historial de lo que el usuario ha solicitado en el sistema.
+
+    Descargas, cambios de estado y accesos, normalizados por
+    ``services.solicitudes``. Visible para cualquier usuario autenticado.
+    """
+    from django.core.paginator import Paginator
+
+    from .services.solicitudes import FILTRO_ESTADOS, TIPOS_LABEL
+    from .services.solicitudes import mis_solicitudes as _mis_solicitudes
+
+    filtro_estado = request.GET.get('estado', '')
+    if filtro_estado not in FILTRO_ESTADOS:
+        filtro_estado = ''
+    filtro_tipo = request.GET.get('tipo', '')
+    if filtro_tipo not in TIPOS_LABEL:
+        filtro_tipo = ''
+
+    items, totales = _mis_solicitudes(
+        request.user, estado=filtro_estado, tipo=filtro_tipo,
+    )
+    items_page = Paginator(items, 20).get_page(request.GET.get('page', 1))
+    opciones_tipo = sorted(TIPOS_LABEL.items(), key=lambda par: par[1])
+    return render(request, 'documentos/mis_solicitudes.html', {
+        'items': items_page,
+        'totales': totales,
+        'filtro_estado': filtro_estado,
+        'filtro_tipo': filtro_tipo,
+        'opciones_tipo': opciones_tipo,
     })
 
 
@@ -655,7 +726,26 @@ def _grupos_documentos(departamentos, clasificacion='', vigencia='', usuario=Non
         .prefetch_related('departamentos_afectados')
         .order_by('fecha_vencimiento' if vigencia else '-fecha_modificacion')
     )
+    if usuario is not None:
+        perfil_u = usuario.perfil
+        es_admin_u = perfil_u.es_administrador
+        # 1 sola query: jefaturas naturales + delegadas del usuario.
+        from .jefatura import departamentos_jefados
+
+        deptos_jefe_u = departamentos_jefados(usuario)
     for doc in docs:
+        if usuario is not None:
+            # Banderas de acción por documento para el card (Departamento).
+            # Se calculan sobre columnas ya cargadas (departamento_id /
+            # propietario_id): cero queries extra por documento.
+            es_jefe_depto = bool(
+                doc.departamento_id and doc.departamento_id in deptos_jefe_u
+            )
+            doc.puede_asignar = es_admin_u or es_jefe_depto
+            doc.puede_transferir = es_admin_u or es_jefe_depto
+            doc.puede_distribuir = (
+                es_admin_u or es_jefe_depto or doc.propietario_id == usuario.id
+            )
         if doc.afecta_todos:
             generales_por_tipo.setdefault(doc.tipo_id, []).append(doc)
             continue
@@ -690,52 +780,13 @@ def _grupos_documentos(departamentos, clasificacion='', vigencia='', usuario=Non
     return generales, grupos
 
 
-def _conteos_vigencia(departamentos, clasificacion, usuario):
-    """Conteos de estado de vigencia para el panel del jefe/admin."""
-    from .permissions import q_documentos_visibles
-
-    hoy = date.today()
-    dep_ids = [d.id for d in departamentos]
-    base = Documento.objects.filter(tipo__activo=True).exclude(tipo__isnull=True)
-    base = base.filter(q_documentos_visibles(usuario))
-    if clasificacion:
-        base = base.filter(clasificacion=clasificacion)
-    base = base.filter(
-        Q(afecta_todos=True)
-        | Q(departamento_id__in=dep_ids)
-        | Q(departamentos_afectados__id__in=dep_ids)
-    )
-    # Un único aggregate con filtros condicionales en vez de 4 consultas.
-    # `distinct=True` compensa el JOIN con departamentos_afectados.
-    return base.aggregate(
-        vencidos=Count(
-            'id',
-            filter=Q(fecha_vencimiento__isnull=False, fecha_vencimiento__lte=hoy),
-            distinct=True,
-        ),
-        vence_pronto=Count(
-            'id',
-            filter=Q(fecha_vencimiento__gt=hoy, fecha_vencimiento__lte=hoy + timedelta(days=7)),
-            distinct=True,
-        ),
-        vigentes=Count(
-            'id',
-            filter=Q(fecha_vencimiento__gt=hoy + timedelta(days=7)),
-            distinct=True,
-        ),
-        sin_vigencia=Count(
-            'id',
-            filter=Q(fecha_vencimiento__isnull=True),
-            distinct=True,
-        ),
-    )
-
-
 @login_required(login_url='/login/')
 def documentos_departamento(request):
     perfil = request.user.perfil
     es_admin = perfil.es_administrador
-    if not (perfil.es_jefe or es_admin):
+    from .jefatura import es_delegado_vigente
+
+    if not (perfil.es_jefe or es_admin or es_delegado_vigente(request.user)):
         messages.error(request, 'No tienes permisos para acceder a esta sección.')
         return redirect('documentos:mis_documentos')
 
@@ -758,7 +809,7 @@ def documentos_departamento(request):
     generales, grupos = _grupos_documentos(
         departamentos, clasificacion_filter, vigencia_filter, usuario=request.user,
     )
-    conteos_vigencia = _conteos_vigencia(
+    conteos_vigencia = calcular_conteos_vigencia(
         departamentos, clasificacion_filter, request.user,
     )
     return render(request, 'documentos/documentos_departamento.html', {
@@ -779,7 +830,7 @@ def documentos_departamento(request):
 @login_required(login_url='/login/')
 def seleccionar_tipo(request):
     """Página/catálogo para seleccionar tipo de documento a crear"""
-    es_jefe = request.user.perfil.es_jefe
+    es_jefe = _es_jefe(request.user)
     tipos_disponibles = []
     for tipo in tipos_activos():
         if tipo.solo_jefes and not es_jefe:
@@ -812,7 +863,7 @@ def crear_documento(request, tipo):
     tipo_codigo = tipo_obj.codigo
     tipo_nombre = tipo_obj.nombre
 
-    if tipo_obj.solo_jefes and not perfil.es_jefe:
+    if tipo_obj.solo_jefes and not _es_jefe(request.user):
         messages.error(request, 'Solo los jefes de departamento pueden crear este tipo de documento.')
         return redirect('documentos:seleccionar_tipo')
 
@@ -899,15 +950,23 @@ def crear_documento(request, tipo):
                 elif solicitud_aprob and solicitud_aprob.aprobador_id:
                     messages.success(request, f'{tipo_nombre} "{doc.nombre}" creado y enviado para aprobación.')
                 else:
-                    messages.warning(
-                        request,
-                        f'{tipo_nombre} "{doc.nombre}" creado, pero no hay jefe de '
-                        f'departamento asignado. Quedará en espera de evaluación.'
-                    )
-                    messages.info(
-                        request,
-                        'Se activará cuando un jefe lo evalúe y Gerencia General lo autorice.'
-                    )
+                    if _es_jefe(request.user):
+                        messages.warning(
+                            request,
+                            f'{tipo_nombre} "{doc.nombre}" creado, pero no hay jefe '
+                            f'Gerencia General asignado. Quedará en espera de autorización.'
+                        )
+                        messages.info(request, 'Se activará cuando Gerencia General lo autorice.')
+                    else:
+                        messages.warning(
+                            request,
+                            f'{tipo_nombre} "{doc.nombre}" creado, pero no hay jefe de '
+                            f'departamento asignado. Quedará en espera de evaluación.'
+                        )
+                        messages.info(
+                            request,
+                            'Se activará cuando un jefe lo evalúe y Gerencia General lo autorice.'
+                        )
 
                 return redirect('documentos:detalle', tipo=tipo, documento_id=doc.uuid)
     else:
@@ -987,13 +1046,19 @@ def enviar_documento(request, tipo, documento_id):
             sol_cambio.estado = 'en_revision'
             sol_cambio.save(update_fields=['estado'])
 
-        sol_eval = crear_cadena_aprobacion_documento(
+        solicitud_aprob = crear_cadena_aprobacion_documento(
             documento=documento, usuario=request.user,
             departamento=perfil.departamento, accion='creacion',
         )
 
-    if sol_eval and sol_eval.aprobador_id:
+    if solicitud_aprob and solicitud_aprob.aprobador_id:
         messages.success(request, f'"{documento.nombre}" enviado a revisión.')
+    elif _es_jefe(request.user):
+        messages.warning(
+            request,
+            f'"{documento.nombre}" enviado, pero no hay jefe de Gerencia General '
+            f'asignado. Quedará en espera de autorización.'
+        )
     else:
         messages.warning(
             request,
@@ -1205,6 +1270,9 @@ def detalle_documento(request, tipo, documento_id):
             ).exists()
             if evaluador_aprobado:
                 espera_msg = 'Evaluado — pendiente de autorización por Gerencia General'
+            else:
+                # Un solo paso (solicitante jefe): no hay cadena de evaluación.
+                espera_msg = 'Pendiente de autorización por Gerencia General'
 
     documentos_relacionados = documento.documentos_relacionados.all()
     referencias_pendientes = ReferenciaDocumento.objects.filter(
@@ -1352,6 +1420,7 @@ def detalle_documento(request, tipo, documento_id):
         'puede_editar': puede_editar_documento(request.user, documento),
         'puede_eliminar': puede_eliminar_documento(request.user, documento),
         'puede_eliminar_versiones': es_admin or es_propietario,
+        'versiones_eliminables': versiones.count() >= 2,
         'puede_descargar': puede_descargar(request.user, documento) or tiene_descarga_aprobada,
         'puede_inhabilitar': puede_inhab,
         'puede_inhabilitar_directo': rol_inhab == 'directo',
@@ -2013,6 +2082,7 @@ def historial_versiones(request, tipo, documento_id):
         'documento': documento, 'tipo': tipo, 'versiones': versiones,
         'solicitudes_pendientes_ids': list(solicitudes_pendientes),
         'puede_eliminar_versiones': puede_eliminar_versiones,
+        'versiones_eliminables': versiones.count() >= 2,
     })
 
 
@@ -2034,7 +2104,24 @@ def eliminar_version(request, tipo, documento_id, version_id):
         messages.error(request, 'No se pueden eliminar versiones mientras el documento está en revisión.')
         return redirect('documentos:historial_versiones', tipo=tipo, documento_id=documento.uuid)
 
-    if request.method == 'POST':
+    if request.method != 'POST':
+        return redirect('documentos:historial_versiones', tipo=tipo, documento_id=documento.uuid)
+
+    # ISO: un documento conserva siempre al menos una versión. El cómputo se
+    # repite dentro de la transacción con las versiones bloqueadas para que
+    # dos borrados simultáneos no dejen el documento sin historial.
+    with transaction.atomic():
+        activas = (
+            VersionDocumento.objects
+            .select_for_update()
+            .filter(documento=documento, activa=True)
+        )
+        if activas.count() <= 1:
+            messages.error(
+                request, 'No se puede eliminar la única versión del documento.',
+            )
+            return redirect('documentos:historial_versiones', tipo=tipo, documento_id=documento.uuid)
+
         # Solicitudes de eliminación de versión generadas antes de que este
         # flujo fuera directo: se cancelan para no dejar cadenas obsoletas
         # que podrían "restaurar" la versión tras borrarse.
@@ -2068,8 +2155,6 @@ def eliminar_version(request, tipo, documento_id, version_id):
             pass
         messages.success(request, f'Versión {version.numero_version} eliminada correctamente.')
         return redirect('documentos:historial_versiones', tipo=tipo, documento_id=documento.uuid)
-
-    return redirect('documentos:historial_versiones', tipo=tipo, documento_id=documento.uuid)
 
 
 @login_required(login_url='/login/')
@@ -2178,9 +2263,7 @@ def establecer_vigencia(request, tipo, documento_id):
     user = request.user
     perfil = user.perfil
     es_propietario = documento.propietario == user
-    es_jefe_o_admin = perfil.es_administrador or (
-        perfil.es_jefe and documento.departamento == perfil.departamento
-    )
+    es_jefe_o_admin = perfil.es_administrador or es_jefe_efectivo(user, documento.departamento)
     if not es_propietario and not es_jefe_o_admin:
         messages.error(request, 'No tienes permisos para modificar la vigencia de este documento.')
         return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
@@ -2253,9 +2336,7 @@ def quitar_vigencia(request, tipo, documento_id):
     user = request.user
     perfil = user.perfil
     es_propietario = documento.propietario == user
-    es_jefe_o_admin = perfil.es_administrador or (
-        perfil.es_jefe and documento.departamento == perfil.departamento
-    )
+    es_jefe_o_admin = perfil.es_administrador or es_jefe_efectivo(user, documento.departamento)
     if not es_propietario and not es_jefe_o_admin:
         messages.error(request, 'No tienes permisos para modificar la vigencia de este documento.')
         return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
@@ -2382,7 +2463,10 @@ def asignar_documento(request, tipo, documento_id):
 @login_required(login_url='/login/')
 def gestionar_asignaciones(request):
     perfil = request.user.perfil
-    if not (perfil.es_jefe or perfil.es_administrador):
+    from .jefatura import es_delegado_vigente
+
+    if not (perfil.es_jefe or perfil.es_administrador
+            or es_delegado_vigente(request.user)):
         messages.error(request, 'Solo los Jefes de Departamento y Administradores pueden gestionar asignaciones.')
         return redirect('documentos:mis_documentos')
     asignaciones = AsignacionDocumento.objects.filter(
@@ -2435,6 +2519,450 @@ def transferir_propiedad(request, tipo, documento_id):
         'miembros_transferibles': miembros_transferibles,
         'hay_transferibles': bool(depto_doc) and miembros_transferibles.exists(),
     })
+
+
+@login_required(login_url='/login/')
+def transferencia_masiva(request):
+    """Transferencia masiva (cobertura temporal) de un trabajador.
+
+    Mueve de un golpe la propiedad, las asignaciones como coordinador y las
+    distribuciones que recibe ``origen`` hacia ``destino`` (siempre del mismo
+    departamento). Permitido a administradores y jefes de departamento.
+    """
+    from urllib.parse import urlencode
+
+    from auditoria.middleware import resolver_ip_cliente
+    from django.urls import reverse
+
+    from .services.transferencia import (
+        transferibles_de_usuario, transferir_documentos_usuario,
+    )
+
+    perfil = request.user.perfil
+    if not (perfil.es_administrador or perfil.es_jefe):
+        messages.error(request, 'No tienes permisos para transferir documentos.')
+        return redirect('documentos:mis_documentos')
+
+    # El área de configuración NO se delega: el jefe queda atado a su
+    # departamento y solo un administrador puro puede elegir otro.
+    es_solo_dept = bool(perfil.es_jefe and perfil.departamento_id)
+    depto_elegido_id = request.POST.get('departamento') or request.GET.get('departamento')
+    if es_solo_dept:
+        departamentos = Departamento.objects.filter(id=perfil.departamento_id)
+        depto = departamentos.first()
+    else:
+        departamentos = Departamento.objects.filter(activo=True)
+        depto = Departamento.objects.filter(id=depto_elegido_id).first() if depto_elegido_id else None
+
+    def _usuarios(dpto):
+        if not dpto:
+            return []
+        return list(
+            User.objects.filter(perfil__departamento=dpto)
+            .select_related('perfil')
+            .order_by('first_name', 'last_name', 'username')
+        )
+
+    usuarios = _usuarios(depto)
+
+    def _volver(**extra):
+        """Vuelve a la misma URL conservando el departamento elegido."""
+        params = {}
+        d = request.POST.get('departamento') or request.GET.get('departamento')
+        if d:
+            params['departamento'] = d
+        params.update(extra)
+        qs = urlencode(params)
+        return redirect(reverse('documentos:transferencia_masiva') + (f'?{qs}' if qs else ''))
+
+    origen_id = request.POST.get('origen') or request.GET.get('origen')
+    destino_id = request.POST.get('destino') or request.GET.get('destino')
+
+    origen = None
+    propiedad, asignaciones, distribuciones = [], [], []
+    if origen_id and depto:
+        origen = User.objects.filter(
+            id=origen_id, perfil__departamento=depto,
+        ).select_related('perfil').first()
+        if not origen:
+            messages.error(request, 'El usuario de origen no pertenece a ese departamento.')
+            return _volver()
+        propiedad, asignaciones, distribuciones = transferibles_de_usuario(origen)
+
+    candidatos = [u for u in usuarios if u.id != (origen.id if origen else None)]
+    destino_sel = None
+    if destino_id:
+        try:
+            destino_id_int = int(destino_id)
+        except (TypeError, ValueError):
+            destino_id_int = None
+        destino_sel = next(
+            (u for u in candidatos if u.id == destino_id_int), None,
+        )
+        destino_id = destino_id_int
+
+    if request.method == 'POST':
+        if not origen or not destino_sel:
+            messages.error(request, 'Debes seleccionar el usuario de origen y el usuario destino.')
+            return _volver(origen=origen.id if origen else '')
+
+        propiedad_ids = [int(x) for x in request.POST.getlist('propiedad_ids')]
+        asignacion_ids = [int(x) for x in request.POST.getlist('asignacion_ids')]
+        distribucion_ids = [int(x) for x in request.POST.getlist('distribucion_ids')]
+
+        if not (propiedad_ids or asignacion_ids or distribucion_ids):
+            messages.error(request, 'Selecciona al menos un elemento a transferir.')
+            return _volver(origen=origen.id)
+
+        try:
+            resumen = transferir_documentos_usuario(
+                origen, destino_sel, request.user,
+                propiedad_ids=propiedad_ids,
+                asignacion_ids=asignacion_ids,
+                distribucion_ids=distribucion_ids,
+                ip_address=resolver_ip_cliente(request),
+            )
+        except ValueError as exc:
+            messages.error(request, str(exc))
+            return _volver(origen=origen.id)
+
+        messages.success(
+            request,
+            f'Transferencia a {destino_sel.username} completada: '
+            f'{resumen["propiedad"]} documento(s) por propiedad, '
+            f'{resumen["asignaciones"]} asignación(es) y '
+            f'{resumen["distribuciones"]} distribución(es).',
+        )
+        return _volver()
+
+    return render(request, 'documentos/transferencia_masiva.html', {
+        'departamentos': departamentos,
+        'departamento': depto,
+        'usuarios': usuarios,
+        'origen': origen,
+        'destino_id': int(destino_id) if destino_id else None,
+        'candidatos': candidatos,
+        'propiedad': propiedad,
+        'asignaciones': asignaciones,
+        'distribuciones': distribuciones,
+        'total': len(propiedad) + len(asignaciones) + len(distribuciones),
+        'es_solo_dept': es_solo_dept,
+    })
+
+
+def _delegaciones_visibles(usuario):
+    """Delegaciones que ``usuario`` tiene derecho a consultar.
+
+    El administrador ve todas; los demás solo las en las que participan
+    (como jefe delegante o como delegado).
+    """
+    perfil = usuario.perfil
+    if perfil.es_administrador:
+        return DelegacionJefatura.objects.all()
+    return DelegacionJefatura.objects.filter(Q(jefe=usuario) | Q(delegado=usuario))
+
+
+def _miembros_delegables(departamento):
+    """Miembros activos aptos para recibir una delegación de jefatura."""
+    if departamento is None:
+        return User.objects.none()
+    return (
+        User.objects.filter(
+            perfil__departamento_id=departamento.id,
+            is_active=True,
+            # La jefatura se delega a quien aún no ejerce una (coordinador, etc.).
+            perfil__rol__in=('coordinador', 'trabajador'),
+        ).select_related('perfil').order_by('first_name', 'username')
+    )
+
+
+def _notificar_delegacion(destinatario, titulo, mensaje, departamento):
+    """Notificación in-app de delegación (sin correo: decisión del usuario)."""
+    try:
+        from autenticacion.models import Notificacion
+
+        Notificacion.objects.create(
+            usuario=destinatario, titulo=titulo, mensaje=mensaje,
+            tipo='sistema', url_accion='/documentos/delegaciones/',
+            departamento=departamento,
+        )
+    except Exception as exc:
+        logger.error("Notificación delegación: %s", exc)
+
+
+def _auditar_delegacion(usuario, accion_tipo, delegacion, mensaje, anterior, posterior, detalles):
+    """Auditoría ISO 15489 (fail-open) de las delegaciones de jefatura."""
+    try:
+        from auditoria.services import registrar_log_iso
+        from auditoria.middleware import get_client_ip
+
+        registrar_log_iso(
+            usuario=usuario,
+            accion_tipo=accion_tipo,
+            accion_categoria='seguridad',
+            recurso_tipo='delegacion_jefatura',
+            recurso_id=str(delegacion.id),
+            recurso_nombre=str(delegacion),
+            estado_anterior=anterior,
+            estado_posterior=posterior,
+            resultado_exitoso=True,
+            resultado_mensaje=mensaje,
+            detalles=detalles,
+            ip_address=get_client_ip(),
+        )
+    except Exception as exc:
+        logger.error("Auditoría delegación de jefatura: %s", exc)
+
+
+def _nombre_usuario(usuario):
+    return usuario.get_full_name() or usuario.username
+
+
+@login_required(login_url='/login/')
+def delegaciones_jefatura(request):
+    """Alta y listado de delegaciones de jefatura (vacaciones / permisos).
+
+    El jefe natural delega su jefatura a un miembro de su mismo departamento
+    dentro de un rango de vigencia (``fecha_inicio``/``fecha_fin``); pasado ese
+    plazo la delegación deja de surtir efecto sola. Un delegado en curso solo
+    consulta su delegación y puede renunciar. La creación queda reservada al
+    jefe y al administrador: la configuración global no se delega.
+    """
+    perfil = request.user.perfil
+    from .jefatura import es_delegado_vigente
+
+    puede_crear = perfil.es_jefe or perfil.es_administrador
+    if not (puede_crear or es_delegado_vigente(request.user)):
+        messages.error(request, 'No tienes permisos para gestionar delegaciones de jefatura.')
+        return redirect('documentos:mis_documentos')
+
+    if request.method == 'POST':
+        return _crear_delegacion(request, perfil, puede_crear)
+
+    # Departamento del formulario: el jefe solo elige el suyo; el admin elige.
+    if perfil.es_jefe:
+        departamentos = Departamento.objects.filter(id=perfil.departamento_id)
+        departamento_activo = perfil.departamento
+    elif perfil.es_administrador:
+        departamentos = Departamento.objects.filter(activo=True).order_by('nombre')
+        elegido = request.GET.get('departamento')
+        departamento_activo = (
+            departamentos.filter(id=elegido).first() if elegido
+            else departamentos.first()
+        )
+    else:
+        departamentos = Departamento.objects.none()
+        departamento_activo = None
+
+    # Estado de cada delegación (el template solo lo pinta).
+    hoy = timezone.now().date()
+    delegaciones = []
+    for d in (
+        _delegaciones_visibles(request.user)
+        .select_related('jefe', 'delegado', 'departamento')
+        .order_by('-fecha_creacion')
+    ):
+        if not d.activa:
+            estado, clase = 'Revocada', 'revocada'
+        elif d.fecha_inicio > hoy:
+            estado, clase = 'Programada', 'programada'
+        elif d.fecha_fin < hoy:
+            estado, clase = 'Vencida', 'vencida'
+        else:
+            estado, clase = 'Vigente', 'vigente'
+        delegaciones.append({
+            'obj': d,
+            'estado': estado,
+            'clase': clase,
+            'en_curso': d.activa and d.fecha_inicio <= hoy <= d.fecha_fin,
+            'puede_revocar': d.activa and (
+                perfil.es_administrador
+                or request.user.id in (d.jefe_id, d.delegado_id)
+            ),
+        })
+
+    context = {
+        'delegaciones': delegaciones,
+        'departamentos': departamentos,
+        'departamento_activo': departamento_activo,
+        'candidatos': _miembros_delegables(departamento_activo),
+        'puede_crear': puede_crear,
+        'hoy': hoy,
+    }
+    return render(request, 'documentos/delegaciones_jefatura.html', context)
+
+
+def _crear_delegacion(request, perfil, puede_crear):
+    """Valida y crea una delegación de jefatura. Devuelve siempre un redirect."""
+    if not puede_crear:
+        messages.error(request, 'No tienes permisos para crear delegaciones.')
+        return redirect('documentos:delegaciones_jefatura')
+
+    delegado_id = request.POST.get('delegado')
+    motivo = (request.POST.get('motivo') or '').strip()
+
+    # El jefe solo delega su propio departamento; el admin elige.
+    if perfil.es_jefe:
+        departamento = perfil.departamento
+        elegido = request.POST.get('departamento')
+        if elegido and str(departamento.id if departamento else 0) != elegido:
+            messages.error(request, 'Solo puedes delegar la jefatura de tu departamento.')
+            return redirect('documentos:delegaciones_jefatura')
+        jefe = request.user
+    else:
+        departamento = Departamento.objects.filter(
+            id=request.POST.get('departamento')
+        ).first()
+        if departamento is None:
+            messages.error(request, 'Selecciona un departamento.')
+            return redirect('documentos:delegaciones_jefatura')
+        jefe = departamento.jefe
+        if jefe is None:
+            messages.error(
+                request,
+                'El departamento no tiene jefe asignado: asígnale un jefe antes de delegar.',
+            )
+            return redirect('documentos:delegaciones_jefatura')
+
+    if departamento is None:
+        messages.error(request, 'Tu perfil no tiene departamento asignado.')
+        return redirect('documentos:delegaciones_jefatura')
+
+    delegado = (
+        User.objects.select_related('perfil').filter(
+            id=delegado_id, is_active=True
+        ).first()
+        if delegado_id else None
+    )
+    if delegado is None or delegado.id == jefe.id:
+        messages.error(request, 'Selecciona a un usuario delegado válido.')
+        return redirect('documentos:delegaciones_jefatura')
+    if getattr(delegado.perfil, 'departamento_id', None) != departamento.id:
+        messages.error(request, 'El delegado debe pertenecer al mismo departamento.')
+        return redirect('documentos:delegaciones_jefatura')
+
+    try:
+        fecha_inicio = date.fromisoformat(request.POST.get('fecha_inicio') or '')
+        fecha_fin = date.fromisoformat(request.POST.get('fecha_fin') or '')
+    except ValueError:
+        messages.error(request, 'Indica fechas de vigencia válidas (AAAA-MM-DD).')
+        return redirect('documentos:delegaciones_jefatura')
+
+    hoy = timezone.now().date()
+    if fecha_fin < fecha_inicio:
+        messages.error(request, 'La fecha de fin debe ser igual o posterior a la de inicio.')
+        return redirect('documentos:delegaciones_jefatura')
+    if fecha_fin < hoy:
+        messages.error(request, 'La vigencia debe terminar hoy o más tarde.')
+        return redirect('documentos:delegaciones_jefatura')
+
+    solapada = DelegacionJefatura.objects.filter(
+        delegado=delegado, departamento=departamento, activa=True,
+        fecha_inicio__lte=fecha_fin, fecha_fin__gte=fecha_inicio,
+    ).first()
+    if solapada is not None:
+        messages.error(
+            request,
+            f'{_nombre_usuario(delegado)} ya tiene una delegación de jefatura '
+            f'vigente en {departamento.nombre} '
+            f'(del {solapada.fecha_inicio:%d/%m/%Y} al {solapada.fecha_fin:%d/%m/%Y}).',
+        )
+        return redirect('documentos:delegaciones_jefatura')
+
+    delegacion = DelegacionJefatura.objects.create(
+        jefe=jefe, delegado=delegado, departamento=departamento,
+        motivo=motivo, fecha_inicio=fecha_inicio, fecha_fin=fecha_fin,
+        creada_por=request.user,
+    )
+    detalle = (
+        f'Jefe: {_nombre_usuario(jefe)}; delegado: {_nombre_usuario(delegado)}; '
+        f'departamento: {departamento.nombre}; vigencia: '
+        f'{fecha_inicio:%d/%m/%Y} a {fecha_fin:%d/%m/%Y}'
+    )
+    _notificar_delegacion(
+        delegado,
+        'Se te ha delegado una jefatura de departamento',
+        f'{_nombre_usuario(jefe)} te delegó la jefatura de '
+        f'{departamento.nombre} del {fecha_inicio:%d/%m/%Y} al {fecha_fin:%d/%m/%Y}. '
+        f'Ejercerás sus poderes operativos mientras dure la vigencia.',
+        departamento,
+    )
+    if jefe.id != request.user.id:
+        _notificar_delegacion(
+            jefe,
+            'Se creó una delegación de tu jefatura',
+            f'{_nombre_usuario(request.user)} delegó tu jefatura de '
+            f'{departamento.nombre} a {_nombre_usuario(delegado)} del '
+            f'{fecha_inicio:%d/%m/%Y} al {fecha_fin:%d/%m/%Y}.',
+            departamento,
+        )
+    _auditar_delegacion(
+        request.user, 'creacion', delegacion,
+        f'Delegación de jefatura creada: {detalle}',
+        '', 'activa',
+        {'jefe_id': jefe.id, 'delegado_id': delegado.id,
+         'departamento_id': departamento.id,
+         'fecha_inicio': str(fecha_inicio), 'fecha_fin': str(fecha_fin),
+         'motivo': motivo},
+    )
+    messages.success(
+        request,
+        f'Delegación creada: {_nombre_usuario(delegado)} ejercerá la jefatura de '
+        f'{departamento.nombre} del {fecha_inicio:%d/%m/%Y} al {fecha_fin:%d/%m/%Y}.',
+    )
+    return redirect('documentos:delegaciones_jefatura')
+
+
+@login_required(login_url='/login/')
+def revocar_delegacion(request, deleg_id):
+    """Revoca de inmediato una delegación (jefe delegante, delegado o admin)."""
+    if request.method != 'POST':
+        return redirect('documentos:delegaciones_jefatura')
+
+    delegacion = get_object_or_404(
+        DelegacionJefatura.objects.select_related('jefe', 'delegado', 'departamento'),
+        id=deleg_id,
+    )
+    perfil = request.user.perfil
+    if not (
+        perfil.es_administrador
+        or request.user.id in (delegacion.jefe_id, delegacion.delegado_id)
+    ):
+        messages.error(request, 'No tienes permisos para revocar esta delegación.')
+        return redirect('documentos:delegaciones_jefatura')
+    if not delegacion.activa:
+        messages.info(request, 'Esta delegación ya estaba revocada.')
+        return redirect('documentos:delegaciones_jefatura')
+
+    delegacion.activa = False
+    delegacion.fecha_revocacion = timezone.now()
+    delegacion.revocada_por = request.user
+    delegacion.motivo_revocacion = (request.POST.get('motivo_revocacion') or '').strip()
+    delegacion.save(update_fields=[
+        'activa', 'fecha_revocacion', 'revocada_por', 'motivo_revocacion',
+    ])
+
+    etiqueta = f'{delegacion.departamento.nombre} ({_nombre_usuario(delegacion.delegado)})'
+    for destinatario in (delegacion.jefe, delegacion.delegado):
+        if destinatario.id == request.user.id:
+            continue
+        _notificar_delegacion(
+            destinatario,
+            'Delegación de jefatura revocada',
+            f'La delegación de la jefatura de {etiqueta} fue revocada por '
+            f'{_nombre_usuario(request.user)}.',
+            delegacion.departamento,
+        )
+    _auditar_delegacion(
+        request.user, 'revocacion', delegacion,
+        f'Delegación de jefatura revocada: {etiqueta}',
+        'activa', 'revocada',
+        {'jefe_id': delegacion.jefe_id, 'delegado_id': delegacion.delegado_id,
+         'departamento_id': delegacion.departamento_id,
+         'motivo_revocacion': delegacion.motivo_revocacion},
+    )
+    messages.success(request, f'Delegación revocada: {etiqueta}.')
+    return redirect('documentos:delegaciones_jefatura')
 
 
 @login_required(login_url='/login/')
@@ -2730,6 +3258,11 @@ def crear_planilla(request):
 def detalle_planilla(request, planilla_uuid):
     planilla = get_object_or_404(PlanillaCambios, uuid=planilla_uuid)
     aprobaciones = AprobacionPlanilla.objects.filter(planilla=planilla)
+    from .jefatura import aprobadores_que_repr
+
+    mi_aprobacion_pendiente = aprobaciones.filter(
+        aprobador_id__in=aprobadores_que_repr(request.user), estado='pendiente',
+    ).first()
     documento = planilla.documento if planilla.documento_id else None
     departamentos_afectados = planilla.departamentos_afectados.all()
     documentos_relacionados = documento.documentos_relacionados.all() if documento else []
@@ -2760,6 +3293,7 @@ def detalle_planilla(request, planilla_uuid):
         'respuestas_actual': respuestas_actual,
         'solicitud_permitida': solicitud_permitida,
         'espera_msg': espera_msg,
+        'mi_aprobacion_pendiente': mi_aprobacion_pendiente,
     })
 
 
@@ -2768,7 +3302,9 @@ def detalle_planilla(request, planilla_uuid):
 def aprobar_planilla(request, planilla_uuid):
     planilla = get_object_or_404(PlanillaCambios, uuid=planilla_uuid)
     perfil = request.user.perfil
-    if not perfil.es_jefe:
+    from .jefatura import aprobadores_que_repr, es_delegado_vigente
+
+    if not (perfil.es_jefe or es_delegado_vigente(request.user)):
         messages.error(request, 'No tienes permisos para aprobar planillas.')
         return redirect('documentos:mis_documentos')
     if request.method == 'POST':
@@ -2778,7 +3314,8 @@ def aprobar_planilla(request, planilla_uuid):
         accion = request.POST.get('accion')
         observaciones = request.POST.get('observaciones', '')
         aprobacion = AprobacionPlanilla.objects.filter(
-            planilla=planilla, aprobador=request.user, estado='pendiente'
+            planilla=planilla, aprobador_id__in=aprobadores_que_repr(request.user),
+            estado='pendiente',
         ).first()
         if not aprobacion:
             messages.error(request, 'No tienes una aprobación pendiente para esta planilla.')
@@ -2816,22 +3353,7 @@ def aprobar_planilla(request, planilla_uuid):
                 )
                 messages.success(request, 'Planilla aprobada y cambios aplicados al documento.')
             else:
-                hermano = AprobacionPlanilla.objects.filter(
-                    planilla=planilla, rol_aprobador='autorizador', estado='esperando',
-                ).exclude(id=aprobacion.id).order_by('id').first()
-                if hermano and hermano.aprobador_id:
-                    hermano.estado = 'pendiente'
-                    hermano.save(update_fields=['estado'])
-                from autenticacion.models import Notificacion
-                Notificacion.objects.create(
-                    usuario=planilla.responsable,
-                    titulo='Planilla de Cambios en autorización',
-                    mensaje=f'Tu planilla {planilla.codigo} ha sido evaluada. Pendiente de autorización final.',
-                    tipo='aprobacion_documento',
-                    url_accion=f'/documentos/planilla-cambios/{planilla.uuid}/',
-                    departamento=planilla.documento.departamento,
-                    documento=planilla.documento
-                )
+                promover_autorizador(planilla, aprobacion, request.user)
                 messages.success(request, 'Evaluación registrada. Pendiente de autorización final.')
         else:
             aprobacion.estado = 'rechazada'
@@ -3028,12 +3550,8 @@ def roles_permisos(request):
     if not (request.user.perfil.es_administrador or request.user.perfil.es_jefe):
         messages.error(request, 'No tienes permisos para acceder a configuración.')
         return redirect('documentos:mis_documentos')
-    codigo_evaluador = getattr(settings, 'APROBACION_EVALUADOR_DEPTO_GG', 'SGC')
-    evaluador_depto = Departamento.objects.filter(codigo=codigo_evaluador, activo=True).first()
     gg_depto = Departamento.objects.filter(codigo='GG').first()
     return render(request, 'documentos/configuracion/roles_permisos.html', {
-        'evaluador_depto': evaluador_depto,
-        'evaluador_jefe': evaluador_depto.jefe if evaluador_depto else None,
         'gg_depto': gg_depto,
         'gg_jefe': gg_depto.jefe if gg_depto else None,
     })
@@ -3940,7 +4458,7 @@ def puede_revocar_distribucion(user, documento):
     perfil = user.perfil
     if perfil.es_administrador:
         return True
-    if perfil.es_jefe and documento.departamento == perfil.departamento:
+    if es_jefe_efectivo(user, documento.departamento):
         return True
     return documento.propietario == user
 
@@ -3949,7 +4467,7 @@ def puede_revocar_distribucion(user, documento):
 def distribuir_documento(request, tipo, documento_id):
     documento = get_documento(tipo, documento_id)
     if not (request.user.perfil.es_administrador or
-            (request.user.perfil.es_jefe and documento.departamento == request.user.perfil.departamento) or
+            es_jefe_efectivo(request.user, documento.departamento) or
             documento.propietario == request.user):
         messages.error(request, 'No tienes permisos para distribuir este documento.')
         return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)

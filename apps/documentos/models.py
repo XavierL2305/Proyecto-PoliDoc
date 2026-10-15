@@ -115,6 +115,74 @@ class SubArea(models.Model):
         return f"{self.nombre} → {self.departamento.nombre}"
 
 
+class DelegacionJefatura(models.Model):
+    """Delegación temporal de la jefatura de un departamento (vacaciones).
+
+    Permite que un miembro del mismo departamento (normalmente el
+    coordinador de área) ejerza los poderes operativos del jefe mientras
+    éste está ausente, dentro de una vigencia ``fecha_inicio``/``fecha_fin``.
+    No delega la configuración global del sistema.
+    """
+
+    jefe = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='delegaciones_otorgadas',
+        verbose_name='Jefe que delega',
+    )
+    delegado = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='delegaciones_recibidas',
+        verbose_name='Delegado (ejerce como jefe)',
+    )
+    departamento = models.ForeignKey(
+        Departamento, on_delete=models.CASCADE,
+        related_name='delegaciones_jefatura', verbose_name='Departamento',
+    )
+    motivo = models.TextField(
+        blank=True, default='', verbose_name='Motivo',
+        help_text='Motivo de la ausencia (vacaciones, permisos, etc.).',
+    )
+    fecha_inicio = models.DateField(verbose_name='Fecha de inicio')
+    fecha_fin = models.DateField(verbose_name='Fecha de fin')
+    activa = models.BooleanField(default=True, verbose_name='Activa')
+    creada_por = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='delegaciones_creadas', verbose_name='Creada por',
+    )
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    motivo_revocacion = models.TextField(
+        blank=True, default='', verbose_name='Motivo de revocación',
+    )
+    fecha_revocacion = models.DateTimeField(
+        null=True, blank=True, verbose_name='Fecha de revocación',
+    )
+    revocada_por = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='delegaciones_revocadas', verbose_name='Revocada por',
+    )
+
+    class Meta:
+        verbose_name = 'Delegación de Jefatura'
+        verbose_name_plural = 'Delegaciones de Jefatura'
+        ordering = ['-fecha_creacion']
+        indexes = [
+            models.Index(fields=['delegado', 'activa'], name='deleg_delegado_activa_idx'),
+            models.Index(fields=['departamento', 'activa'], name='deleg_depto_activa_idx'),
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.jefe.username} → {self.delegado.username} "
+            f"({self.departamento.codigo})"
+        )
+
+    @property
+    def vigente(self):
+        """True si está activa y la vigencia incluye hoy."""
+        if not self.activa:
+            return False
+        hoy = timezone.now().date()
+        return self.fecha_inicio <= hoy <= self.fecha_fin
+
+
 class Periodo(models.Model):
     """Períodos estándar para vencimiento y retención de documentos."""
     nombre = models.CharField(max_length=50, unique=True, verbose_name='Nombre del Período')
@@ -856,6 +924,10 @@ class AprobacionPlanilla(models.Model):
     estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='pendiente')
     observaciones = models.TextField(blank=True, default='')
     fecha_aprobacion = models.DateTimeField(null=True, blank=True)
+    #: Momento en que el paso pasó a ``pendiente`` (base del escalado por antigüedad).
+    fecha_activacion = models.DateTimeField(null=True, blank=True, verbose_name='Activado en')
+    #: Anti-duplicado del escalado automático (ver ``tasks.escalar_aprobaciones_vencidas``).
+    fecha_escalado = models.DateTimeField(null=True, blank=True, verbose_name='Escalado en')
 
     class Meta:
         verbose_name = 'Aprobación de Planilla'
@@ -1149,6 +1221,13 @@ class SolicitudAprobacionDocumento(models.Model):
     def aplicar_eliminacion_version(self, doc, version):
         """Soft-delete la versión y restaura la anterior si era la actual"""
         if not version:
+            return
+        # Un documento conserva siempre al menos una versión activa: es la
+        # red de seguridad de `views.eliminar_version` por si otra ruta
+        # llega a llamar esto sin haber comprobado.
+        if not VersionDocumento.objects.filter(
+            documento=doc, activa=True
+        ).exclude(id=version.id).exists():
             return
         version.activa = False
         version.save(update_fields=['activa'])

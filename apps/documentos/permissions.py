@@ -13,10 +13,14 @@ def q_documentos_visibles(usuario):
     - coordinador/trabajador: propios + públicos activos + asignaciones
       (coordinador) + distribuciones no revocadas.
 
+    La jefatura se evalúa como **efectiva** (natural o delegada), por lo que un
+    delegado vigente ve los documentos de su departamento como el jefe.
+
     Las asignaciones/distribuciones se resuelven por subconsulta (``id__in``)
     para no introducir JOINs que dupliquen resultados.
     """
     from .models import AsignacionDocumento, DistribucionDocumento
+    from .jefatura import departamentos_jefados
 
     perfil = getattr(usuario, 'perfil', None)
     if perfil and perfil.es_administrador:
@@ -32,18 +36,19 @@ def q_documentos_visibles(usuario):
     grants = Q(id__in=ids_asignados) | Q(id__in=ids_distribuidos)
 
     base = Q(propietario=usuario) | publicos | grants
-    if perfil and perfil.es_jefe and perfil.departamento_id:
+    deptos_jefe = departamentos_jefados(usuario)
+    if deptos_jefe:
         base |= Q(
-            departamento_id=perfil.departamento_id,
+            departamento_id__in=deptos_jefe,
             clasificacion__in=['interno', 'confidencial'],
         )
     return base
 
 
 def es_jefe_de_departamento(usuario, documento):
-    return (usuario.perfil.es_jefe
-            and documento.departamento
-            and documento.departamento == usuario.perfil.departamento)
+    from .jefatura import es_jefe_efectivo
+
+    return es_jefe_efectivo(usuario, getattr(documento, 'departamento', None))
 
 
 def obtener_documento(tipo, doc_id):
@@ -135,15 +140,17 @@ def puede_inhabilitar(usuario, documento):
 
 
 def puede_transferir(usuario, documento):
-    """Solo administradores y el jefe del departamento del documento.
+    """Administradores, o el jefe del departamento del documento.
+
+    La jefatura se evalúa como **efectiva** (natural o delegada vigente).
 
     Ambos transfieren de forma directa (no existe aprobación de transferencia).
     """
-    if usuario.perfil.es_jefe:
-        depto_doc = getattr(documento, 'departamento', None)
-        if depto_doc == usuario.perfil.departamento:
-            return True, "directo"
+    from .jefatura import es_jefe_efectivo
+
     if usuario.perfil.es_administrador:
+        return True, "directo"
+    if es_jefe_efectivo(usuario, getattr(documento, 'departamento', None)):
         return True, "directo"
     return False, "sin_permiso"
 

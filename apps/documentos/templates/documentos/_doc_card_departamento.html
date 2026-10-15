@@ -33,4 +33,27 @@ Necesita en el contexto: hoy, dias7 (fechas de vencimiento).
           <div class="doc-actions">
             <a href="{% url 'documentos:detalle' tipo=tipo.key documento_id=doc.uuid %}" class="btn btn--ghost btn--sm"><i class="fa-solid fa-eye"></i> Ver</a>
           </div>
+          <div class="accordion doc-card-acciones">
+            <button type="button" class="accordion-header doc-card-acciones-toggle"
+                    onclick="toggleDocAccion(this)" aria-expanded="false"
+                    aria-controls="acciones-{{ doc.uuid }}" aria-label="Acciones rápidas">
+              <i class="fa-solid fa-bolt"></i>
+              <i class="fa-solid fa-chevron-down accordion-chevron"></i>
+            </button>
+            <div class="accordion-content" id="acciones-{{ doc.uuid }}">
+              <div class="accordion-body doc-actions doc-actions--extras">
+                <a href="{% url 'documentos:historial_versiones' tipo=tipo.key documento_id=doc.uuid %}" class="btn btn--ghost btn--sm"><i class="fa-solid fa-clock-rotate-left"></i> Historial</a>
+                {% if doc.puede_asignar %}
+                <a href="{% url 'documentos:asignar_documento' tipo=tipo.key documento_id=doc.uuid %}" class="btn btn--ghost btn--sm"><i class="fa-solid fa-user-plus"></i> Asignar</a>
+                {% endif %}
+                {% if doc.puede_transferir %}
+                <a href="{% url 'documentos:transferir_propiedad' tipo=tipo.key documento_id=doc.uuid %}" class="btn btn--ghost btn--sm"><i class="fa-solid fa-right-left"></i> Transferir</a>
+                {% endif %}
+                {% if doc.estado == 'activo' and doc.puede_distribuir %}
+                <a href="{% url 'documentos:distribuir_documento' tipo=tipo.key documento_id=doc.uuid %}" class="btn btn--ghost btn--sm"><i class="fa-solid fa-share-nodes"></i> Distribuir</a>
+                <a href="{% url 'documentos:historial_distribucion' tipo=tipo.key documento_id=doc.uuid %}" class="btn btn--ghost btn--sm"><i class="fa-solid fa-list"></i> Distribución</a>
+                {% endif %}
+              </div>
+            </div>
+          </div>
         </div>
