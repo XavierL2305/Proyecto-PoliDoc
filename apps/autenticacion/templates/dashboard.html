@@ -197,7 +197,7 @@
     <div class="stat-icon stat-icon--warning"><i class="fa-solid fa-file-pen"></i></div>
     <div class="stat-info"><span class="stat-value">{{ total_borradores }}</span><span class="stat-label">Borradores</span></div>
   </div>
-  {% if user.perfil.es_jefe %}
+  {% if user.perfil.ejerce_jefatura %}
   <div class="stat-card">
     <div class="stat-icon stat-icon--danger"><i class="fa-solid fa-clock"></i></div>
     <div class="stat-info"><span class="stat-value">{{ solicitudes_pendientes }}</span><span class="stat-label">Solicitudes Pendientes</span></div>
@@ -209,6 +209,10 @@
   </div>
   {% endif %}
 </div>
+
+{% if user.perfil.ejerce_jefatura and conteos_vigencia %}
+{% include 'documentos/_vigencia_panel.html' with conteos_vigencia=conteos_vigencia modo='redirect' %}
+{% endif %}
 
 <div class="sections-grid">
   <div class="section-card">
@@ -273,7 +277,7 @@
           <a href="{% url 'documentos:seleccionar_tipo' %}" class="btn btn--primary btn--sm" style="width: 100%;">
             <i class="fa-solid fa-plus"></i> Nuevo Documento
           </a>
-          {% if user.perfil.es_jefe %}
+          {% if user.perfil.ejerce_jefatura %}
           <a href="{% url 'documentos:documentos_departamento' %}" class="btn btn--ghost btn--sm" style="width: 100%;">
             <i class="fa-solid fa-building"></i> Departamento
           </a>

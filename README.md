@@ -56,6 +56,20 @@ clasificación de seguridad, descargas trazables y auditoría inmutable.
 ```bash
 pip install -r requirements.txt
 python manage.py migrate
+./run_local.sh
+```
+
+`run_local.sh` ejecuta `collectstatic` + `compress` antes de `runserver`, en
+paridad con el servicio `web` de Docker. Si `DEBUG=False` esto es obligatorio
+(WhiteNoise con manifest no encuentra `polidoc/static/**` sin recogerlos);
+con `DEBUG=True` `runserver` sirve los estáticos desde los finders y los pasos
+previos son inocuos pero evitan que `staticfiles/` quede desactualizado.
+
+Alternativa manual (equivalente):
+
+```bash
+python manage.py collectstatic --noinput
+python manage.py compress --force || true
 python manage.py runserver
 ```
 

@@ -145,7 +145,7 @@
   <div>
     <h1>Formularios Descargables</h1>
   </div>
-  {% if user.perfil.es_jefe or user.perfil.es_administrador %}
+  {% if user.perfil.ejerce_jefatura or user.perfil.es_administrador %}
   <a href="{% url 'documentos:bandeja_aprobaciones' %}" class="btn btn--primary btn--sm">
     <i class="fa-solid fa-stamp"></i> Bandeja de Aprobaciones
   </a>

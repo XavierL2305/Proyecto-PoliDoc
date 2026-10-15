@@ -1,25 +1,52 @@
 # 06. Aprobaciones: evaluación y autorización
 
-Todos los documentos que se envían a revisión pasan por la **misma cadena de
-dos pasos**. Este capítulo explica el flujo tanto para quien aprueba como para
-quien espera la respuesta.
+Todos los documentos que se envían a revisión pasan por la **aprobación de
+Gerencia General**. Si quien los envía es un **jefe de departamento** basta con
+**un solo paso**; para el resto el flujo conserva la **cadena de dos pasos**.
+Este capítulo explica el flujo tanto para quien aprueba como para quien espera
+la respuesta.
 
 ## La cadena de aprobación
+
+### Si envía un JEFE de departamento → UN solo paso
+
+```
+Creador (jefe) envía a revisión
+        │
+        ▼
+┌──────────────────────────┐
+│ AUTORIZACIÓN (Autorizar) │  Jefe de Gerencia General (GG)
+│  Único aprobador         │  Solo él activa el documento
+└──────────────────────────┘
+        │  aprobado
+        ▼
+   Documento ACTIVO
+```
+
+La evaluación de un **jefe par** (p. ej. SGC) **ya no aplica** cuando quien
+crea es jefe: Gerencia General es el único aprobador. Lo mismo ocurre con la
+Planilla de Cambios que envía un jefe.
+
+> **Si quien envía ES el jefe de Gerencia General**, se le genera una **tarea
+> de autorización pendiente a su nombre**: él mismo la aprueba (o la rechaza)
+> desde su bandeja, como en cualquier otra solicitud.
+
+### Si envía un Coordinador, un Trabajador o el Administrador → dos pasos
 
 ```
 Creador envía a revisión
         │
         ▼
-┌─────────────────────┐
-│ 1. EVALUACIÓN        │  Jefe de tu departamento
-│    (Evaluar)         │  (si tú eres jefe, evalúa un jefe par: no te autoevalúas)
-└─────────────────────┘
+┌──────────────────────────────┐
+│ 1. EVALUACIÓN (Evaluar)      │  Jefe de tu departamento
+│                              │  (o el de GG si el tuyo no tiene)
+└──────────────────────────────┘
         │  aprobado
         ▼
-┌─────────────────────┐
-│ 2. AUTORIZACIÓN      │  Jefe de Gerencia General (GG)
-│    (Autorizar)       │  Solo él activa el documento
-└─────────────────────┘
+┌──────────────────────────────┐
+│ 2. AUTORIZACIÓN (Autorizar)  │  Jefe de Gerencia General (GG)
+│    Solo él activa el doc.    │
+└──────────────────────────────┘
         │  aprobado
         ▼
    Documento ACTIVO
@@ -27,8 +54,8 @@ Creador envía a revisión
 
 - **Cualquier rechazo** detiene la cadena: el documento vuelve a *Borrador* y
   el creador recibe una notificación con el motivo.
-- Son **dos pasos siempre**. Si la misma persona ocupa los dos roles, aprueba
-  dos veces.
+- **Una sola aprobación** si el solicitante es jefe; **dos pasos** para el
+  resto. Si la misma persona ocupa los dos roles en la cadena, aprueba dos veces.
 - Si falta el jefe de un paso, ese paso queda **"En espera"** hasta que un
   administrador asigne el jefe correspondiente (no se salta automáticamente).
 
@@ -96,12 +123,14 @@ En la ficha aparece el aviso **"Documento pendiente de evaluación"** o
 
 1. **Revisa el documento.** Como aprobador puedes abrir el visor y ver el
    contenido mientras el trámite está pendiente: es necesario para evaluarlo.
-2. Pulsa **Evaluar** (paso 1) o **Autorizar** (paso 2).
+2. Pulsa **Evaluar** (solo cuando el envío pasa por los dos pasos) o
+   **Autorizar** (único paso de un jefe, o paso final).
 3. Si deseas, escribe observaciones y confirma.
-4. Si apruebas en el paso 1, aparecerá *"Evaluación registrada. Pendiente de
-   autorización final"* y el paso 2 pasará a *Pendiente* para Gerencia
-   General.
-5. Al aprobar el paso 2, el documento pasa a **Activo**, con su fecha de
+4. Si apruebas el paso de evaluación, aparecerá *"Evaluación registrada.
+   Pendiente de autorización final"* y el paso de autorización pasará a
+   *Pendiente* para Gerencia General.
+5. Al aprobar la **última** aprobación (la de autorización, o la única si el
+   solicitante era jefe), el documento pasa a **Activo**, con su fecha de
    vigencia, vencimiento, revisión y versión actualizadas. El creador recibe
    una notificación.
 
@@ -118,7 +147,7 @@ El documento vuelve a **Borrador** y el creador es notificado con tu motivo.
 | Mensaje | Causa | Solución |
 |---|---|---|
 | "El motivo de rechazo es requerido" | No escribiste el motivo | Escribe el motivo antes de confirmar |
-| No ves los botones *Evaluar*/*Autorizar* | No te toca: otra persona debe resolver el paso | Espera o consulta con tu departamento |
+| No ves los botones *Evaluar*/*Autorizar* | No te toca: otra persona debe resolver ese paso | Espera o consulta con tu departamento |
 | El documento está "En espera" | El departamento no tiene jefe asignado para ese paso | Un administrador debe asignar el jefe |
 | Llega notificación "Aprobación estancada" | Más de 48 h sin resolver | Los administradores ya fueron avisados; resuelve cuanto antes |
 
@@ -128,7 +157,10 @@ El documento vuelve a **Borrador** y el creador es notificado con tu motivo.
 
 1. Tras enviar, la ficha muestra el estado **En Revisión** y el aviso
    *"Documento pendiente de evaluación"* o *"Documento pendiente de
-   autorización"*.
+   autorización"*. **Si eres jefe de departamento solo verás el de
+   autorización**: tu documento espera directamente a Gerencia General.
+   Si además eres el jefe de GG, esa autorización queda **como tarea
+   pendiente a tu nombre**.
 2. En la pestaña **Historial de Estado** ves quién evaluó, cuándo y con qué
    observaciones.
 3. Recibirás notificaciones en la campana cuando:

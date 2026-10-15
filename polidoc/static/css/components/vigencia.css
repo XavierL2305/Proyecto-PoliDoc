@@ -1,0 +1,29 @@
+/* Panel de vigencia: cards con los conteos de documentos por estado de
+   vigencia. Usado en documentos/departamento (como filtro) y en el
+   dashboard del jefe (como acceso directo). */
+.vigencia-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+.vigencia-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--color-border);
+  border-left-width: 4px;
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  text-decoration: none;
+  transition: all var(--transition);
+}
+.vigencia-card:hover { box-shadow: var(--shadow-md); }
+.vigencia-card.is-active { box-shadow: var(--shadow-md); background: var(--color-bg-alt); }
+.vigencia-card--danger { border-left-color: var(--color-danger); }
+.vigencia-card--warning { border-left-color: var(--color-warning); }
+.vigencia-card--success { border-left-color: var(--color-success); }
+.vigencia-card--muted { border-left-color: var(--color-muted); }
+.vigencia-num { font-size: 1.35rem; font-weight: 700; color: var(--color-text); }
+.vigencia-label { font-size: 0.75rem; color: var(--color-muted); }

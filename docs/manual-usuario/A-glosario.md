@@ -9,10 +9,10 @@ alfabético.
 | **Aprobador** | Quien resuelve un paso de la cadena de aprobación |
 | **Asignación** | Permiso que un jefe otorga a un coordinador sobre un documento, con las facultades leer / editar / eliminar |
 | **Auditoría** | Registro inmutable de quién hizo qué y cuándo (login, descargas, aprobaciones, eliminaciones). En ISO 27001/15489 |
-| **Autorizador** | Segundo paso de la cadena: el jefe de Gerencia General (GG). Solo él activa el documento |
+| **Autorizador** | Último paso de la cadena: el jefe de Gerencia General (GG). Solo él activa el documento; es el **único** paso cuando el que envía es un jefe |
 | **Bandeja de Aprobaciones** | Pantalla del jefe/administrador con lo que debe resolver: la sección *Cambios de estado* y la de *Solicitudes de Descarga*. No confundir con *Mis solicitudes* |
 | **Borrador** | Estado de un documento en elaboración: no está aprobado ni es visible para los demás |
-| **Cadena de aprobación** | Los dos pasos obligatorios: Evaluación → Autorización |
+| **Cadena de aprobación** | Evaluación → Autorización (dos pasos). Si el que envía es un **jefe de departamento**, solo tiene **Autorización** por GG |
 | **Clasificación de seguridad** | Nivel de confidencialidad: Público, Interno, Confidencial o Restringido. Decide quién ve y quién descarga |
 | **Código** | Identificador único del documento, por ejemplo `TI-PRG-001` (departamento-tipo-secuencia). Excepción: DPR numerado globalmente |
 | **Coordinador** | Rol que gestiona documentos propios y los que su jefe le asigna |
@@ -21,7 +21,7 @@ alfabético.
 | **Doble control** | Aprobación que requiere dos personas (jefe + administrador), aplicada a los documentos *Restringidos* |
 | **DPR** | Descripción de Procesos: tipo con código global, solo creado por jefes y visible por cualquier jefe |
 | **En Revisión** | Estado del documento que está dentro de la cadena de aprobación |
-| **Evaluador** | Primer paso de la cadena: jefe de departamento (o jefe par si el solicitante también es jefe) |
+| **Evaluador** | Primer paso de la cadena: jefe de departamento. No interviene cuando el solicitante también es jefe (entonces solo autoriza GG) |
 | **Formato** | Plantilla configurable (secciones y campos) que se aplica a determinadas operaciones; lo gestiona el administrador |
 | **GG** | Gerencia General: departamento cuyo jefe actúa como Autorizador |
 | **Habilitar / Inhabilitar** | Reactivar un documento obsoleto / pasarlo a obsoleto. Exige UNA aprobación: la aplica directo el administrador o el jefe de Gerencia General; los demás reciben el botón como *Solicitar Reactivación* / *Solicitar Inhabilitación* |

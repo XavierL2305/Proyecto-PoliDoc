@@ -16,6 +16,7 @@ from documentos.models import (
     Documento, SolicitudDescarga,
     VersionDocumento, AsignacionDocumento, Departamento
 )
+from documentos.services.vigencia import calcular_conteos_vigencia
 from auditoria.services import obtener_logs
 from auditoria.middleware import resolver_ip_cliente
 
@@ -245,15 +246,21 @@ def dashboard_view(request):
     total_activos = mis_documentos_qs.filter(estado='activo').count()
     total_borradores = mis_documentos_qs.filter(estado='borrador').count()
 
-    # Solicitudes de descarga pendientes (para jefes y administradores)
+    # Solicitudes de descarga pendientes (para jefes, delegados y admins)
     solicitudes_pendientes = 0
-    if (perfil.es_jefe or perfil.es_administrador) and perfil.departamento:
+    if (perfil.ejerce_jefatura or perfil.es_administrador) and perfil.departamento:
         solicitudes_pendientes = SolicitudDescarga.objects.filter(
             estado='pendiente',
             documento__departamento=perfil.departamento
         ).count()
 
     notificaciones_no_leidas = Notificacion.objects.filter(usuario=user, leida=False).count()
+
+    # Panel de vigencia del departamento (jefes y delegados; el mismo cálculo
+    # que la página de Documentos por Departamento, reutilizado desde services).
+    conteos_vigencia = None
+    if perfil.ejerce_jefatura and perfil.departamento:
+        conteos_vigencia = calcular_conteos_vigencia([perfil.departamento], '', user)
 
     ultimos_documentos = mis_documentos_qs.select_related('departamento').order_by('-fecha_modificacion')[:10]
     ultimas_versiones = VersionDocumento.objects.filter(creado_por=user).select_related('documento')[:5]
@@ -265,6 +272,7 @@ def dashboard_view(request):
         'total_borradores': total_borradores,
         'solicitudes_pendientes': solicitudes_pendientes,
         'notificaciones_no_leidas': notificaciones_no_leidas,
+        'conteos_vigencia': conteos_vigencia,
         'ultimos_documentos': ultimos_documentos,
         'ultimas_versiones': ultimas_versiones,
         'logs_recientes': logs_recientes,

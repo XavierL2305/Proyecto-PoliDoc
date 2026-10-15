@@ -1,0 +1,143 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Transferencia Masiva - Configuración{% endblock %}
+
+{% block extra_css %}
+<style>
+  .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem; }
+  .page-header h1 { font-size: 1.5rem; font-weight: 700; color: var(--color-text); margin: 0; }
+  .tm-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); margin-bottom: 1.5rem; }
+  .tm-card-header { padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--color-border); }
+  .tm-card-header h3 { font-size: 1rem; font-weight: 600; color: var(--color-text); margin: 0; }
+  .tm-card-body { padding: 1.5rem; }
+  .tm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; }
+  .tm-hint { font-size: 0.8125rem; color: var(--color-muted); margin: 0 0 1.5rem; }
+  .tm-group-title { font-size: 0.875rem; font-weight: 600; color: var(--color-text); margin: 1.5rem 0 0.5rem; display: flex; align-items: center; gap: 0.5rem; }
+  .tm-group-title:first-child { margin-top: 0; }
+  .tm-item { display: flex; align-items: center; gap: 0.625rem; padding: 0.5rem 0.75rem; border: 1px solid var(--color-border); border-radius: var(--radius); margin-bottom: 0.375rem; font-size: 0.875rem; cursor: pointer; }
+  .tm-item input { margin: 0; }
+  .tm-item .tm-meta { color: var(--color-muted); font-size: 0.75rem; }
+  .tm-empty { font-size: 0.875rem; color: var(--color-muted); font-style: italic; }
+  .tm-footer { padding: 1rem 1.5rem; border-top: 1px solid var(--color-border); display: flex; align-items: center; justify-content: flex-end; gap: 0.75rem; flex-wrap: wrap; }
+  .tm-todo { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem; font-weight: 600; font-size: 0.875rem; cursor: pointer; }
+</style>
+{% endblock %}
+
+{% block app_content %}
+<div class="page-header">
+  <h1>Transferencia Masiva</h1>
+</div>
+
+<p class="tm-hint">
+  Cubre la ausencia temporal (vacaciones) de un trabajador: mueve de un golpe la
+  <strong>propiedad</strong>, las <strong>asignaciones</strong> como coordinador y las
+  <strong>distribuciones</strong> que recibe, hacia otro usuario del mismo departamento.
+</p>
+
+<div class="tm-card">
+  <div class="tm-card-header"><h3>1. Usuario de origen</h3></div>
+  <div class="tm-card-body">
+    <form method="get" action="">
+      <div class="tm-grid">
+        {% if not es_solo_dept %}
+        <div class="form-group" style="margin-bottom:0;">
+          <label class="form-label">Departamento *</label>
+          <select name="departamento" class="form-input" required>
+            <option value="">Seleccione un departamento...</option>
+            {% for dep in departamentos %}<option value="{{ dep.id }}" {% if departamento and dep.id == departamento.id %}selected{% endif %}>{{ dep }}</option>{% endfor %}
+          </select>
+        </div>
+        {% endif %}
+        <div class="form-group" style="margin-bottom:0;">
+          <label class="form-label">Trabajador que se ausenta *</label>
+          <select name="origen" class="form-input" {% if not departamento %}disabled{% endif %} required>
+            <option value="">Seleccione un usuario...</option>
+            {% for u in usuarios %}<option value="{{ u.id }}" {% if origen and u.id == origen.id %}selected{% endif %}>{{ u.get_full_name|default:u.username }} ({{ u.username }})</option>{% endfor %}
+          </select>
+        </div>
+      </div>
+      <div style="margin-top:1rem;">
+        <button type="submit" class="btn btn--primary btn--sm"><i class="fa-solid fa-magnifying-glass"></i> Previsualizar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if origen %}
+<form method="post">
+  {% csrf_token %}
+  <input type="hidden" name="origen" value="{{ origen.id }}">
+  {% if not es_solo_dept %}<input type="hidden" name="departamento" value="{{ departamento.id }}">{% endif %}
+
+  <div class="tm-card">
+    <div class="tm-card-header"><h3>2. Usuario destino</h3></div>
+    <div class="tm-card-body">
+      {% if candidatos %}
+      <div class="form-group" style="margin-bottom:0;">
+        <label class="form-label">Nuevo responsable *</label>
+        <select name="destino" class="form-input" required>
+          <option value="">Seleccione un usuario...</option>
+          {% for u in candidatos %}<option value="{{ u.id }}" {% if destino_id and u.id == destino_id %}selected{% endif %}>{{ u.get_full_name|default:u.username }} ({{ u.username }})</option>{% endfor %}
+        </select>
+      </div>
+      {% else %}
+      <div class="tm-empty">No hay otros usuarios en el departamento a quienes transferir.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="tm-card">
+    <div class="tm-card-header"><h3>3. Elementos a transferir</h3></div>
+    <div class="tm-card-body">
+      {% if total %}
+      <label class="tm-todo"><input type="checkbox" id="tm-todo"> Seleccionar todo ({{ total }})</label>
+
+      <div class="tm-group-title"><i class="fa-solid fa-file-lines"></i> Propiedad de documentos ({{ propiedad|length }})</div>
+      {% for d in propiedad %}
+      <label class="tm-item"><input type="checkbox" name="propiedad_ids" value="{{ d.id }}"> <span><strong>{{ d.codigo }}</strong> — {{ d.nombre }} <span class="tm-meta">({{ d.get_estado_display }})</span></span></label>
+      {% empty %}
+      <div class="tm-empty">Sin documentos propios.</div>
+      {% endfor %}
+
+      <div class="tm-group-title"><i class="fa-solid fa-user-pen"></i> Asignaciones como coordinador ({{ asignaciones|length }})</div>
+      {% for a in asignaciones %}
+      <label class="tm-item"><input type="checkbox" name="asignacion_ids" value="{{ a.id }}"> <span><strong>{{ a.documento.codigo }}</strong> — {{ a.documento.nombre }} <span class="tm-meta">(leer {{ a.puede_leer|yesno:"sí,no" }}, editar {{ a.puede_editar|yesno:"sí,no" }}, eliminar {{ a.puede_eliminar|yesno:"sí,no" }})</span></span></label>
+      {% empty %}
+      <div class="tm-empty">Sin asignaciones activas.</div>
+      {% endfor %}
+
+      <div class="tm-group-title"><i class="fa-solid fa-share-nodes"></i> Distribuciones recibidas ({{ distribuciones|length }})</div>
+      {% for r in distribuciones %}
+      <label class="tm-item"><input type="checkbox" name="distribucion_ids" value="{{ r.id }}"> <span><strong>{{ r.documento.codigo }}</strong> — {{ r.documento.nombre }} <span class="tm-meta">({{ r.get_metodo_display }})</span></span></label>
+      {% empty %}
+      <div class="tm-empty">Sin distribuciones vigentes.</div>
+      {% endfor %}
+      {% else %}
+      <div class="tm-empty">{{ origen.get_full_name|default:origen.username }} no tiene documentos, asignaciones ni distribuciones para transferir.</div>
+      {% endif %}
+    </div>
+    {% if total %}
+    <div class="tm-footer">
+      <span style="margin-right:auto; font-size:0.8125rem; color:var(--color-muted);">Se transferirá todo lo marcado en una sola operación.</span>
+      <a href="{{ request.get_full_path }}" class="btn btn--ghost">Cancelar</a>
+      <button type="submit" class="btn btn--primary" {% if not candidatos %}disabled{% endif %}><i class="fa-solid fa-right-left"></i> Transferir</button>
+    </div>
+    {% endif %}
+  </div>
+</form>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function () {
+    var todo = document.getElementById('tm-todo');
+    if (!todo) return;
+    todo.addEventListener('change', function () {
+      var items = document.querySelectorAll('.tm-item input[type="checkbox"]');
+      for (var i = 0; i < items.length; i++) { items[i].checked = todo.checked; }
+    });
+  })();
+</script>
+{% endblock %}

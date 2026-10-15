@@ -289,14 +289,15 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
     de un documento se justifica mediante una "Planilla de Cambios".
   - Parámetros Específicos: La planilla recopilará los criterios obligatorios
     de la institución (justificación, alcance, departamentos afectados, etc.).
-  - Circuito de Doble Aprobación: La nueva versión no entrará en vigencia
-    hasta que la Planilla cumpla con la aprobación del Evaluador (jefe par
-    si el solicitante es jefe; si no, jefe del departamento de origen) y del
-    Autorizador (jefe de GG). SIEMPRE son dos pasos: no hay fallback a
-    administrador ni colapso cuando Evaluador == Autorizador (el mismo jefe
-    aprueba primero como evaluador y luego como autorizador). Si falta el
-    jefe de un paso, ese paso queda en 'esperando' (aprobador=None) hasta
-    que se asigne uno. Ver §7.3 y §20.
+  - Circuito de Aprobación: La nueva versión no entrará en vigencia hasta que
+    la Planilla cumpla con la aprobación del AUTORIZADOR (jefe de GG). Si el
+    responsable NO es jefe, hay además un paso previo de EVALUADOR (jefe del
+    departamento de origen). Si el responsable ES jefe, hay UN solo paso: la
+    autorización de GG (sin evaluación par). No hay fallback a administrador
+    ni colapso cuando Evaluador == Autorizador (el mismo jefe aprueba primero
+    como evaluador y luego como autorizador). Si falta el jefe de un paso, ese
+    paso queda en 'esperando' (aprobador=None) hasta que se asigne uno.
+    Ver §7.3 y §20.
 
   7.1 FLUJO DE BORRADOR:
       - El usuario puede guardar la planilla como "Borrador" sin bloquear el documento
@@ -307,8 +308,8 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
       - Al enviar a revisión:
         * La planilla pasa a estado "en_revision"
         * El documento pasa a estado "en_revision" (se bloquea)
-        * Se crean dos registros de aprobación: uno Evaluador (pendiente),
-          otro Autorizador (esperando).
+        * Se crea UNA aprobación Autorizador (pendiente) si el responsable es
+          jefe; o DOS (Evaluador pendiente + Autorizador esperando) si no lo es.
       - Solo el responsable de la planilla puede enviarla a revisión
 
   7.2 ESTADOS DE LA PLANILLA:
@@ -317,18 +318,26 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
       - aprobado: Cambios aplicados al documento
       - rechazado: Cambios rechazados, documento vuelve a estado anterior
 
-  7.3 CADENA DE APROBACIÓN (doble paso):
-      - Al enviar: SIEMPRE se crean dos registros AprobacionPlanilla:
-        1. Evaluador (rol_aprobador='evaluador', es_final=False)
-        2. Autorizador (rol_aprobador='autorizador', es_final=True,
-           estado='esperando')
-      - No hay colapso a un solo paso ni fallback a administrador.
+  7.3 CADENA DE APROBACIÓN (uno o dos pasos según el solicitante):
+      - Al enviar, `crear_cadena_aprobacion_planilla()` crea:
+        * Si el responsable ES jefe: UN SOLO registro AprobacionPlanilla
+          Autorizador (rol_aprobador='autorizador', es_final=True,
+          estado='pendiente' si hay jefe de GG, si no 'esperando').
+        * Si el responsable NO es jefe: DOS registros:
+          1. Evaluador (rol_aprobador='evaluador', es_final=False)
+          2. Autorizador (rol_aprobador='autorizador', es_final=True,
+             estado='esperando')
+      - No hay colapso a un solo paso ni fallback a administrador. No se usa
+        evaluación de jefe par (el antiguo `_evaluador_par`/SGC se eliminó).
       - Si no hay jefe de depto/GG, el paso correspondiente queda en
         'esperando' con aprobador=None hasta que se asigne.
       - Al aprobar Evaluador → se cambia Autorizador a 'pendiente' y se notifica.
+        (No aplica en la cadena de un solo paso.)
       - Al aprobar Autorizador (es_final=True) → se aplican cambios al documento.
-      - Si cualquiera rechaza → se cancela el registro hermano y se revierte el
-        documento a su estado anterior.
+      - Si cualquiera rechaza → se cancela el registro hermano (si existe) y se
+        revierte el documento a su estado anterior.
+      - Si el creador es el jefe de GG, la fila única queda pendiente A SU NOMBRE
+        (tarea que él mismo aprueba/rechaza; no se auto-notifica).
       - (Ver modelo AprobacionPlanilla en models.py y §13.8 para versión vs edición)
 
 8. FORMATOS Y EXTENSIONES SOPORTADAS
@@ -703,7 +712,19 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
          (`renovar_vencimiento`) queda **solo para reactivar obsoletos**.
          La vista `documentos_departamento` aplica `q_documentos_visibles` y
          añade panel + filtro por vigencia (vencidos/vence pronto/vigentes/
-         sin vigencia).
+         sin vigencia). El panel es un componente **reutilizable**: markup en
+         `documentos/_vigencia_panel.html`, CSS en
+         `static/css/components/vigencia.css` y cálculo en
+         `documentos/services/vigencia.py::calcular_conteos_vigencia` (un único
+         aggregate; usado por `documentos_departamento` y por el dashboard).
+         El partial admite dos modos de link: por defecto filtra la propia
+         página (`?vigencia=...&clasificacion=...`, marcando `is-active`); con
+         `modo='redirect'` abre `documentos:documentos_departamento` ya
+         filtrada. El **dashboard** (`autenticacion.views.dashboard_view` +
+         `dashboard.html`) muestra ese mismo panel bajo el `stats-grid`,
+         **solo para jefes de departamento** (`perfil.es_jefe and
+         perfil.departamento`; admin/coordinador/trabajador no lo ven), en un
+         card "Vigencia del departamento" con botón "Ver departamento".
 
   13.5 RESTRICCIONES DE ESTADO (ISO 9001:7.5):
         - Documentos OBSOLETOS: No se editan ni eliminan
@@ -1103,10 +1124,14 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
 20. FLUJO DE APROBACIÓN DE CREACIÓN DE DOCUMENTOS
 -------------------------------------------------------------------
   20.1 REGLA GENERAL:
-       - TODO documento nuevo (Proceso, Procedimiento o Formulario) pasa por una
-         CADENA DE DOBLE APROBACIÓN antes de estar "activo".
-       - Paso 1 – EVALUADOR: jefe del departamento de origen.
-       - Paso 2 – AUTORIZADOR: jefe de Gerencia General (GG).
+       - TODO documento nuevo (Proceso, Procedimiento o Formulario) pasa por la
+         aprobación del AUTORIZADOR antes de estar "activo".
+       - Solicitante ES jefe (rol `jefe_departamento`; el admin NO cuenta como
+         jefe) → UN SOLO paso: AUTORIZADOR (jefe de GG), es_final=True.
+         No hay paso de evaluación: se eliminó la evaluación de un jefe par.
+       - Solicitante NO es jefe → DOS pasos:
+         Paso 1 – EVALUADOR: jefe del departamento de origen.
+         Paso 2 – AUTORIZADOR: jefe de Gerencia General (GG).
        - NO hay fallback a administrador: el admin no evalúa ni autoriza.
        - Si no existe jefe de departamento, el paso evaluador queda en
          'esperando' con aprobador=None hasta que se asigne uno.
@@ -1116,67 +1141,76 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
        - El documento queda en estado "en_revision" durante el proceso.
 
   20.2 DETERMINACIÓN DE APROBADORES:
-       a) Evaluador (determinar_evaluador):
-          1. Solicitante ES jefe (de cualquier depto) → jefe par:
-             a) jefe del depto designado (`APROBACION_EVALUADOR_DEPTO_GG`,
-                default `SGC`); b) si no, primer depto activo con jefe (orden
-                por código), distinto al solicitante.
-          2. Solicitante NO es jefe → jefe del depto de origen.
-          3. Sin jefe de depto → jefe de GG.
-          4. Sin jefe disponible → None (queda en espera).
-       b) Autorizador (determinar_autorizador):
+       a) ¿Aplica aprobación única? `views._es_aprobacion_unica(usuario)` →
+          `_es_jefe(usuario)` → `PerfilUsuario.es_jefe` (rol 'jefe_departamento';
+          NO incluye 'administrador'). Mismo criterio para documentos y planillas.
+       b) Evaluador (determinar_evaluador) — SOLO para solicitantes NO jefes:
+          1. Jefe del departamento de origen (si difiere del solicitante).
+          2. Sin jefe de depto → jefe de GG (si difiere del solicitante).
+          3. Sin jefe disponible → None (queda en espera).
+          Los jefes NO usan este paso.
+       c) Autorizador (determinar_autorizador):
           1. Jefe de GG.   2. Sin jefe de GG → None (queda en espera).
-          Nota: si el jefe de GG creó el documento, él mismo autoriza
-          (autofirma) tras la evaluación de un jefe par.
-       Reajuste de cadenas existentes: `manage.py reajustar_evaluador_pendientes`
-       recalcula el evaluador de las cadenas PENDIENTES (documentos y planillas)
-       cuando el solicitante es jefe; renotifica al nuevo evaluador y limpia la
-       notificación pendiente del anterior. Idempotente.
+          Nota: si el jefe de GG creó el documento/planilla, la fila única queda
+          pendiente A SU NOMBRE (autofirma manual desde su bandeja; no se
+          auto-notifica). Si otro jefe lo creó, se le notifica.
+       Cadena histórica: NO se migran las cadenas existentes; las filas de dos
+       pasos ya creadas siguen siendo válidas y resolubles tal cual.
        Documentación visible: la página **Roles y Permisos**
        (`configuracion/roles-permisos/`, admin/jefe) incluye una sección
-       "Flujo de aprobación" con la regla por rol y los datos reales (depto
-       evaluador configurado + su jefe, y jefe de GG). Contexto en
-       `views.roles_permisos`.
+       "Flujo de aprobación" con la tabla por rol quién evalúa y quién autoriza
+       (una fila "— no aplica" para jefes) y el jefe de GG real. Contexto en
+       `views.roles_permisos` (ya no depende de `APROBACION_EVALUADOR_DEPTO_GG`).
 
   20.3 FLUJO DETALLADO:
        1. Usuario crea documento → "borrador", luego "en_revision".
-       2. crear_cadena_aprobacion_documento() SIEMPRE crea dos registros:
-          - Evaluador:   estado "pendiente" (o "esperando" si no hay jefe),
-                         es_final=False.
-          - Autorizador: estado "esperando", es_final=True.
-          (No hay colapso a un solo paso.)
-       3. Se notifica al Evaluador si está asignado.
-       4. Evaluador aprueba → activa al Autorizador ("pendiente") y lo notifica.
-          Si el autorizador no tiene jefe de GG, queda "esperando" y se deja
-          rastro al solicitante/propietario.
+       2. crear_cadena_aprobacion_documento() crea UN registro si el solicitante
+          es jefe, DOS si no lo es:
+          - Jefe: Autorizador, estado "pendiente" (o "esperando" si no hay jefe
+            de GG), es_final=True. Único paso.
+          - No jefe: Evaluador estado "pendiente" (o "esperando" si no hay
+            jefe), es_final=False; Autorizador estado "esperando", es_final=True.
+       3. Se notifica al primer aprobador asignado, EXCEPTO cuando es el propio
+          solicitante (jefe de GG autorizando lo que él creó).
+       4. Si hay evaluador: al aprobar → activa al Autorizador ("pendiente") y
+          lo notifica. Si el autorizador no tiene jefe de GG, queda "esperando"
+          y se deja rastro al solicitante/propietario.
           Si rechaza → cancela el hermano y el documento vuelve a "borrador".
+          (En la cadena de UN solo paso este paso no existe.)
         5. Autorizador (jefe de GG) aprueba → _activar_documento(): estado "activo",
            aprobado_por, fecha_aprobacion, revision +1 y
            fecha_vigencia (SOLO si la acción es creación o el documento no
            tiene ninguna: editar/subir de versión NO reinicia la entrada en
            vigor; el vencimiento/próxima revisión sí se recalculan).
-           Si rechaza → cancela el hermano y el documento vuelve a "borrador".
+           Si rechaza → cancela el hermano (si existe) y el documento vuelve a "borrador".
        - El detalle del documento (`detalle.html`) muestra una card **"Flujo de
          aprobación"** para TODOS los roles (sin gating por rol/estado): lista
-         evaluador y autorizador asignados y su estado (Pendiente / En espera /
-         Aprobada / Rechazada). El tab "Estado" incluye el nombre del aprobador
-         por entrada del historial. Contexto: `aprobaciones_actuales` (última
-         cadena, evaluador primero).
+         los pasos de la última cadena (uno o dos, evaluador primero) y su
+         estado (Pendiente / En espera / Aprobada / Rechazada). El tab "Estado"
+         incluye el nombre del aprobador por entrada del historial. Contexto:
+         `aprobaciones_actuales` (última cadena). El mensaje de espera
+         (`espera_msg`) distingue: fila evaluador en espera → "Pendiente de
+         evaluación por jefe de departamento"; autorizador en espera con
+         evaluación ya aprobada → "Evaluado — pendiente de autorización por
+         Gerencia General"; autorizador en espera SIN fila evaluador (cadena
+         de un solo paso) → "Pendiente de autorización por Gerencia General".
 
   20.4 MODELO SolicitudAprobacionDocumento:
         - documento (FK), version_a_eliminar (FK, opcional)
         - accion_solicitud: creacion | edicion | inhabilitar | version |
           eliminar_version | reactivar | renovar
         - solicitante (FK), propietario (FK), aprobador (FK), departamento_origen (FK)
-        - rol_aprobador: evaluador (jefe del depto del documento) |
-          autorizador (jefe de Gerencia General)
+        - rol_aprobador: evaluador (jefe del depto del documento; SOLO cuando
+          el solicitante NO es jefe) | autorizador (jefe de Gerencia General;
+          único rol cuando el solicitante SÍ es jefe)
         - es_final (bool): True = último paso (ejecuta la acción)
         - estado: pendiente | esperando | aprobada | rechazada | cancelada
         - observaciones, motivo_rechazo, fecha_solicitud, fecha_respuesta
         - fecha_propuesta (DateField, migración 0048): nueva
           `fecha_vencimiento` propuesta al renovar (ISO 9001:7.5.3.2 a).
         - aprobar(): si es_final → _activar_documento(); si no → _avanzar_siguiente()
-        - rechazar(): _cancelar_hermano() + _revertir_documento()
+        - rechazar(): _cancelar_hermano() (si existe el registro hermano) +
+          _revertir_documento()
         - _revertir_documento(): revierte SOLO creacion | edicion | version →
           'borrador'. Inhabilitar/reactivar/renovar NO tocan el estado del
           documento (en un rechazo no hay nada que restaurar, porque el
@@ -1198,8 +1232,11 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
           `detalle.html`.
 
   20.5 NOTIFICACIONES:
-       - Evaluador: "Documento pendiente de evaluación".
-       - Autorizador: "Documento pendiente de autorización" (al avanzar la cadena).
+       - Evaluador: "Documento pendiente de evaluación" (solo cuando existe
+         ese paso, es decir solicitante NO jefe).
+       - Autorizador: "Documento pendiente de autorización" (notificado al
+         crear la cadena si el solicitante es distinto, o al avanzarla).
+         Si el solicitante ES el aprobador, NO se crea notificación propia.
        - Solicitante/propietario: "Documento aprobado" (solo al aprobar el paso
          final) o "Documento rechazado" (con motivo).
 
@@ -1213,6 +1250,14 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
         - No se pueden crear sub-versiones de documentos no aprobados.
 
   20.7 PLANILLA GENERADA AL APROBAR (SGC-FOR-001):
+       - BLOQUES DE LA PLANILLA: los campos auto de aprobación se rellenan en
+         `SolicitudAprobacionDocumento.aprobar()`: `_valores_evaluacion()` SOLO
+         cuando `rol_aprobador='evaluador'`, y `_valores_autorizacion()` +
+         `resolucion='Aceptado'` cuando `es_final`. Consecuencia: en una cadena
+         de UN solo paso (solicitante jefe) la planilla sale con el bloque de
+         **Autorización rellenado y el de Evaluación vacío** (es correcto: no
+         hubo evaluación). Al rechazar se rellena el bloque del rol que rechazó
+         y `resolucion='Rechazado'`.
        - Al aprobar el paso final, la solicitud de cambio (creación o
          eliminación) genera su planilla rellenada y la PERSISTE en
          media/solicitudes_cambio/planillas/{AAAA}/{MM}/:
@@ -1409,8 +1454,9 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
        1. Usuario crea una Planilla de Cambios desde el detalle del documento
        2. La planilla contiene: justificación, campos propuestos, archivo nuevo
        3. Al enviar → documento pasa a "en_revision" y se bloquea
-       4. Se crean dos registros de aprobación: Evaluador → Autorizador
-       5. Evaluador aprueba → Autorizador recibe notificación
+        4. Se crea UNA aprobación (Autorizador) si el responsable es jefe, o
+           DOS (Evaluador → Autorizador) si no lo es (ver §7.3)
+        5. Si hay Evaluador, aprueba → Autorizador recibe notificación
        6. Autorizador aprueba → se incrementa Documento.version_actual (+1),
           se registra VersionDocumento, se activa el documento (estado 'activo')
        7. Si cualquiera rechaza → se cancela el paso hermano y se revierte
@@ -1460,7 +1506,11 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
           Trabajadores que cambian de depto NO disparan reasignación.
         - Caso 2 (entra como jefe): Si es jefe de depto, activa los evaluadores
           en espera (aprobador=None) del depto. Si es jefe de GG, asigna todos
-          los autorizadores y activa los que ya fueron evaluados.
+          los autorizadores y activa los que ya fueron evaluados. Además, en
+          cadenas de UN solo paso (solicitante jefe: no existe fila evaluador)
+          `reasignar_autorizadores_gg` marca directamente la fila única como
+          'pendiente' (las cadenas de dos pasos siguen usando el paso
+          evaluador aprobado como condición).
         - NO hay fallback a administrador (el admin no evalúa ni autoriza).
         - Tipos cubiertos: SolicitudAprobacionDocumento (evaluador/autorizador),
           AprobacionPlanilla (evaluador/autorizador),
@@ -1583,6 +1633,16 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
                                   navbar (nombre/código/propietario/relacionados/
                                   referencias) filtrado por q_documentos_visibles.
                                   Lo usan la API y la vista `buscar`.
+        services/vigencia.py      calcular_conteos_vigencia(departamentos,
+                                  clasificacion, usuario): conteos por estado
+                                  de vigencia con un único aggregate. Lo usan
+                                  documentos_departamento y el dashboard
+                                  (ver §13.4 "panel + filtro por vigencia").
+        templates/documentos/_vigencia_panel.html  panel de cards de vigencia
+                                  reutilizable; `modo='filtro'` (default, filtra
+                                  la propia página) o `modo='redirect'` (abre
+                                  documentos/departamento ya filtrada).
+                                  CSS: static/css/components/vigencia.css.
         templatetags/formato_extras.py  get_item, to_json, opt_valor, opt_etiqueta,
                                         opt_cell, opt_shape (filtros del motor)
         urls.py            ~40 rutas: CRUD, planillas, formato, aprobaciones, API, config
@@ -1648,7 +1708,7 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
                             `departamento_propuesto`.
         management/commands/  poblar_departamentos, poblar_tipos_documento,
                               poblar_formato_sgc_for_001, poblar_formato_sgc_for_005,
-                              poblar_periodos, reajustar_evaluador_pendientes,
+                              poblar_periodos,
                               probar_gemini, verificar_vencimientos,
                               verificar_destruccion, verificar_exportacion,
                               verificar_revisiones_pendientes, limpiar_documentos,
@@ -1656,7 +1716,10 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
     - apps/autenticacion/
         models.py          PerfilUsuario (roles: administrador/jefe_departamento/
                            coordinador/trabajador), Notificacion
-        views.py           login, logout, gestionar_usuarios
+        views.py           login, logout, gestionar_usuarios, dashboard_view
+                           (`/inicio/`: stats del usuario + panel de vigencia
+                           del departamento, SOLO para jefes; ver §13.4),
+                           perfil_usuario
     - apps/auditoria/
         services.py        cliente Mongo (get_mongo_client, fail-safe) + integridad
                            ISO: registrar_log_iso/descarga/consulta, HMAC-SHA256,
@@ -1674,7 +1737,8 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
   23.3 MÓDULOS IMPLEMENTADOS
     - Ciclo de vida completo (borrador → en_revision → activo → vencido → obsoleto)
     - Versionado entero (v1 → v2 → v3), sin "Subir Versión"
-    - Doble aprobación secuencial (Evaluador → Autorizador; §7.3)
+    - Aprobación de uno o dos pasos según el solicitante (§7.3): UN solo paso
+      (Autorizador/GG) si quien crea es jefe; Evaluador → Autorizador si no
     - Períodos CRUD (6 Meses, 1 Año, 5 Años, 10 Años, 12 Años)
     - Campos ISO (aprobado_por, fecha_vigencia, proxima_revision, etc.)
     - Tipos de documento como FK (TipoDocumento.key). `TipoDocumento` es la
@@ -1814,12 +1878,15 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
       Si la conversión falla o falta el origen, las vistas **redirigen al
       detalle con mensaje** (nunca 500 y nunca se sirve un office a pdf.js).
     - Checkbox = rectángulos <xdr:sp> en drawing1.xml; fill verde #00A651.
-    - Aprobación (doble paso, sin fallback ni colapso; §7.3/§20):
-      Evaluador = jefe par si el solicitante es jefe (`_evaluador_par`);
-      si no, jefe del depto de origen; sin jefe de depto → jefe de GG.
+    - Aprobación (uno o dos pasos según el solicitante, sin fallback ni
+      colapso; §7.3/§20): si el solicitante ES jefe (`_es_jefe` →
+      `_es_aprobacion_unica`), hay UNA sola fila Autorizador es_final=True y
+      NO se usa `_evaluador_par` (eliminado). Si NO es jefe, Evaluador =
+      jefe del depto de origen; sin jefe de depto → jefe de GG, y después
       Autorizador = jefe de GG. Si falta un jefe, el paso queda 'esperando'
       con aprobador=None. El documento solo se activa al aprobar el
-      autorizador (GG).
+      autorizador (GG). Si el creador es el jefe de GG, la fila queda
+      pendiente a su nombre y NO se auto-notifica.
       La bandeja de aprobaciones (bandeja_aprobaciones.html) muestra
       las asignadas al usuario (Q(aprobador=user)) + las del depto del jefe
       (Q(departamento_origen=perfil.departamento, rol_aprobador='evaluador'));
@@ -2094,8 +2161,6 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
       sin Docker y generan PDF 595×842).
       El Dockerfile incluye `fonts-liberation` y `fonts-crosextra-carlito` para
       reducir diferencias de tipografía en el PDF.
-    - Tests desactualizados tras cambio a doble aprobación; actualizables con
-      `rol_aprobador` y `es_final`.
     - `detalle_documento` reencola conversión a PDF en cada apertura.
     - Validar jurídicamente la sección 12 de los Términos y Condiciones
       (uso de IA / transferencia internacional de información) antes de
@@ -2186,11 +2251,12 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
     - (Corregido 2026-09-25) `AprobacionPlanilla` tenía
       `unique_together = ['planilla', 'aprobador']`, lo que reventaba con
       `IntegrityError` cuando el evaluador y el autorizador eran la misma
-      persona (caso típico: el solicitante es jefe de su depto → evaluador =
-      jefe de GG = autorizador). Fix: `unique_together = ['planilla',
-      'aprobador', 'rol_aprobador']` (migración 0033). El flujo de dos pasos
-      sigue igual; el mismo jefe aprueba primero como evaluador y luego como
-      autorizador.
+      persona (caso típico: solicitante NO jefe de un depto sin jefe →
+      evaluador = jefe de GG = autorizador). Fix: `unique_together = ['planilla',
+      'aprobador', 'rol_aprobador']` (migración 0033). En ese escenario el
+      mismo jefe aprueba primero como evaluador y luego como autorizador; la
+      restricción sigue vigente para esas cadenas históricas (hoy un
+      solicitante jefe ya genera una sola fila, así que no colisiona).
     - (Corregido 2026-09-28) El autollenado de un campo `checkbox_grupo` con
       origen automático (p.ej. `accion` ← `origen='operacion'`) guardaba un
       **string** (`'Creación'`) en vez de una lista, y el render de solo-lectura
@@ -2429,6 +2495,10 @@ el cuello NO era el volumen de datos.
       * `STATICFILES_FINDERS` incluye `compressor.finders.CompressorFinder`.
   - `docker-compose.yml` (servicio `web`): arranca con
     `collectstatic --noinput && { compress --force || true; } && runserver`.
+  - `run_local.sh` (arranque local sin Docker): ejecuta
+    `collectstatic --noinput && { compress --force || true; } && runserver`,
+    en paridad con el servicio `web`. Con DEBUG=False es obligatorio; con
+    DEBUG=True es inocuo pero evita que `staticfiles/` quede desactualizado.
   - Scripts propios con `defer` (theme, notifications, progress-loader,
     button-animations, search, sidebar, accordion).
   - Se ELIMINÓ `polidoc/context_processors.py` (`static_versions`): el
@@ -2447,7 +2517,8 @@ el cuello NO era el volumen de datos.
   - `api.contadores_documentos`: de 1 consulta por tipo a 2 aggregates
     (`values('tipo')`/`values('estado')` con `Count(distinct=True)`),
     sin importar cuántos tipos activos haya.
-  - `views._conteos_vigencia`: de 4 `count` a 1 `aggregate` con
+  - `services/vigencia.calcular_conteos_vigencia` (antes
+    `views._conteos_vigencia`): de 4 `count` a 1 `aggregate` con
     `Count(filter=Q(...), distinct=True)`.
   - `signals.py`: los dos SELECT previos por guardado (pre_save de
     clasificación + post_save de estado) se unificaron en UN solo
@@ -2532,7 +2603,7 @@ el cuello NO era el volumen de datos.
 -------------------------------------------------------------------
 
   - `documentos/tests_performance.py`: número de consultas constante en
-    `contadores_documentos`, `_conteos_vigencia` en 1 query, un solo
+    `contadores_documentos`, `calcular_conteos_vigencia` en 1 query, un solo
     SELECT previo al guardar, sin consulta de referencias al guardar un
     activo, y encolado (no bloqueo) de la conversión.
   - `auditoria/tests_buffer.py`: circuit breaker (bufferiza y no toca

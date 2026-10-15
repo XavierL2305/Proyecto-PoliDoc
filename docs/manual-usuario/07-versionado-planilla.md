@@ -68,7 +68,7 @@ comparar.
 | Botón | Resultado |
 |---|---|
 | **Guardar Borrador** | La planilla queda en borrador; puedes retomarla (ver abajo) |
-| **Enviar a Revisión** | Se crea la cadena de aprobación (Evaluador → Autorizador) |
+| **Enviar a Revisión** | Se crea la cadena de aprobación (Autorizador si eres jefe; Evaluador → Autorizador si no lo eres) |
 | **Cancelar** | Vuelve sin guardar |
 
 ### Retomar un borrador
@@ -88,9 +88,11 @@ Solo el **responsable** de la planilla puede retomarla; una vez enviada a
 revisión deja de ser editable (habrá que esperar a la aprobación o al
 rechazo).
 
-La planilla pasa por los mismos dos pasos que el documento:
-**Evaluación** (jefe) y **Autorización** (Gerencia General). Los aprobadores
-la encuentran en la **Bandeja de Aprobaciones** y en la campana.
+La planilla pasa por la misma cadena que el documento: **un solo paso**
+(**Autorización** por Gerencia General) si el responsable es un **jefe de
+departamento**, y **dos pasos** (**Evaluación** del jefe y **Autorización**
+de Gerencia General) para el resto. Los aprobadores la encuentran en la
+**Bandeja de Aprobaciones** y en la campana.
 
 ## 3. Qué ocurre al aprobar la planilla
 

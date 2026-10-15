@@ -7,6 +7,7 @@
 <style>
   .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2rem; flex-wrap: wrap; gap: 1rem; }
   .page-header h1 { font-size: 1.5rem; font-weight: 700; color: var(--color-text); margin: 0; }
+  .detail-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; padding: 0.875rem 0; border-bottom: 1px solid var(--color-border); margin-bottom: 1.5rem; }
   .doc-detail { display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem; }
   .detail-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); min-width: 0; }
   .detail-header { padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--color-border); }
@@ -16,6 +17,7 @@
   .detail-row:last-child { border-bottom: none; }
   .detail-label { font-size: 0.875rem; color: var(--color-muted); font-weight: 500; }
   .detail-value { font-size: 0.875rem; color: var(--color-text); font-weight: 500; }
+  .ref-pendientes { display: flex; flex-wrap: wrap; gap: 0.5rem; }
   .version-list { display: flex; flex-direction: column; }
   .version-item { display: flex; align-items: center; gap: 1rem; padding: 0.75rem 0; border-bottom: 1px solid var(--color-border); }
   #pdf-viewer canvas { max-width: 100%; height: auto; }
@@ -218,6 +220,32 @@
       </div>
       {% endif %}
 
+      <div class="detail-actions">
+        <a href="{% url 'documentos:mis_documentos' %}" class="btn btn--ghost btn--sm">
+          <i class="fa-solid fa-arrow-left"></i> Volver
+        </a>
+        <a href="{% url 'documentos:historial_versiones' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost btn--sm">
+          <i class="fa-solid fa-clock-rotate-left"></i> Historial
+        </a>
+        {% if puede_asignar %}
+        <a href="{% url 'documentos:asignar_documento' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost btn--sm">
+          <i class="fa-solid fa-user-plus"></i> Asignar
+        </a>
+        {% endif %}
+        {% if puede_transferir_vista %}
+        <a href="{% url 'documentos:transferir_propiedad' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost btn--sm">
+          <i class="fa-solid fa-right-left"></i> Transferir
+        </a>
+        {% endif %}
+        {% if documento.estado == 'activo' and puede_distribuir %}
+        <a href="{% url 'documentos:distribuir_documento' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost btn--sm">
+          <i class="fa-solid fa-share-nodes"></i> Distribuir
+        </a>
+        <a href="{% url 'documentos:historial_distribucion' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost btn--sm">
+          <i class="fa-solid fa-list"></i> Distribución
+        </a>
+        {% endif %}
+      </div>
       {% if aprobaciones_actuales %}
       <div class="detail-card" style="margin-bottom: 1.5rem;">
         <div class="detail-header"><h3><i class="fa-solid fa-stamp" style="color: var(--color-primary);"></i> Flujo de aprobación</h3></div>
@@ -642,19 +670,17 @@
           {% endif %}
 
           {% if referencias_pendientes %}
-          <div class="detail-card" style="margin-bottom: 1.5rem;">
+          <div class="detail-card">
             <div class="detail-header"><h3>Referencias Pendientes</h3></div>
             <div class="detail-body">
-              {% for ref in referencias_pendientes %}
-              <div class="detail-row">
-                <span class="detail-value">
-                  <span class="depto-tag depto-tag--pendiente" style="display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.375rem 0.75rem; font-size: 0.8125rem; font-weight: 500; border: 1.5px dashed var(--color-warning); background: var(--color-warning-light); color: var(--color-warning-dark); border-radius: 50px; cursor: default;" title="Documento aún no creado. Se enlazará automáticamente cuando sea aprobado.">
-                    <i class="fa-solid fa-clock"></i> {{ ref.codigo_destino }}
-                    <span class="badge badge--warning" style="font-size: 0.65rem;">Pendiente</span>
-                  </span>
+              <div class="ref-pendientes">
+                {% for ref in referencias_pendientes %}
+                <span class="depto-tag depto-tag--pendiente" style="display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.375rem 0.75rem; font-size: 0.8125rem; font-weight: 500; border: 1.5px dashed var(--color-warning); background: var(--color-warning-light); color: var(--color-warning-dark); border-radius: 50px; cursor: default;" title="Documento aún no creado. Se enlazará automáticamente cuando sea aprobado.">
+                  <i class="fa-solid fa-clock"></i> {{ ref.codigo_destino }}
+                  <span class="badge badge--warning" style="font-size: 0.65rem;">Pendiente</span>
                 </span>
+                {% endfor %}
               </div>
-              {% endfor %}
             </div>
           </div>
           {% endif %}
@@ -676,39 +702,6 @@
           </div>
           {% endif %}
 
-          <div class="detail-card">
-            <div class="detail-header">
-              <h3>Acciones</h3>
-            </div>
-            <div class="detail-body">
-              <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                <a href="{% url 'documentos:historial_versiones' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost btn--sm">
-                  <i class="fa-solid fa-clock-rotate-left"></i> Historial
-                </a>
-                {% if puede_asignar %}
-                <a href="{% url 'documentos:asignar_documento' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost btn--sm">
-                  <i class="fa-solid fa-user-plus"></i> Asignar
-                </a>
-                {% endif %}
-                {% if puede_transferir_vista %}
-                <a href="{% url 'documentos:transferir_propiedad' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost btn--sm">
-                  <i class="fa-solid fa-right-left"></i> Transferir
-                </a>
-                {% endif %}
-                {% if documento.estado == 'activo' and puede_distribuir %}
-                <a href="{% url 'documentos:distribuir_documento' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost btn--sm">
-                  <i class="fa-solid fa-share-nodes"></i> Distribuir
-                </a>
-                <a href="{% url 'documentos:historial_distribucion' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost btn--sm">
-                  <i class="fa-solid fa-list"></i> Distribución
-                </a>
-                {% endif %}
-                <a href="{% url 'documentos:mis_documentos' %}" class="btn btn--ghost btn--sm">
-                  <i class="fa-solid fa-xmark"></i> Cancelar
-                </a>
-              </div>
-            </div>
-          </div>
         </div>
 
         <div class="detail-card">
@@ -737,7 +730,7 @@
                     <span class="version-date">{{ version.fecha_creacion|date:"d/m/Y" }}</span>
                   </div>
                   <span style="font-size: 0.75rem; color: var(--color-muted);">{{ version.creado_por.username }}</span>
-                  {% if puede_eliminar_versiones %}
+                  {% if puede_eliminar_versiones and versiones_eliminables %}
                   <button type="button" class="btn btn--danger btn--sm" style="margin-left: auto;"
                           title="Eliminar versión {{ version.numero_version }}"
                           onclick="eliminarVersion('{{ version.numero_version }}', '{% url 'documentos:eliminar_version' tipo=tipo documento_id=documento.uuid version_id=version.id %}')">

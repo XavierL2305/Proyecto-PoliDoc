@@ -632,27 +632,31 @@ class VistasVersionesTest(BaseDocumentosTest):
         )
         self.assertEqual(resp.status_code, 200)
 
-    def test_eliminar_version(self):
-        v1 = VersionDocumento.objects.create(
-            documento=self.doc_activo,
-            numero_version='1.0',
-            archivo=SimpleUploadedFile('v1.pdf', b'content'),
-            creado_por=self.user_jefe_ti,
-            cambios='Version inicial',
+    def _version(self, numero, documento=None, nombre='v.pdf', creado_por=None):
+        """Crea una versión activa; los tests de borrado necesitan 2."""
+        return VersionDocumento.objects.create(
+            documento=documento or self.doc_activo,
+            numero_version=numero,
+            archivo=SimpleUploadedFile(nombre, b'c'),
+            creado_por=creado_por or self.user_jefe_ti,
         )
+
+    def test_eliminar_version(self):
+        v1 = self._version('1.0', nombre='v1.pdf')
+        self._version('1.1', nombre='v2.pdf')
         resp = self.client.post(
             f'/documentos/procedimientos_generales/{self.doc_activo.uuid}/eliminar-version/{v1.id}/',
         )
         self.assertEqual(resp.status_code, 302)
+        self.assertFalse(VersionDocumento.objects.filter(id=v1.id, activa=True).exists())
 
     # --- ISO: la eliminación es directa y solo propietario/admin ------------
     def test_eliminar_version_jefe_del_depto_no_propietario_denegado(self):
         """El jefe del departamento NO elimina versiones si no es propietario."""
-        version = VersionDocumento.objects.create(
-            documento=self.doc_th, numero_version='1.0',
-            archivo=SimpleUploadedFile('v.pdf', b'c'),
-            creado_por=self.user_trabajador_otro,
-        )
+        version = self._version('1.0', documento=self.doc_th,
+                                creado_por=self.user_trabajador_otro)
+        self._version('1.1', documento=self.doc_th,
+                      creado_por=self.user_trabajador_otro)
         self.client.login(username='jefe_th', password='testpass123')
         resp = self.client.post(
             f'/documentos/{self.doc_th.tipo_id}/{self.doc_th.uuid}/eliminar-version/{version.id}/',
@@ -662,11 +666,8 @@ class VistasVersionesTest(BaseDocumentosTest):
 
     def test_eliminar_version_propietario_no_creador_permitido(self):
         """El propietario elimina aunque no haya creado esa versión."""
-        version = VersionDocumento.objects.create(
-            documento=self.doc_activo, numero_version='1.0',
-            archivo=SimpleUploadedFile('v.pdf', b'c'),
-            creado_por=self.user_trabajador,
-        )
+        version = self._version('1.0', creado_por=self.user_trabajador)
+        self._version('1.1', creado_por=self.user_trabajador)
         self.client.login(username='jefe_ti', password='testpass123')  # propietario
         resp = self.client.post(
             f'/documentos/{self.doc_activo.tipo_id}/{self.doc_activo.uuid}/eliminar-version/{version.id}/',
@@ -675,11 +676,10 @@ class VistasVersionesTest(BaseDocumentosTest):
         self.assertFalse(VersionDocumento.objects.filter(id=version.id, activa=True).exists())
 
     def test_eliminar_version_admin_permitido(self):
-        version = VersionDocumento.objects.create(
-            documento=self.doc_th, numero_version='1.0',
-            archivo=SimpleUploadedFile('v.pdf', b'c'),
-            creado_por=self.user_trabajador_otro,
-        )
+        version = self._version('1.0', documento=self.doc_th,
+                                creado_por=self.user_trabajador_otro)
+        self._version('1.1', documento=self.doc_th,
+                      creado_por=self.user_trabajador_otro)
         self.client.login(username='admin01', password='testpass123')
         resp = self.client.post(
             f'/documentos/{self.doc_th.tipo_id}/{self.doc_th.uuid}/eliminar-version/{version.id}/',
@@ -688,11 +688,8 @@ class VistasVersionesTest(BaseDocumentosTest):
         self.assertFalse(VersionDocumento.objects.filter(id=version.id, activa=True).exists())
 
     def test_eliminar_version_trabajador_denegado(self):
-        version = VersionDocumento.objects.create(
-            documento=self.doc_activo, numero_version='1.0',
-            archivo=SimpleUploadedFile('v.pdf', b'c'),
-            creado_por=self.user_trabajador,
-        )
+        version = self._version('1.0', creado_por=self.user_trabajador)
+        self._version('1.1', creado_por=self.user_trabajador)
         self.client.login(username='trab01', password='testpass123')
         resp = self.client.post(
             f'/documentos/{self.doc_activo.tipo_id}/{self.doc_activo.uuid}/eliminar-version/{version.id}/',
@@ -702,11 +699,8 @@ class VistasVersionesTest(BaseDocumentosTest):
 
     def test_eliminar_version_directa_registra_aprobada(self):
         """Sin cadena de aprobación: queda solo el registro de auditoría."""
-        version = VersionDocumento.objects.create(
-            documento=self.doc_activo, numero_version='1.0',
-            archivo=SimpleUploadedFile('v.pdf', b'c'),
-            creado_por=self.user_trabajador,
-        )
+        version = self._version('1.0', creado_por=self.user_trabajador)
+        self._version('1.1', creado_por=self.user_trabajador)
         self.client.login(username='jefe_ti', password='testpass123')
         self.client.post(
             f'/documentos/{self.doc_activo.tipo_id}/{self.doc_activo.uuid}/eliminar-version/{version.id}/',
@@ -737,6 +731,78 @@ class VistasVersionesTest(BaseDocumentosTest):
         self.assertIn(activa, resp.context['versiones'])
         self.assertNotIn(borrada, resp.context['versiones'])
         self.assertTrue(resp.context['puede_eliminar_versiones'])
+
+    # --- Regla: un documento siempre conserva al menos una versión ----------
+    def test_eliminar_unica_version_bloqueada(self):
+        """Con una sola versión activa no se puede eliminar (retención ISO)."""
+        version = self._version('1.0')
+        resp = self.client.post(
+            f'/documentos/{self.doc_activo.tipo_id}/{self.doc_activo.uuid}/eliminar-version/{version.id}/',
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(VersionDocumento.objects.filter(id=version.id, activa=True).exists())
+        # El intento ni siquiera deja rastro de "aprobación".
+        self.assertFalse(
+            SolicitudAprobacionDocumento.objects.filter(
+                documento=self.doc_activo, accion_solicitud='eliminar_version',
+            ).exists()
+        )
+
+    def test_eliminar_version_actual_restaura_la_anterior(self):
+        """Al borrar la versión actual con 2+, pasa a serlo la anterior."""
+        self.doc_activo.version_actual = '1.1'
+        self.doc_activo.save(update_fields=['version_actual'])
+        v1 = self._version('1.0')
+        v2 = self._version('1.1')
+        self.client.post(
+            f'/documentos/{self.doc_activo.tipo_id}/{self.doc_activo.uuid}/eliminar-version/{v2.id}/',
+        )
+        self.doc_activo.refresh_from_db()
+        self.assertFalse(VersionDocumento.objects.filter(id=v2.id, activa=True).exists())
+        self.assertTrue(VersionDocumento.objects.filter(id=v1.id, activa=True).exists())
+        self.assertEqual(self.doc_activo.version_actual, '1.0')
+
+    def test_modelo_no_deja_documento_sin_versiones(self):
+        """`aplicar_eliminacion_version` es la red de seguridad final."""
+        version = self._version('1.0')
+        solicitud = SolicitudAprobacionDocumento(
+            documento=self.doc_activo, accion_solicitud='eliminar_version',
+            version_a_eliminar=version, solicitante=self.user_jefe_ti,
+            propietario=self.doc_activo.propietario, aprobador=self.user_jefe_ti,
+            departamento_origen=self.doc_activo.departamento,
+            rol_aprobador='autorizador', es_final=True, estado='aprobada',
+        )
+        solicitud.save()
+        solicitud.aplicar_eliminacion_version(self.doc_activo, version)
+        self.assertTrue(VersionDocumento.objects.filter(id=version.id, activa=True).exists())
+
+    def test_boton_oculto_historial_con_una_version(self):
+        version = self._version('1.0')
+        resp = self.client.get(
+            f'/documentos/{self.doc_activo.tipo_id}/{self.doc_activo.uuid}/versiones/'
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.context['versiones_eliminables'])
+        self.assertNotContains(resp, f'/eliminar-version/{version.id}/')
+
+    def test_boton_oculto_detalle_con_una_version(self):
+        version = self._version('1.0')
+        resp = self.client.get(
+            f'/documentos/{self.doc_activo.tipo_id}/{self.doc_activo.uuid}/'
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.context['versiones_eliminables'])
+        self.assertNotContains(resp, f'/eliminar-version/{version.id}/')
+
+    def test_boton_visible_con_dos_versiones(self):
+        v1 = self._version('1.0')
+        self._version('1.1')
+        base = f'/documentos/{self.doc_activo.tipo_id}/{self.doc_activo.uuid}'
+        for url in (f'{base}/versiones/', f'{base}/'):
+            resp = self.client.get(url)
+            self.assertEqual(resp.status_code, 200)
+            self.assertTrue(resp.context['versiones_eliminables'])
+            self.assertContains(resp, f'/eliminar-version/{v1.id}/')
 
 
 # =============================================================================

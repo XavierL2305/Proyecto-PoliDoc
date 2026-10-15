@@ -959,4 +959,95 @@ class TerminosYCondicionesVersionTest(BaseDocumentosTest):
 
     def test_login_muestra_version_vigente_en_el_modal(self):
         resp = self.client.get('/login/')
+        self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, f'Versión {settings.TERMINOS_VERSION}')
+
+
+class DashboardVigenciaTest(BaseDocumentosTest):
+    """Panel de vigencia en el dashboard (solo jefes de departamento)."""
+
+    DEPTO_URL = '/documentos/departamento/'
+
+    def setUp(self):
+        super().setUp()
+        self.client = Client()
+
+    def _get(self, user):
+        self.client.force_login(user)
+        return self.client.get('/inicio/')
+
+    def test_jefe_ve_panel_con_conteos(self):
+        resp = self._get(self.user_jefe_ti)
+        self.assertEqual(resp.status_code, 200)
+        conteos = resp.context['conteos_vigencia']
+        self.assertGreaterEqual(conteos['vencidos'], 1)      # doc_vencido
+        self.assertGreaterEqual(conteos['vence_pronto'], 1)  # doc_por_vencer
+        self.assertIn('vigentes', conteos)
+        self.assertIn('sin_vigencia', conteos)
+        self.assertContains(resp, 'vigencia-panel')
+        self.assertContains(resp, 'Vencidos')
+        self.assertContains(resp, 'Vigentes')
+        self.assertContains(resp, 'Sin vigencia')
+
+    def test_jefe_sin_departamento_no_ve_panel(self):
+        self.user_jefe_ti.perfil.departamento = None
+        self.user_jefe_ti.perfil.save(update_fields=['departamento'])
+        resp = self._get(self.user_jefe_ti)
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsNone(resp.context['conteos_vigencia'])
+        self.assertNotContains(resp, 'vigencia-card')
+        self.assertNotContains(resp, 'vigencia-panel')
+
+    def test_coordinador_y_trabajador_no_ven_panel(self):
+        for user in (self.user_coordinador, self.user_trabajador):
+            resp = self._get(user)
+            self.assertEqual(resp.status_code, 200)
+            self.assertIsNone(resp.context['conteos_vigencia'])
+            self.assertNotContains(resp, 'vigencia-card', msg_prefix=f'usuario {user}')
+
+    def test_administrador_no_ve_panel(self):
+        resp = self._get(self.user_admin)
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsNone(resp.context['conteos_vigencia'])
+        self.assertNotContains(resp, 'vigencia-card')
+
+    def test_links_apuntan_a_departamento_ya_filtrado(self):
+        resp = self._get(self.user_jefe_ti)
+        self.assertContains(resp, f'{self.DEPTO_URL}?vigencia=vencido')
+        self.assertContains(resp, f'{self.DEPTO_URL}?vigencia=vence_pronto')
+        self.assertContains(resp, f'{self.DEPTO_URL}?vigencia=vigente')
+        self.assertContains(resp, f'{self.DEPTO_URL}?vigencia=sin_vigencia')
+
+    def test_conteos_coinciden_con_la_pagina_de_departamento(self):
+        from documentos.services.vigencia import calcular_conteos_vigencia
+        esperados = calcular_conteos_vigencia([self.depto_ti], '', self.user_jefe_ti)
+        resp = self._get(self.user_jefe_ti)
+        self.assertEqual(resp.context['conteos_vigencia'], esperados)
+
+
+class DepartamentoVigenciaPanelTest(BaseDocumentosTest):
+    """El panel de la página de departamento sigue funcionando tras la
+    extracción a `_vigencia_panel.html`."""
+
+    def setUp(self):
+        super().setUp()
+        self.client = Client()
+        self.client.force_login(self.user_jefe_ti)
+
+    def _get(self, params=None):
+        return self.client.get('/documentos/departamento/', params or {})
+
+    def test_filtra_por_vigencia_y_marcando_activa(self):
+        resp = self._get({'vigencia': 'vencido'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'vigencia-panel')
+        self.assertContains(resp, 'vigencia-card--danger is-active')
+        self.assertContains(resp, 'vigencia-card--success')
+        # Sigue filtrando la lista por la query (?vigencia=...).
+        self.assertContains(resp, self.doc_vencido.nombre)
+        self.assertNotContains(resp, self.doc_por_vencer.nombre)
+
+    def test_conserva_clasificacion_en_los_links(self):
+        resp = self._get({'clasificacion': 'publico'})
+        self.assertContains(resp, '?vigencia=vencido&clasificacion=publico')
+

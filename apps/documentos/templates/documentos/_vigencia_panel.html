@@ -1,0 +1,38 @@
+{# Panel de vigencia (cards con los conteos por estado de vigencia).  #}
+{#                                                                   #}
+{# Modo FILTRO (por defecto): los links filtran la página actual.     #}
+{#   {% include 'documentos/_vigencia_panel.html'                    #}
+{#        with conteos_vigencia=conteos_vigencia                     #}
+{#             vigencia_filter=vigencia_filter                       #}
+{#             clasificacion_filter=clasificacion_filter %}          #}
+{#                                                                   #}
+{# Modo REDIRECT: los links abren la página de departamento          #}
+{# ya filtrada.                                                      #}
+{#   {% include 'documentos/_vigencia_panel.html'                    #}
+{#        with conteos_vigencia=conteos_vigencia modo='redirect' %}  #}
+<div class="vigencia-panel">
+  <a href="{% if modo == 'redirect' %}{% url 'documentos:documentos_departamento' %}?vigencia=vencido{% else %}?vigencia=vencido{% if clasificacion_filter %}&clasificacion={{ clasificacion_filter }}{% endif %}{% endif %}"
+     class="vigencia-card vigencia-card--danger{% if vigencia_filter == 'vencido' %} is-active{% endif %}"
+     {% if modo == 'redirect' %}title="Ver documentos vencidos"{% endif %}>
+    <span class="vigencia-num">{{ conteos_vigencia.vencidos }}</span>
+    <span class="vigencia-label">Vencidos</span>
+  </a>
+  <a href="{% if modo == 'redirect' %}{% url 'documentos:documentos_departamento' %}?vigencia=vence_pronto{% else %}?vigencia=vence_pronto{% if clasificacion_filter %}&clasificacion={{ clasificacion_filter }}{% endif %}{% endif %}"
+     class="vigencia-card vigencia-card--warning{% if vigencia_filter == 'vence_pronto' %} is-active{% endif %}"
+     {% if modo == 'redirect' %}title="Ver documentos que vencen en 7 días"{% endif %}>
+    <span class="vigencia-num">{{ conteos_vigencia.vence_pronto }}</span>
+    <span class="vigencia-label">Vence en 7 días</span>
+  </a>
+  <a href="{% if modo == 'redirect' %}{% url 'documentos:documentos_departamento' %}?vigencia=vigente{% else %}?vigencia=vigente{% if clasificacion_filter %}&clasificacion={{ clasificacion_filter }}{% endif %}{% endif %}"
+     class="vigencia-card vigencia-card--success{% if vigencia_filter == 'vigente' %} is-active{% endif %}"
+     {% if modo == 'redirect' %}title="Ver documentos vigentes"{% endif %}>
+    <span class="vigencia-num">{{ conteos_vigencia.vigentes }}</span>
+    <span class="vigencia-label">Vigentes</span>
+  </a>
+  <a href="{% if modo == 'redirect' %}{% url 'documentos:documentos_departamento' %}?vigencia=sin_vigencia{% else %}?vigencia=sin_vigencia{% if clasificacion_filter %}&clasificacion={{ clasificacion_filter }}{% endif %}{% endif %}"
+     class="vigencia-card vigencia-card--muted{% if vigencia_filter == 'sin_vigencia' %} is-active{% endif %}"
+     {% if modo == 'redirect' %}title="Ver documentos sin vigencia asignada"{% endif %}>
+    <span class="vigencia-num">{{ conteos_vigencia.sin_vigencia }}</span>
+    <span class="vigencia-label">Sin vigencia</span>
+  </a>
+</div>

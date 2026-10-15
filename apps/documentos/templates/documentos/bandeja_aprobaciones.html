@@ -117,6 +117,7 @@
   .accion-badge--version { background: #D1FAE5; color: #065F46; }
   .accion-badge--eliminar_version { background: #F3F4F6; color: #374151; }
   .accion-badge--descarga { background: #FEF3C7; color: #92400E; }
+  .accion-badge--planilla { background: var(--color-primary-light); color: var(--color-primary); }
   [data-theme="dark"] .accion-badge--creacion { background: #1E3A5F; color: #93C5FD; }
   [data-theme="dark"] .accion-badge--edicion { background: #312E81; color: #A5B4FC; }
   [data-theme="dark"] .accion-badge--inhabilitar { background: #7F1D1D; color: #FCA5A5; }
@@ -125,6 +126,7 @@
   [data-theme="dark"] .accion-badge--version { background: #064E3B; color: #6EE7B7; }
   [data-theme="dark"] .accion-badge--eliminar_version { background: #1F2937; color: #D1D5DB; }
   [data-theme="dark"] .accion-badge--descarga { background: #78350F; color: #FCD34D; }
+  [data-theme="dark"] .accion-badge--planilla { background: #1E3A5F; color: #93C5FD; }
   .empty-state {
     text-align: center;
     padding: 3rem;
@@ -176,9 +178,9 @@
 <div class="page-header">
   <div style="display: flex; align-items: center; gap: 0.75rem;">
     <h1>Bandeja de Aprobaciones</h1>
-    {% if total_pendientes > 0 or total_pendientes_descarga > 0 %}
+    {% if total_pendientes > 0 or total_pendientes_descarga > 0 or total_pendientes_planilla > 0 %}
     <span class="page-badge">
-      <i class="fa-solid fa-clock"></i> {{ total_pendientes|add:total_pendientes_descarga }} pendiente{{ total_pendientes|add:total_pendientes_descarga|pluralize }}
+      <i class="fa-solid fa-clock"></i> {{ total_pendientes|add:total_pendientes_descarga|add:total_pendientes_planilla }} pendiente{{ total_pendientes|add:total_pendientes_descarga|add:total_pendientes_planilla|pluralize }}
     </span>
     {% endif %}
   </div>
@@ -377,7 +379,74 @@
 {% endfor %}
 {% endif %}
 
-{% if not solicitudes and not descargas %}
+{% if planillas %}
+<h2 style="font-size: 1.125rem; font-weight: 600; margin: 2rem 0 1rem; color: var(--color-text);">
+  <i class="fa-solid fa-file-shield"></i> Planillas de Cambios
+  {% if total_pendientes_planilla > 0 %}
+  <span class="page-badge" style="margin-left: 0.5rem;">
+    <i class="fa-solid fa-clock"></i> {{ total_pendientes_planilla }} pendiente{{ total_pendientes_planilla|pluralize }}
+  </span>
+  {% endif %}
+</h2>
+
+{% for paso in planillas %}
+<div class="solicitud-card" id="planilla-paso-{{ paso.id }}">
+  <div class="solicitud-header">
+    <div class="solicitud-info">
+      <h4>{% if paso.planilla.documento %}{{ paso.planilla.documento.nombre }}{% else %}{{ paso.planilla.nombre_propuesto|default:"Planilla de Cambios" }}{% endif %}</h4>
+      <p>{{ paso.planilla.codigo }}{% if paso.planilla.documento %} · {{ paso.planilla.documento.codigo }}{% endif %}</p>
+    </div>
+    <span class="accion-badge accion-badge--planilla">
+      <i class="fa-solid fa-file-lines"></i> Planilla
+    </span>
+    <span class="accion-badge" style="background: {% if paso.rol_aprobador == 'evaluador' %}#FEF3C7;color:#92400E{% else %}#E0E7FF;color:#3730A3{% endif %};">
+      {% if paso.rol_aprobador == 'evaluador' %}
+        <i class="fa-solid fa-magnifying-glass"></i> Evaluación
+      {% else %}
+        <i class="fa-solid fa-stamp"></i> Autorización
+      {% endif %}
+    </span>
+  </div>
+  <div class="solicitud-meta">
+    <span><i class="fa-solid fa-user"></i> {{ paso.planilla.responsable.get_full_name|default:paso.planilla.responsable.username }}</span>
+    <span><i class="fa-solid fa-calendar"></i> {{ paso.planilla.fecha_creacion|date:"d/m/Y H:i" }}</span>
+    {% if paso.fecha_activacion %}
+    <span><i class="fa-solid fa-user-clock"></i> Activado {{ paso.fecha_activacion|date:"d/m/Y H:i" }}</span>
+    {% endif %}
+  </div>
+  {% if paso.estado == 'pendiente' %}
+  <div class="solicitud-actions">
+    <a href="{% url 'documentos:detalle_planilla' planilla_uuid=paso.planilla.uuid %}" class="btn btn--ghost btn--sm">
+      <i class="fa-solid fa-eye"></i> Ver Planilla
+    </a>
+    <a href="{% url 'documentos:aprobar_planilla' planilla_uuid=paso.planilla.uuid %}" class="btn btn--success btn--sm">
+      <i class="fa-solid fa-check"></i> Revisar y aprobar
+    </a>
+  </div>
+  {% elif paso.estado == 'esperando' %}
+  <div class="solicitud-actions">
+    <span class="badge"><i class="fa-solid fa-hourglass-half"></i> En espera de evaluación</span>
+  </div>
+  {% elif paso.estado == 'aprobada' %}
+  <div class="solicitud-actions">
+    <a href="{% url 'documentos:detalle_planilla' planilla_uuid=paso.planilla.uuid %}" class="btn btn--ghost btn--sm">
+      <i class="fa-solid fa-eye"></i> Ver Planilla
+    </a>
+    <span class="badge badge--success"><i class="fa-solid fa-check"></i> Aprobada</span>
+  </div>
+  {% elif paso.estado == 'rechazada' %}
+  <div class="solicitud-actions">
+    <a href="{% url 'documentos:detalle_planilla' planilla_uuid=paso.planilla.uuid %}" class="btn btn--ghost btn--sm">
+      <i class="fa-solid fa-eye"></i> Ver Planilla
+    </a>
+    <span class="badge badge--danger"><i class="fa-solid fa-xmark"></i> Rechazada</span>
+  </div>
+  {% endif %}
+</div>
+{% endfor %}
+{% endif %}
+
+{% if not solicitudes and not descargas and not planillas %}
 <div class="empty-state">
   <i class="fa-solid fa-inbox"></i>
   <p>No hay solicitudes {% if filtro_estado == 'pendiente' %}pendientes{% elif filtro_estado %}con estado "{{ filtro_estado }}"{% endif %}</p>

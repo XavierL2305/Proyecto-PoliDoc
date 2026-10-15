@@ -1,0 +1,190 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Delegaciones de Jefatura - POLIDOC{% endblock %}
+
+{% block extra_css %}
+<style>
+  .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem; }
+  .page-header h1 { font-size: 1.5rem; font-weight: 700; color: var(--color-text); margin: 0; }
+  .dl-hint { font-size: 0.8125rem; color: var(--color-muted); margin: 0 0 1.5rem; max-width: 72ch; line-height: 1.6; }
+  .dl-hint strong { color: var(--color-text); }
+  .dl-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); margin-bottom: 1.5rem; overflow: hidden; }
+  .dl-card-header { padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--color-border); }
+  .dl-card-header h3 { font-size: 1rem; font-weight: 600; color: var(--color-text); margin: 0; }
+  .dl-card-body { padding: 1.5rem; }
+  .dl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 1rem; }
+  .dl-motivo { margin-top: 1rem; }
+  .dl-row { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; padding: 1rem 1.5rem; border-bottom: 1px solid var(--color-border); }
+  .dl-row:last-child { border-bottom: none; }
+  .dl-row--actual { background: var(--color-primary-light); border-left: 4px solid var(--color-primary); }
+  .dl-row-main { flex: 1; min-width: 250px; }
+  .dl-who { font-weight: 600; font-size: 0.9375rem; color: var(--color-text); }
+  .dl-who i { color: var(--color-muted); margin-right: 0.5rem; }
+  .dl-meta { font-size: 0.8125rem; color: var(--color-muted); margin-top: 0.3rem; line-height: 1.5; }
+  .dl-badge { display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.3rem 0.7rem; border-radius: 999px; font-size: 0.75rem; font-weight: 600; white-space: nowrap; }
+  .dl-badge--vigente { background: var(--color-success-light); color: var(--color-success-dark); }
+  .dl-badge--programada { background: var(--color-info-light); color: var(--color-info-dark); }
+  .dl-badge--vencida { background: var(--color-warning-light); color: var(--color-warning-dark); }
+  .dl-badge--revocada { background: var(--color-bg-secondary); color: var(--color-muted); }
+  .dl-empty { padding: 2.5rem 1.5rem; text-align: center; color: var(--color-muted); font-size: 0.875rem; }
+  .dl-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+  .dl-revocar { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+  .dl-revocar .form-input { flex: 1; min-width: 180px; padding: 0.375rem 0.625rem; font-size: 0.8125rem; }
+  .dl-note { font-size: 0.8125rem; color: var(--color-muted); background: var(--color-bg-alt); border: 1px solid var(--color-border);
+    border-radius: var(--radius); padding: 0.75rem 1rem; margin-bottom: 1.5rem; line-height: 1.6; }
+</style>
+{% endblock %}
+
+{% block app_content %}
+<div class="page-header">
+  <h1><i class="fa-solid fa-user-shield"></i> Delegaciones de Jefatura</h1>
+  <a href="{% url 'documentos:documentos_departamento' %}" class="btn btn--ghost btn--sm">
+    <i class="fa-solid fa-building"></i> Departamento
+  </a>
+</div>
+
+<p class="dl-hint">
+  Mientras un jefe está ausente (vacaciones, permisos), puede <strong>delegar su
+  jefatura</strong> a un miembro de su mismo departamento dentro de un rango de
+  vigencia. El delegado ejerce los <strong>poderes operativos</strong> del jefe:
+  aprobar, transferir, asignar, distribuir, establecer vigencia y ver documentos
+  confidenciales o restringidos de ese departamento.
+  <strong>La configuración global del sistema no se delega</strong> y la
+  delegación <strong>expira sola</strong> al terminar la vigencia.
+</p>
+
+{% if puede_crear %}
+<div class="dl-card">
+  <div class="dl-card-header"><h3><i class="fa-solid fa-user-plus"></i> Nueva delegación</h3></div>
+  <div class="dl-card-body">
+    <form method="post">
+      {% csrf_token %}
+      <div class="dl-grid">
+        {% if user.perfil.es_administrador %}
+        <div class="form-group" style="margin-bottom:0;">
+          <label class="form-label">Departamento *</label>
+          {% if departamentos %}
+          <select name="departamento" class="form-input" onchange="this.form.submit();" required>
+            {% for dep in departamentos %}
+            <option value="{{ dep.id }}" {% if departamento_activo and dep.id == departamento_activo.id %}selected{% endif %}>{{ dep.nombre }} ({{ dep.codigo }})</option>
+            {% endfor %}
+          </select>
+          <input type="hidden" name="accion" value="crear">
+          {% else %}
+          <p class="dl-meta" style="margin:0;">No hay departamentos activos.</p>
+          {% endif %}
+        </div>
+        {% else %}
+        <input type="hidden" name="departamento" value="{{ departamento_activo.id|default:'' }}">
+        <div class="form-group" style="margin-bottom:0;">
+          <label class="form-label">Departamento</label>
+          <p class="form-input" style="background:var(--color-bg-alt);margin:0;">
+            {{ departamento_activo.nombre|default:"Sin departamento asignado" }}
+          </p>
+        </div>
+        {% endif %}
+
+        <div class="form-group" style="margin-bottom:0;">
+          <label class="form-label">Delegado (mismo departamento) *</label>
+          <select name="delegado" class="form-input" {% if not candidatos %}disabled{% endif %} required>
+            <option value="">Seleccione un usuario...</option>
+            {% for u in candidatos %}
+            <option value="{{ u.id }}">{{ u.get_full_name|default:u.username }} ({{ u.get_rol_display }})</option>
+            {% endfor %}
+          </select>
+          {% if not candidatos %}
+          <p class="dl-meta">No hay candidatos disponibles en este departamento.</p>
+          {% endif %}
+        </div>
+
+        <div class="form-group" style="margin-bottom:0;">
+          <label class="form-label">Fecha de inicio *</label>
+          <input type="date" name="fecha_inicio" class="form-input" value="{{ hoy|date:'Y-m-d' }}" required>
+        </div>
+
+        <div class="form-group" style="margin-bottom:0;">
+          <label class="form-label">Fecha de fin *</label>
+          <input type="date" name="fecha_fin" class="form-input" required>
+        </div>
+      </div>
+
+      <div class="form-group dl-motivo">
+        <label class="form-label">Motivo</label>
+        <textarea name="motivo" class="form-input" rows="2" maxlength="500"
+          placeholder="Vacaciones, permiso, comisión de servicio, etc."></textarea>
+      </div>
+
+      <div style="margin-top:1rem; display:flex; gap:0.75rem; flex-wrap:wrap;">
+        <button type="submit" class="btn btn--primary btn--sm">
+          <i class="fa-solid fa-user-check"></i> Crear delegación
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% else %}
+<div class="dl-note">
+  <i class="fa-solid fa-circle-info"></i>
+  Solo puedes consultar la delegación que ejerces y, si lo deseas,
+  renunciar a ella. Para crear delegaciones habla con tu jefe o con un
+  administrador del sistema.
+</div>
+{% endif %}
+
+<div class="dl-card">
+  <div class="dl-card-header"><h3><i class="fa-solid fa-list"></i> Delegaciones</h3></div>
+  {% if delegaciones %}
+  {% for fila in delegaciones %}
+  {% with d=fila.obj %}
+  <div class="dl-row{% if fila.en_curso %} dl-row--actual{% endif %}">
+    <div class="dl-row-main">
+      <div class="dl-who">
+        <i class="fa-solid fa-arrow-right-arrow-left"></i>
+        {{ d.jefe.get_full_name|default:d.jefe.username }}
+        → {{ d.delegado.get_full_name|default:d.delegado.username }}
+      </div>
+      <div class="dl-meta">
+        <i class="fa-solid fa-building"></i> {{ d.departamento.nombre }}
+        &nbsp;·&nbsp; <i class="fa-solid fa-calendar-days"></i>
+        del {{ d.fecha_inicio|date:"d/m/Y" }} al {{ d.fecha_fin|date:"d/m/Y" }}
+        {% if d.motivo %}&nbsp;·&nbsp; {{ d.motivo|truncatechars:70 }}{% endif %}
+        {% if d.revocada_por %}
+        &nbsp;·&nbsp; revocada por {{ d.revocada_por.get_full_name|default:d.revocada_por.username }}
+        {% if d.fecha_revocacion %} el {{ d.fecha_revocacion|date:"d/m/Y H:i" }}{% endif %}
+        {% endif %}
+      </div>
+    </div>
+
+    <span class="dl-badge dl-badge--{{ fila.clase }}">
+      {% if fila.clase == 'vigente' %}<i class="fa-solid fa-circle-check"></i>
+      {% elif fila.clase == 'programada' %}<i class="fa-solid fa-clock"></i>
+      {% elif fila.clase == 'vencida' %}<i class="fa-solid fa-hourglass-end"></i>
+      {% else %}<i class="fa-solid fa-ban"></i>{% endif %}
+      {{ fila.estado }}
+    </span>
+
+    {% if fila.puede_revocar %}
+    <form class="dl-actions" method="post" action="{% url 'documentos:revocar_delegacion' d.id %}">
+      {% csrf_token %}
+      <div class="dl-revocar">
+        <input type="text" class="form-input" name="motivo_revocacion"
+          placeholder="Motivo de revocación (opcional)" maxlength="300" style="min-width:200px;">
+        <button type="submit" class="btn btn--danger btn--sm"
+          onclick="return confirm('¿Revocar ahora esta delegación? El delegado dejará de ejercer la jefatura.');">
+          <i class="fa-solid fa-user-slash"></i> Revocar
+        </button>
+      </div>
+    </form>
+    {% endif %}
+  </div>
+  {% endwith %}
+  {% endfor %}
+  {% else %}
+  <div class="dl-empty">
+    <i class="fa-solid fa-inbox" style="font-size:1.5rem;display:block;margin-bottom:0.75rem;"></i>
+    No hay delegaciones registradas.
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

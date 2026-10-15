@@ -146,5 +146,21 @@
     <h3 class="config-card-title">Roles y Permisos</h3>
     <p class="config-card-desc">Matriz de funcionalidades por rol del sistema.</p>
   </a>
+
+  <a href="{% url 'documentos:transferencia_masiva' %}" class="config-card">
+    <div class="config-card-icon config-card-icon--warning">
+      <i class="fa-solid fa-plane-departure"></i>
+    </div>
+    <h3 class="config-card-title">Transferencia Masiva</h3>
+    <p class="config-card-desc">Cubrir vacaciones: transferir propiedad, asignaciones y distribuciones de un trabajador en un solo paso.</p>
+  </a>
+
+  <a href="{% url 'documentos:delegaciones_jefatura' %}" class="config-card">
+    <div class="config-card-icon config-card-icon--success">
+      <i class="fa-solid fa-user-shield"></i>
+    </div>
+    <h3 class="config-card-title">Delegaciones de Jefatura</h3>
+    <p class="config-card-desc">Cubrir vacaciones del jefe: delegar los poderes operativos de la jefatura a un miembro del departamento, con vigencia.</p>
+  </a>
 </div>
 {% endblock %}

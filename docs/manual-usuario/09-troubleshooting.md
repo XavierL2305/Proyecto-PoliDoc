@@ -31,7 +31,7 @@ reúne la información de "Cuándo pedir ayuda al administrador" (al final).
 | Llega "Aprobación estancada (+48 h)" | Una aprobación lleva más de 48 h sin resolverse | Los administradores ya fueron notificados; resuelve el pendiente |
 | "El motivo de rechazo es requerido" | Rechazaste sin escribir el motivo | Escribe el motivo y confirma de nuevo |
 | Documento rechazado | El aprobador pidió cambios | Lee el motivo, corrige y vuelve a enviar a revisión |
-| La misma persona aprueba dos veces | La cadena siempre tiene evaluador y autorizador | Es correcto: son dos pasos, aunque coincida la persona |
+| La misma persona aprueba dos veces | El envío es de un **no jefe** y esa persona es a la vez jefe del departamento y jefe de GG | Es correcto: son dos pasos, aunque coincida la persona. Si el envío lo hizo un **jefe** solo hay un paso |
 
 ## Descargas
 
