@@ -1,5 +1,6 @@
 from django.core.management.base import BaseCommand
 from documentos.models import Periodo
+from documentos.cache_utils import invalidar_periodos
 
 
 PERIODOS = [
@@ -27,3 +28,5 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS(
             f'Períodos: {creados} creados, {len(PERIODOS) - creados} existentes'
         ))
+
+        invalidar_periodos()

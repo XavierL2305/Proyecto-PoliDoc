@@ -544,6 +544,20 @@
             {% endfor %}
           }
 
+          // Pre-poblar participantes en edición
+          var partHidden = document.getElementById('id_participantes');
+          if (partHidden && partHidden.value) {
+            try {
+              var listaPart = JSON.parse(partHidden.value);
+              if (Array.isArray(listaPart)) {
+                for (const nombre of listaPart) {
+                  selectedPart[nombre] = nombre;
+                }
+                renderParticipantes();
+              }
+            } catch (e) {}
+          }
+
         });
 
         // === Responsables (tags) ===
@@ -596,7 +610,7 @@
 
         function renderParticipantes() {
           const tags = document.getElementById('part-tags');
-          const hidden = document.getElementById('participantes');
+          const hidden = document.getElementById('id_participantes');
           if (!tags || !hidden) return;
           tags.innerHTML = '';
           const lista = Object.keys(selectedPart);

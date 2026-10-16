@@ -6,6 +6,10 @@ así que se cachean con TTL y se invalidan en las señales de guardado/borrado.
 
 Nota: se cachean listas de instancias (no querysets), por lo que solo son aptas
 para renderizado/iteración, NO para asignarlas a `ModelChoiceField.queryset`.
+
+Los resultados vacíos **no** se cachean: así una lectura transitoria sin datos
+(contenedor arrancando, BD recién sembrada o reemplazada) no queda servida como
+"catálogo vacío" hasta que expire el TTL.
 """
 
 import logging
@@ -59,30 +63,33 @@ def _cache_delete_seguro(key):
 
 def tipos_activos():
     data = _cache_get_seguro(TIPOS_KEY, None)
-    if data is None:
+    if not data:
         from .models import TipoDocumento
         data = list(
             TipoDocumento.objects.filter(activo=True).exclude(key='').order_by('codigo')
         )
-        _cache_set_seguro(TIPOS_KEY, data, TTL)
+        if data:
+            _cache_set_seguro(TIPOS_KEY, data, TTL)
     return data
 
 
 def periodos_activos():
     data = _cache_get_seguro(PERIODOS_KEY, None)
-    if data is None:
+    if not data:
         from .models import Periodo
         data = list(Periodo.objects.filter(activo=True))
-        _cache_set_seguro(PERIODOS_KEY, data, TTL)
+        if data:
+            _cache_set_seguro(PERIODOS_KEY, data, TTL)
     return data
 
 
 def departamentos_activos():
     data = _cache_get_seguro(DEPARTAMENTOS_KEY, None)
-    if data is None:
+    if not data:
         from .models import Departamento
         data = list(Departamento.objects.filter(activo=True).order_by('codigo'))
-        _cache_set_seguro(DEPARTAMENTOS_KEY, data, TTL)
+        if data:
+            _cache_set_seguro(DEPARTAMENTOS_KEY, data, TTL)
     return data
 
 

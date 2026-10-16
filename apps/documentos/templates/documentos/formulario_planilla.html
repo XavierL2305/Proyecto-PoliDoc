@@ -418,7 +418,7 @@
 
         function renderParticipantes() {
           const tags = document.getElementById('part-tags');
-          const hidden = document.getElementById('participantes_propuestos');
+          const hidden = document.getElementById('id_participantes_propuestos');
           if (!tags || !hidden) return;
           tags.innerHTML = '';
           const lista = Object.keys(selectedPart);
@@ -430,7 +430,7 @@
 
         // Pre-poblar participantes en edición
         document.addEventListener('DOMContentLoaded', function() {
-          var partHidden = document.getElementById('participantes_propuestos');
+          var partHidden = document.getElementById('id_participantes_propuestos');
           if (!partHidden || !partHidden.value) return;
           try {
             var lista = JSON.parse(partHidden.value);

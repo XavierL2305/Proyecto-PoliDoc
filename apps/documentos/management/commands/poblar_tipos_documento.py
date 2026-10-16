@@ -1,6 +1,7 @@
 from django.core.management.base import BaseCommand
 from documentos.models import TipoDocumento
 from documentos.maps import TIPOS_INFO
+from documentos.cache_utils import invalidar_tipos
 
 
 class Command(BaseCommand):
@@ -34,3 +35,5 @@ class Command(BaseCommand):
                 f'Tipos de documento: {created} creados, {updated} actualizados (total: {created + updated})'
             )
         )
+
+        invalidar_tipos()

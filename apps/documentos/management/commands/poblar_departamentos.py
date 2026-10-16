@@ -1,5 +1,6 @@
 from django.core.management.base import BaseCommand
 from documentos.models import Departamento
+from documentos.cache_utils import invalidar_departamentos
 
 
 class Command(BaseCommand):
@@ -70,3 +71,5 @@ class Command(BaseCommand):
                 f'Departamentos poblados: {created} creados, {updated} actualizados (total: {created + updated})'
             )
         )
+
+        invalidar_departamentos()
