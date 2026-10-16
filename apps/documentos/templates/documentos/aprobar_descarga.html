@@ -38,6 +38,12 @@
             <span class="detail-label">Fecha de solicitud</span>
             <span class="detail-value">{{ solicitud.fecha_solicitud|date:"d/m/Y H:i" }}</span>
           </div>
+          {% if aprobacion %}
+          <div class="detail-row">
+            <span class="detail-label">Tu paso</span>
+            <span class="detail-value">{{ aprobacion.get_rol_aprobador_display }}</span>
+          </div>
+          {% endif %}
           {% if solicitud.motivo %}
           <div style="margin-top: 1rem;">
             <span class="detail-label">Motivo</span>

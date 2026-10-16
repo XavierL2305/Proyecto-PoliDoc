@@ -726,37 +726,48 @@ class SolicitudDescarga(models.Model):
 class AprobacionDescarga(models.Model):
     ESTADO_CHOICES = [
         ('pendiente', 'Pendiente'),
+        ('esperando', 'En Espera'),
         ('aprobada', 'Aprobada'),
         ('rechazada', 'Rechazada'),
         ('cancelada', 'Cancelada'),
     ]
     ROL_CHOICES = [
         ('jefe', 'Jefe de Departamento'),
-        ('autorizador', 'Autorizador (Administrador)'),
+        ('autorizador', 'Autorizador (Gerencia General)'),
     ]
 
     solicitud = models.ForeignKey(
         SolicitudDescarga, on_delete=models.CASCADE, related_name='aprobaciones'
     )
     aprobador = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name='aprobaciones_descarga'
+        User, on_delete=models.CASCADE, related_name='aprobaciones_descarga',
+        null=True, blank=True, verbose_name='Aprobador',
     )
     rol_aprobador = models.CharField(
         max_length=20, choices=ROL_CHOICES, default='jefe',
         verbose_name='Rol del aprobador',
-        help_text='Para documentos restringidos se exige jefe + autorizador.',
+        help_text='Restringido: jefe del departamento (evaluador) + jefe de '
+                  'Gerencia General (autorizador), en ese orden.',
+    )
+    es_final = models.BooleanField(
+        default=True, verbose_name='Es el paso final del flujo',
     )
     estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='pendiente')
     observaciones = models.TextField(blank=True, default='')
     fecha_aprobacion = models.DateTimeField(null=True, blank=True)
+    #: Momento en que el paso pasó a ``pendiente`` (base del escalado por antigüedad).
+    fecha_activacion = models.DateTimeField(null=True, blank=True, verbose_name='Activado en')
+    #: Anti-duplicado del escalado automático (ver ``tasks.escalar_aprobaciones_vencidas``).
+    fecha_escalado = models.DateTimeField(null=True, blank=True, verbose_name='Escalado en')
 
     class Meta:
         verbose_name = 'Aprobación de Descarga'
         verbose_name_plural = 'Aprobaciones de Descarga'
-        unique_together = ['solicitud', 'aprobador']
+        unique_together = ['solicitud', 'aprobador', 'rol_aprobador']
 
     def __str__(self):
-        return f"Aprobación de {self.aprobador.username} - Solicitud #{self.solicitud.id}"
+        aprobador = self.aprobador.username if self.aprobador_id else 'sin asignar'
+        return f"{self.get_rol_aprobador_display()} {aprobador} - Solicitud #{self.solicitud.id}"
 
 
 class SolicitudAccesoDocumento(models.Model):

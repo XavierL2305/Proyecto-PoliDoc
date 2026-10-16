@@ -148,12 +148,19 @@ def _aprobador_item(usuario, rol, estado, fecha=None):
 def _item_descarga(solicitud):
     """Ítem para :class:`models.SolicitudDescarga`."""
     documento = solicitud.documento
+    aprobaciones = list(solicitud.aprobaciones.all())
     estado = solicitud.estado
     if estado == 'aprobada' and not solicitud.esta_vigente:
         estado = 'vencida'
+    elif estado == 'pendiente' and aprobaciones and not any(
+        a.estado == 'pendiente' for a in aprobaciones
+    ):
+        # Ningún paso accionable: la solicitud está esperando que se asigne
+        # al jefe que debe resolverla.
+        estado = 'esperando'
     aprobadores = [
         _aprobador_item(a.aprobador, a.rol_aprobador, a.estado, a.fecha_aprobacion)
-        for a in solicitud.aprobaciones.all()
+        for a in aprobaciones
     ]
     url_detalle = _url_detalle(documento)
     url_accion = ''

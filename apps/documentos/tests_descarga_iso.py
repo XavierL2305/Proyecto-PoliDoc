@@ -128,6 +128,42 @@ class SolicitarDescargaISOTest(BaseDescargaTest):
         roles = set(solicitud.aprobaciones.values_list('rol_aprobador', flat=True))
         self.assertEqual(roles, {'jefe', 'autorizador'})
 
+    def test_confidencial_aprobador_es_jefe_del_departamento(self):
+        # Un usuario de TI solicita un documento confidencial del depto. SGC:
+        # el primer aprobador es el jefe del depto dueño, no el suyo.
+        doc = self._doc(
+            clasificacion='confidencial', propietario=self.user_jefe_th,
+            departamento=self.depto_th, codigo='TH-FOR-CONF',
+        )
+        self.client.login(username='trab01', password='testpass123')
+        self.client.post(
+            reverse('documentos:solicitar_descarga', args=[doc.tipo_id, doc.uuid]),
+            data={'motivo': 'Necesito revisarlo'},
+        )
+        solicitud = SolicitudDescarga.objects.get(documento=doc)
+        paso = solicitud.aprobaciones.get()
+        self.assertEqual(paso.rol_aprobador, 'jefe')
+        self.assertEqual(paso.aprobador, self.user_jefe_th)
+        self.assertEqual(paso.estado, 'pendiente')
+        self.assertTrue(paso.es_final)
+        self.assertEqual(solicitud.aprobaciones.count(), 1)
+
+    def test_sin_jefe_del_departamento_queda_en_espera(self):
+        doc = self._doc(
+            clasificacion='confidencial', propietario=self.user_jefe_th,
+            departamento=self.depto_th, codigo='TH-FOR-SINJ',
+        )
+        self.depto_th.jefe = None
+        self.depto_th.save(update_fields=['jefe'])
+        from documentos.services.descargas import crear_solicitud_descarga
+        resultado = crear_solicitud_descarga(
+            doc, self.user_trabajador, 'Necesito revisarlo',
+        )
+        self.assertEqual(resultado.codigo, 'ok')
+        paso = resultado.solicitud.aprobaciones.get()
+        self.assertEqual(paso.estado, 'esperando')
+        self.assertIsNone(paso.aprobador)
+
 
 class AprobarDescargaISOTest(BaseDescargaTest):
 
@@ -137,28 +173,31 @@ class AprobarDescargaISOTest(BaseDescargaTest):
             clasificacion='restringido', propietario=self.user_jefe_ti,
             codigo='TI-FOR-RE',
         )
-        self.solicitud = SolicitudDescarga.objects.create(
-            documento=self.doc, solicitado_por=self.user_trabajador,
-            motivo='Auditoría interna', estado='pendiente',
+        from documentos.services.descargas import crear_solicitud_descarga
+        resultado = crear_solicitud_descarga(
+            self.doc, self.user_trabajador, 'Auditoría interna',
         )
-        AprobacionDescarga.objects.create(
-            solicitud=self.solicitud, aprobador=self.user_jefe_ti, rol_aprobador='jefe',
-        )
-        AprobacionDescarga.objects.create(
-            solicitud=self.solicitud, aprobador=self.user_admin, rol_aprobador='autorizador',
-        )
+        self.solicitud = resultado.solicitud
         self.url = reverse('documentos:aprobar_descarga', args=[self.solicitud.id])
 
-    def test_doble_control_y_distribucion(self):
-        # Primer paso: jefe aprueba → sigue pendiente.
+    def test_doble_control_secuencial_y_distribucion(self):
+        # Segundo paso arranca en espera hasta que el jefe evalúe.
+        autorizador = self.solicitud.aprobaciones.get(rol_aprobador='autorizador')
+        self.assertEqual(autorizador.estado, 'esperando')
+        self.assertEqual(autorizador.aprobador, self.user_jefe_gg)
+
+        # Primer paso: jefe aprueba → sigue pendiente, se promueve el GG.
         self.client.login(username='jefe_ti', password='testpass123')
         self.client.post(self.url, {'accion': 'aprobar', 'observaciones': 'ok'})
         self.solicitud.refresh_from_db()
+        autorizador.refresh_from_db()
         self.assertEqual(self.solicitud.estado, 'pendiente')
+        self.assertEqual(autorizador.estado, 'pendiente')
+        self.assertIsNotNone(autorizador.fecha_activacion)
         self.assertFalse(DistribucionDocumento.objects.filter(documento=self.doc).exists())
 
-        # Segundo paso: admin autoriza → aprobada + distribución + vigencia.
-        self.client.login(username='admin01', password='testpass123')
+        # Segundo paso: jefe de Gerencia General autoriza → aprobada.
+        self.client.login(username='jefe_gg', password='testpass123')
         self.client.post(self.url, {'accion': 'aprobar', 'observaciones': 'ok'})
         self.solicitud.refresh_from_db()
         self.assertEqual(self.solicitud.estado, 'aprobada')
@@ -168,12 +207,38 @@ class AprobarDescargaISOTest(BaseDescargaTest):
         self.assertEqual(dist.usuario, self.user_trabajador)
         self.assertFalse(dist.revocado)
 
-    def test_rechazo_no_distribuye(self):
+    def test_rechazo_no_distribuye_y_cancela_hermanos(self):
         self.client.login(username='jefe_ti', password='testpass123')
         self.client.post(self.url, {'accion': 'rechazar', 'observaciones': 'no'})
         self.solicitud.refresh_from_db()
         self.assertEqual(self.solicitud.estado, 'rechazada')
+        self.assertEqual(
+            self.solicitud.aprobaciones.get(rol_aprobador='autorizador').estado,
+            'cancelada',
+        )
         self.assertFalse(DistribucionDocumento.objects.filter(documento=self.doc).exists())
+
+    def test_delegado_de_jefatura_puede_resolver(self):
+        from datetime import date
+        from documentos.models import DelegacionJefatura
+        # El jefe de TI delega temporalmente en el coordinador.
+        hoy = date.today()
+        DelegacionJefatura.objects.create(
+            departamento=self.depto_ti,
+            jefe=self.user_jefe_ti,
+            delegado=self.user_coordinador,
+            fecha_inicio=hoy - timedelta(days=1),
+            fecha_fin=hoy + timedelta(days=1),
+            motivo='Vacaciones',
+        )
+        self.client.login(username='coord01', password='testpass123')
+        resp = self.client.post(self.url, {'accion': 'aprobar', 'observaciones': 'ok'})
+        self.assertEqual(resp.status_code, 302)
+        self.solicitud.refresh_from_db()
+        jefe = self.solicitud.aprobaciones.get(rol_aprobador='jefe')
+        self.assertEqual(jefe.estado, 'aprobada')
+        # El paso queda asignado al jefe natural, no al delegado.
+        self.assertEqual(jefe.aprobador, self.user_jefe_ti)
 
 
 class DescargarArchivoISOTest(BaseDescargaTest):

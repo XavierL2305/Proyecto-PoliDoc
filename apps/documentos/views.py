@@ -628,12 +628,12 @@ def bandeja_aprobaciones(request):
         Q(departamento_origen=dept, rol_aprobador='evaluador', estado='pendiente')
     ).distinct().count()
     descargas = AprobacionDescarga.objects.filter(
-        aprobador=request.user, solicitud__estado='pendiente',
+        aprobador_id__in=aprobadores, solicitud__estado='pendiente',
     ).select_related('solicitud', 'solicitud__documento', 'solicitud__solicitado_por')
     if filtro_estado:
         descargas = descargas.filter(estado=filtro_estado)
     total_pendientes_descarga = AprobacionDescarga.objects.filter(
-        aprobador=request.user, estado='pendiente',
+        aprobador_id__in=aprobadores, estado='pendiente',
         solicitud__estado='pendiente',
     ).count()
     planillas = AprobacionPlanilla.objects.filter(
@@ -1635,7 +1635,7 @@ def solicitar_descarga(request, tipo, documento_id):
         aprobadores_descarga, bloqueo_solicitud_descarga, crear_solicitud_descarga,
     )
 
-    aprobadores = aprobadores_descarga(documento)
+    pasos = aprobadores_descarga(documento)
 
     if request.method == 'POST':
         form = SolicitudDescargaForm(request.POST)
@@ -1643,13 +1643,15 @@ def solicitar_descarga(request, tipo, documento_id):
             resultado = crear_solicitud_descarga(
                 documento, request.user, form.cleaned_data['motivo'],
             )
-            if resultado.codigo == 'sin_aprobadores':
-                # Sin jefe ni admin: se informa en la propia página (200).
+            if resultado.codigo == 'sin_departamento':
+                # Sin departamento no hay jefe aprobador: se informa en la
+                # propia página (200).
                 messages.error(request, resultado.mensaje)
                 return render(request, 'documentos/solicitar_descarga.html', {
                     'form': SolicitudDescargaForm(),
                     'documento': documento, 'tipo': tipo,
-                    'aprobadores': [], 'aprobador': None, 'aprobador_tipo': None,
+                    'pasos': pasos,
+                    'solicitud_reciente': None,
                 })
             if resultado.codigo != 'ok':
                 messages.warning(request, resultado.mensaje)
@@ -1660,7 +1662,7 @@ def solicitar_descarga(request, tipo, documento_id):
         # GET: no se vuelve a ofrecer el formulario si ya hay una solicitud
         # en trámite o una autorización vigente; se redirige a la ficha.
         bloqueo = bloqueo_solicitud_descarga(documento, request.user)
-        if bloqueo and bloqueo.codigo != 'sin_aprobadores':
+        if bloqueo and bloqueo.codigo != 'sin_departamento':
             messages.warning(request, bloqueo.mensaje)
             return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
         form = SolicitudDescargaForm()
@@ -1674,9 +1676,7 @@ def solicitar_descarga(request, tipo, documento_id):
     )
     return render(request, 'documentos/solicitar_descarga.html', {
         'form': form, 'documento': documento, 'tipo': tipo,
-        'aprobadores': aprobadores,
-        'aprobador': aprobadores[0][0] if aprobadores else None,
-        'aprobador_tipo': aprobadores[0][1] if aprobadores else None,
+        'pasos': pasos,
         'solicitud_reciente': solicitud_reciente,
     })
 
@@ -2028,9 +2028,11 @@ def aprobar_descarga(request, solicitud_id):
         SolicitudDescarga.objects.select_related('documento'), id=solicitud_id,
     )
     documento = solicitud.documento
+    from .jefatura import aprobadores_que_repr
+
     aprobacion = AprobacionDescarga.objects.filter(
-        solicitud=solicitud, aprobador=request.user
-    ).first()
+        solicitud=solicitud, aprobador_id__in=aprobadores_que_repr(request.user),
+    ).order_by('id').first()
     if not aprobacion:
         messages.error(request, 'No tienes una aprobación asignada para esta solicitud.')
         return redirect('documentos:mis_documentos')
@@ -2047,7 +2049,7 @@ def aprobar_descarga(request, solicitud_id):
             messages.success(request, resultado.mensaje)
         elif resultado.codigo == 'rechazada':
             messages.warning(request, resultado.mensaje)
-        else:  # ya_resuelta / sin_pendiente / no_existe
+        else:  # ya_resuelta / sin_pendiente / en_espera / no_existe
             messages.error(request, resultado.mensaje)
         return redirect('documentos:documentos_departamento')
 
@@ -2059,11 +2061,17 @@ def aprobar_descarga(request, solicitud_id):
             f'Esta solicitud ya fue {solicitud.get_estado_display().lower()}.',
         )
         return redirect('documentos:documentos_departamento')
+    if aprobacion.estado == 'esperando':
+        messages.warning(
+            request,
+            'Este paso aún no está activo: falta asignar al jefe que debe resolverlo.',
+        )
+        return redirect('documentos:documentos_departamento')
     if aprobacion.estado != 'pendiente':
         messages.warning(request, 'Tu evaluación ya fue registrada.')
         return redirect('documentos:documentos_departamento')
     return render(request, 'documentos/aprobar_descarga.html', {
-        'solicitud': solicitud, 'documento': documento,
+        'solicitud': solicitud, 'documento': documento, 'aprobacion': aprobacion,
     })
 
 

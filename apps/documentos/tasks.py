@@ -392,7 +392,7 @@ def escalar_aprobaciones_vencidas(self):
     """
     from datetime import timedelta
     from django.utils import timezone
-    from .models import AprobacionPlanilla, SolicitudAprobacionDocumento
+    from .models import AprobacionPlanilla, AprobacionDescarga, SolicitudAprobacionDocumento
     from autenticacion.models import PerfilUsuario, Notificacion
 
     horas = int(getattr(settings, 'APROBACION_ESCALADO_HORAS', 48))
@@ -483,14 +483,52 @@ def escalar_aprobaciones_vencidas(self):
         paso.save(update_fields=['fecha_escalado'])
         planillas_escaladas += 1
 
+    descargas_escaladas = 0
+    pasos_descarga = (AprobacionDescarga.objects
+                      .filter(estado__in=('pendiente', 'esperando'),
+                              solicitud__estado='pendiente',
+                              solicitud__fecha_solicitud__lte=limite,
+                              fecha_escalado__isnull=True)
+                      .select_related('solicitud', 'solicitud__documento', 'aprobador'))
+
+    for paso in pasos_descarga:
+        sol = paso.solicitud
+        doc = sol.documento
+        aprobador = paso.aprobador
+        aprobador_txt = (
+            (aprobador.get_full_name() or aprobador.username)
+            if aprobador else 'sin asignar'
+        )
+        url = f'/documentos/solicitud/{sol.id}/aprobar/'
+        mensaje = (
+            f'La solicitud de descarga del documento "{doc.nombre}" ({doc.codigo}) '
+            f'lleva más de {horas}h sin resolverse '
+            f'(paso: {paso.get_rol_aprobador_display()}). Aprobador: {aprobador_txt}.'
+        )
+        for admin in admins:
+            Notificacion.objects.create(
+                usuario=admin,
+                titulo='Solicitud de descarga estancada (+%sh)' % horas,
+                mensaje=mensaje,
+                tipo='aprobacion_escalada',
+                url_accion=url,
+                departamento=getattr(doc, 'departamento', None),
+                documento=doc,
+            )
+        paso.fecha_escalado = ahora
+        paso.save(update_fields=['fecha_escalado'])
+        descargas_escaladas += 1
+
     logger.info(
-        "Escalado de aprobaciones: %s solicitudes, %s planillas, %s administradores",
-        escaladas, planillas_escaladas, len(admins),
+        "Escalado de aprobaciones: %s solicitudes, %s planillas, %s descargas, "
+        "%s administradores",
+        escaladas, planillas_escaladas, descargas_escaladas, len(admins),
     )
     return {
-        'escaladas': escaladas + planillas_escaladas,
+        'escaladas': escaladas + planillas_escaladas + descargas_escaladas,
         'solicitudes_escaladas': escaladas,
         'planillas_escaladas': planillas_escaladas,
+        'descargas_escaladas': descargas_escaladas,
         'admins': len(admins),
     }
 

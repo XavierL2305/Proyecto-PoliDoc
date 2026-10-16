@@ -1,0 +1,570 @@
+================================================================================
+POLIDOC — PLAN DE IMPLEMENTACIÓN: APARTADO DE PLANTILLAS
+================================================================================
+Archivo         : PLAN_PLANTILLAS.txt
+Estado          : PLAN CERRADO — listo para ejecutar
+Alcance         : apps/documentos  (+ sidebar en apps/autenticacion)
+Enfoque         : Opción B — conservar los modelos de aprobación actuales y
+                  unificar el comportamiento/UI con una capa de servicios.
+Aprobación      : 1 paso (jefe de departamento). Sin Gerencia General para
+                  plantillas.
+Migración nueva : 0054_plantillas (última aplicada: 0053_origen_descripcion_solicitud)
+
+--------------------------------------------------------------------------------
+ÍNDICE
+--------------------------------------------------------------------------------
+  0. Contexto y objetivo
+  1. Conceptos y mapeo
+  2. Decisiones tomadas
+  3. Reglas de negocio (aprobación, códigos, vínculo, visibilidad)
+  4. FASE 0 — Modelo y migración
+  5. FASE 1 — Catálogo "Plantillas" + listado general filtrable
+  6. FASE 2 — Alta de plantilla + aprobación condicional
+  7. FASE 3 — Modificación / Eliminación de plantilla
+  8. FASE 4 — Vínculo Plantilla ↔ Tipo ↔ Documento
+  9. FASE 5 — Unificación de aprobaciones (servicio)
+ 10. Tests
+ 11. Verificación / comandos
+ 12. Riesgos y notas
+ 13. Inventario de archivos afectados
+ 14. CHECKLIST POR ARCHIVO (tildar)
+ 15. Historial de decisiones (Q&A)
+
+================================================================================
+0. CONTEXTO Y OBJETIVO
+================================================================================
+Hoy POLIDOC maneja "documentos" (Documento) y "planillas de cambios"
+(PlanillaCambios). Se necesita un tercer concepto: PLANTILLAS, entendidas como
+documentos EN BLANCO (ej. un DPR vacío con su estructura) que un usuario sube
+para que otros lo descarguen, llenen por fuera y luego suban el documento lleno.
+
+Objetivo: que PLANTILLAS, DOCUMENTOS y PLANILLAS DE CAMBIOS convivan y
+compartan el mismo flujo de aprobación (misma UX, mismos roles/estados),
+reutilizando el modelo Documento para las plantillas.
+
+Relación con lo existente:
+  - SGC-FOR-001 = motor de "creación/eliminación" de documentos (Formato).
+  - SGC-FOR-005 = motor de "planilla de cambios / modificación" (Formato).
+  - La PLANTILLA NO es el Formato FOR-001/005: es un Documento en blanco.
+
+================================================================================
+1. CONCEPTOS Y MAPEO
+================================================================================
++--------------------------+--------------------------------------+-------------------+
+| Concepto (jefa TI)       | Entidad                              | Aprobación hoy     |
++--------------------------+--------------------------------------+-------------------+
+| Plantilla (en blanco)    | Documento con es_plantilla=True      | NINGUNA            |
+| Documento lleno (crear)  | Documento + SolicitudCambio (FOR-001)| SolicitudAprobacion|
+| Planilla de cambios (mod)| PlanillaCambios + SolicitudCambio(FOR005)| AprobacionPlanilla |
++--------------------------+--------------------------------------+-------------------+
+
+Plantilla = Documento en blanco que reutiliza:
+  tipo (TipoDocumento), departamento, codigo, clasificación, VersionDocumento,
+  vigencia/vencimiento/retención (opcionales) y visibilidad por clasificación.
+
+================================================================================
+2. DECISIONES TOMADAS
+================================================================================
+ D1. Flujo de aprobación: Opción B (conservar modelos; unificar comportamiento).
+ D2. Plantilla reutiliza el modelo Documento (no es entidad nueva).
+ D3. Discriminador: booleano Documento.es_plantilla.
+ D4. Aprobación de creación según rol/jefatura:
+       - jefe natural o coordinador CON jefatura delegada vigente (_es_jefe) ->
+         pasa directo a estado 'activo' (sin aprobación).
+       - trabajador o coordinador SIN jefatura -> 1 paso (jefe del depto).
+ D5. Plantilla: 1 paso de aprobación (jefe de departamento). Sin GG.
+ D6. Códigos: {DEPTO}-{TIPO}-PLT-{SEC} (o {TIPO}-PLT-{SEC} si sin_prefijo_depto).
+     Serie separada de la de documentos.
+ D7. Vínculo: Documento.plantilla_origen (FK self) hacia la plantilla usada.
+ D8. UI: catálogo /documentos/ pasa a "Plantillas"; sidebar
+     "Formularios" -> "Plantillas". Alta reutiliza seleccionar_tipo con
+     indicador visual de plantilla.
+ D9. FOR existentes (Documento.tipo.key == 'formulario') -> backfill
+     es_plantilla=True.
+ D10. Modificación de plantilla -> FOR-005 (crear_planilla);
+      Eliminación de plantilla -> FOR-001 (eliminar_documento/destruir_documento).
+ D11. Vigencia / vencimiento / retención de plantilla: OPCIONALES (como hoy).
+ D12. Listado general: NO excluir plantillas; ofrecer listado de todo el modelo
+      Documento (documentos + plantillas) con FILTRO es_plantilla.
+ D13. plantilla_origen por dos vías:
+        - descarga desde el flujo de creación -> autocompletar;
+        - subida desde otro lado -> el usuario la selecciona en un desplegable
+          (solo plantillas existentes y del mismo tipo).
+ D14. TipoDocumento 'formulario' (FOR) se MANTIENE activo.
+
+--------------------------------------------------------------------------------
+PENDIENTE DE CONFIRMAR AL EJECUTAR
+--------------------------------------------------------------------------------
+ P1. ¿plantilla_origen es OBLIGATORIO cuando el tipo tiene plantillas activas?
+     Default de implementación: OPCIONAL; el desplegable solo ofrece plantillas
+     válidas (mismo tipo, activas). Si el tipo no tiene plantillas -> sin campo.
+ P2. Comportamiento por defecto del filtro del listado general
+     (Todos / Documentos / Plantillas). Default propuesto: "Documentos".
+
+================================================================================
+3. REGLAS DE NEGOCIO
+================================================================================
+3.1 APROBACIÓN DE CREACIÓN DE PLANTILLA
+    Sea `user` el creador y `depto` su departamento:
+      if _es_jefe(user):                       # jefe natural o delegado vigente
+          documento.estado = 'activo'
+          documento.aprobado_por = user
+          documento.fecha_aprobacion = now
+          (NO se crea SolicitudAprobacionDocumento)
+      else:
+          crear 1 paso:
+            aprobador = depto.jefe  (si no hay -> GG; si no -> None)
+            SolicitudAprobacionDocumento(
+                documento, accion_solicitud='creacion',
+                rol_aprobador='evaluador', es_final=True,
+                estado='pendiente' if aprobador else 'esperando',
+                solicitante=user, propietario=documento.propietario,
+                departamento_origen=depto)
+          si aprobador: notificar al jefe.
+          si no hay aprobador: avisar_paso_sin_asignar(?, 'evaluación')
+            (para plantilla usar el equivalente; ver Fase 2).
+    Al aprobar: se REUTILIZA aplicar_cambio (accion='creacion') que ya activa el
+    documento, fija vigencia/revisión y sella aprobado_por/fecha_aprobacion.
+    autocompletar_respuestas() hace no-op porque la plantilla NO tiene
+    SolicitudCambio. => NO se modifica aprobar()/aplicar_cambio().
+
+3.2 CÓDIGOS
+    Documento normal  (sin_prefijo_depto=False): {DEPTO}-{TIPO}-{SEC}
+    Plantilla         (sin_prefijo_depto=False): {DEPTO}-{TIPO}-PLT-{SEC}
+    Documento normal  (sin_prefijo_depto=True) : {TIPO}-{SEC}
+    Plantilla         (sin_prefijo_depto=True) : {TIPO}-{PLT}-{SEC}
+    La serie se separa filtrando por es_plantilla en generar_codigo_secuencial.
+    (Documento.codigo es unique=True -> el segmento PLT evita colisiones.)
+
+3.3 VISIBILIDAD
+    Reutilizar permissions.q_documentos_visibles(user) / puede_ver_documento.
+    - público: visible para todos.
+    - interno: mismo departamento + jefe + propietario.
+    - confidencial: jefe del departamento (y grants).
+    - restringido: solo admin/propietario/grants.
+
+3.4 MODIFICACIÓN / ELIMINACIÓN
+    Reutilizan los flujos existentes sobre Documento:
+      - Modificar: crear_planilla (FOR-005).
+      - Eliminar: eliminar_documento / destruir_documento (FOR-001).
+
+================================================================================
+4. FASE 0 — MODELO Y MIGRACIÓN
+================================================================================
+ARCHIVO: apps/documentos/models.py
+
+4.1 Documento: nuevos campos (junto a los existentes, p.ej. tras `clasificacion`):
+    es_plantilla = models.BooleanField(
+        default=False, db_index=True, verbose_name='Es plantilla')
+    plantilla_origen = models.ForeignKey(
+        'self', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='documentos_generados',
+        verbose_name='Plantilla de origen')
+
+4.2 Documento.construir_codigo  (actualmente ~490):
+    Firma nueva:
+      @classmethod
+      def construir_codigo(cls, departamento, tipo, secuencia, es_plantilla=False):
+    Cuerpo:
+      tipo_obj = TipoDocumento.objects.filter(key=tipo).first()
+      tipo_codigo = tipo_obj.codigo if tipo_obj else tipo
+      marca = '-PLT' if es_plantilla else ''
+      if cls.es_sin_prefijo_depto(tipo):
+          return f"{tipo_codigo}{marca}-{secuencia}"
+      return f"{departamento.codigo}-{tipo_codigo}{marca}-{secuencia}"
+
+4.3 Documento.generar_codigo_secuencial (actualmente ~503):
+    Firma nueva:
+      @classmethod
+      def generar_codigo_secuencial(cls, departamento, tipo, es_plantilla=False):
+    Cambios:
+      qs = cls.objects.filter(tipo__key=tipo, es_plantilla=es_plantilla)
+      if not sin_prefijo and departamento is not None:
+          qs = qs.filter(departamento=departamento)
+      ...
+      return cls.construir_codigo(departamento, tipo, f"{num:03d}",
+                                  es_plantilla=es_plantilla)
+
+4.4 Buscar y actualizar TODOS los llamadores de generar_codigo_secuencial y
+    construir_codigo:
+      grep -rn "generar_codigo_secuencial\|construir_codigo" apps/
+
+ARCHIVO: apps/documentos/migrations/0054_plantillas.py
+    - AddField Documento.es_plantilla
+    - AddField Documento.plantilla_origen
+    - RunPython(backfill, noop):
+        Documento.objects.filter(tipo__key='formulario').update(es_plantilla=True)
+    - (reverse = noop)
+
+CRITERIO DE ACEPTACIÓN F0
+    - `python manage.py makemigrations --check --dry-run` sin cambios pendientes.
+    - Un DPR normal y una plantilla DPR obtienen códigos distintos:
+        TI-DPR-001  vs  TI-DPR-PLT-001
+
+================================================================================
+5. FASE 1 — CATÁLOGO "PLANTILLAS" + LISTADO GENERAL FILTRABLE
+================================================================================
+
+ARCHIVO: apps/documentos/views.py  ->  def formularios(request)  (~441)
+    Este es el catálogo (url name 'catalogo', ruta /documentos/).
+    - Queryset base:
+        Documento.objects.filter(es_plantilla=True, estado='activo')
+            .select_related('departamento','propietario','tipo')
+    - Visibilidad (NO admin): .filter(permissions.q_documentos_visibles(user))
+      Admin: todo.
+    - Mantener agrupación (Mi Departamento / Otros / por depto si admin).
+    - Mantener docs_descargables / docs_pendientes (descarga por clasificación).
+    - Contexto nuevo: puede_subir = True (todos pueden subir plantillas).
+
+ARCHIVO: apps/documentos/templates/documentos/formularios.html
+    - Título y <h1>: "Plantillas".
+    - Badge de la card: usar doc.tipo.nombre (hoy fijo "Formulario"); ícono/color
+      del tipo (doc.tipo.icono / doc.tipo.color).
+    - Botón "Subir plantilla" -> {% url 'documentos:seleccionar_tipo' %}?plantilla=1
+    - Texto de estado vacío: "No hay plantillas disponibles para tu perfil."
+
+ARCHIVO: apps/autenticacion/templates/base_app.html  (~línea 42-43)
+    - Cambiar etiqueta "Formularios" -> "Plantillas"
+      (mismo href documentos:catalogo; ícono a elección, p.ej. fa-file-circle-plus).
+
+ARCHIVO: apps/documentos/views.py -> def seleccionar_tipo(request) (~831)
+    - Leer `?plantilla=1` -> modo plantilla.
+    - Pasar context['modo_plantilla']=True y context['plantilla']=1.
+
+ARCHIVO: apps/documentos/templates/documentos/seleccionar_tipo.html
+    - Si modo_plantilla: banner/título "Selecciona el tipo de la nueva plantilla".
+    - Los links deben apuntar a la ruta de alta de plantilla (ver Fase 2),
+      conservando el tipo. Mantener el respeto de `solo_jefes`.
+
+ARCHIVO: apps/documentos/views.py  ->  listado general
+    - Añadir filtro es_plantilla a los listados existentes:
+        mis_documentos (503)  y  documentos_departamento (784)
+      Param GET: `registro` = '' (todos) | 'documentos' | 'plantillas'
+        documentos -> filter(es_plantilla=False)
+        plantillas -> filter(es_plantilla=True)
+        ''         -> sin filtro (todos)
+    - Pasar `filtro_registro` al template.
+
+ARCHIVO(S): apps/documentos/templates/documentos/mis_documentos.html
+            apps/documentos/templates/documentos/documentos_departamento.html
+    - Añadir control (select/botones) "Todos | Documentos | Plantillas".
+    - Mostrar badge "Plantilla" cuando doc.es_plantilla.
+
+CRITERIO DE ACEPTACIÓN F1
+    - El catálogo lista plantillas de cualquier tipo según clasificación.
+    - Un usuario sin permiso no ve plantillas restringidas/confidenciales.
+    - El listado general muestra documentos y plantillas y permite filtrar.
+
+================================================================================
+6. FASE 2 — ALTA DE PLANTILLA + APROBACIÓN CONDICIONAL
+================================================================================
+
+6.1 URL / VISTA
+ARCHIVO: apps/documentos/urls.py
+    path('plantillas/nueva/<str:tipo>/', views.crear_plantilla, name='plantilla_crear'),
+
+ARCHIVO: apps/documentos/views.py  ->  def crear_plantilla(request, tipo) NUEVA
+    - Validar tipo activo (TipoDocumento.objects.filter(key=tipo, activo=True)).
+    - Exigir perfil.departamento (como crear_documento).
+    - Respetar `solo_jefes`.
+    - Form: DocumentoForm SIN formato dinámico; forzar `archivo` requerido:
+        form.fields['archivo'].required = True
+    - Código: Documento.generar_codigo_secuencial(depto, tipo, es_plantilla=True)
+    - Guardar documento:
+        doc.es_plantilla = True
+        doc.estado = 'activo'  (si _es_jefe) | 'en_revision' (si no)
+        VersionDocumento.objects.create(..., numero_version='1', archivo=...)
+      NUNCA crear SolicitudCambio ni generar FOR-001.
+    - Aprobación (ver 6.2).
+    - Mensajes y redirect (detalle del documento o catálogo).
+
+ARCHIVO: apps/documentos/templates/documentos/formulario.html
+    - Reutilizar en modo plantilla (context['es_plantilla']=True) para:
+        - cambiar textos ("Nueva Plantilla", ayuda de archivo en blanco),
+        - OCULTAR la sección de formato dinámico (formato_dinamico) y
+          cualquier bloque de planilla.
+    - Alternativa: crear un template dedicado
+      documentos/formulario_plantilla.html que extienda/duplique lo mínimo.
+
+6.2 CADENA DE APROBACIÓN
+ARCHIVO: apps/documentos/views.py -> crear_cadena_aprobacion_documento (~117)
+    Firma nueva:
+      def crear_cadena_aprobacion_documento(documento, usuario, departamento,
+                                             accion, plantilla=False, **kwargs):
+    Comportamiento:
+      if plantilla:
+          # jefe -> sin cadena (el caller pone estado='activo')
+          # no jefe -> UN paso (evaluador, es_final=True)
+          evaluador = departamento.jefe if (departamento and departamento.jefe != usuario) else determinar_autorizador()
+          if evaluador:
+              sol = SolicitudAprobacionDocumento.objects.create(
+                  aprobador=evaluador, rol_aprobador='evaluador', es_final=True,
+                  estado='pendiente', **kwargs)
+              _notificar_aprobador(evaluador, usuario, documento, es_evaluador=True)
+          else:
+              sol = SolicitudAprobacionDocumento.objects.create(
+                  aprobador=None, rol_aprobador='evaluador', es_final=True,
+                  estado='esperando', **kwargs)
+              avisar_paso_sin_asignar(plantilla=?, rol_label='evaluación')  # ver abajo
+          return sol
+      # ... lógica actual para documentos (sin cambios) ...
+
+    Nota: `avisar_paso_sin_asignar` hoy recibe una PlanillaCambios. Para plantilla
+    (Documento) usar el mismo patrón que crear_documento: si no hay aprobador,
+    avisar a administradores. Revisar services/aprobaciones.py:avisar_paso_sin_asignar
+    (acepta `planilla`); si hace falta, generalizar a aceptar documento o crear una
+    variante `avisar_documento_sin_asignar(documento, rol_label)`.
+
+6.3 REUTILIZACIÓN DEL APROBAR
+    - NO modificar SolicitudAprobacionDocumento.aprobar()/aplicar_cambio():
+      con accion='creacion' ya activa el documento (models.py:1314) y
+      autocompletar_respuestas hace no-op (sin SolicitudCambio).
+    - Verificar que aprobar() no falle por falta de SolicitudCambio: revisar
+      models.py:1113-1139 (usa OPERACION_POR_ACCION['creacion']='creacion';
+      autocompletar_respuestas retorna temprano si no hay sol).
+
+6.4 ETIQUETAS / NOTIFICACIONES / AUDITORÍA
+    - Bandeja (bandeja_aprobaciones, ~602): etiquetar como "Plantilla" cuando
+      solicitud.documento.es_plantilla.
+    - mis_solicitudes (services/solicitudes.py): etiquetar acción "Creación"
+      como "Creación de plantilla" si el documento es plantilla.
+    - Notificación al jefe: texto "... subió la plantilla X ...".
+    - Auditoría: registrar alta de plantilla (opcional, seguir patrón existente).
+
+CRITERIO DE ACEPTACIÓN F2
+    - trabajador -> queda pendiente del jefe; al aprobar -> estado 'activo'.
+    - jefe -> 'activo' directo (sin SolicitudAprobacionDocumento).
+    - coordinador sin delegación -> pendiente del jefe.
+    - coordinador CON delegación vigente -> 'activo' directo.
+
+================================================================================
+7. FASE 3 — MODIFICACIÓN / ELIMINACIÓN DE PLANTILLA
+================================================================================
+ARCHIVO: apps/documentos/views.py
+    - Modificar: crear_planilla (~2976) ya opera sobre cualquier Documento
+      (usa Formato aplica_modificacion=True => FOR-005). Verificar que no se
+      bloquee por es_plantilla. Nada especial.
+    - Eliminar: eliminar_documento (~1496) / destruir_documento (~1576) ya
+      usan FOR-001. Verificar.
+ARCHIVO: apps/documentos/views.py -> puede_editar_documento (211) /
+                                     puede_eliminar_documento (243)
+    - Confirmar que aplican igual a plantillas (son Documento).
+ARCHIVO: apps/documentos/templates/documentos/detalle.html
+    - Permitir/mostrar acciones de editar/eliminar para plantillas.
+CRITERIO DE ACEPTACIÓN F3
+    - Editar una plantilla abre la planilla de cambios (FOR-005).
+    - Eliminar una plantilla usa el flujo FOR-001.
+
+================================================================================
+8. FASE 4 — VÍNCULO PLANTILLA ↔ TIPO ↔ DOCUMENTO
+================================================================================
+ARCHIVO: apps/documentos/forms.py -> DocumentoForm
+    - Añadir campo opcional (no model field directo; usar ChoiceField con las
+      plantillas del tipo):
+        plantilla_origen = ModelChoiceField(
+            queryset=Documento.objects.none(), required=False, ...)
+    - En __init__: si tipo_documento, cargar plantillas activas del tipo:
+        Documento.objects.filter(tipo=..., es_plantilla=True, estado='activo')
+
+ARCHIVO: apps/documentos/views.py -> crear_documento (~851)
+    - Pasar queryset de plantillas del tipo al form.
+    - Autocompletado: si el usuario descargó una plantilla desde el flujo de
+      creación, propagar su uuid (hidden input `plantilla_origen_uuid` o
+      query param) y prellenar `plantilla_origen`.
+    - Al guardar doc: doc.plantilla_origen = form.cleaned_data['plantilla_origen'].
+    - Regla P1 (pendiente): obligatorio si el tipo tiene plantillas activas.
+
+ARCHIVO: apps/documentos/templates/documentos/formulario.html
+    - Bloque "Plantilla de origen" (select) + botón descargar plantilla del tipo.
+    - Enlace de descarga: al hacer clic, setear el hidden con el uuid.
+
+ARCHIVO: apps/documentos/templates/documentos/detalle.html
+    - Mostrar "Plantilla de origen" (link a la plantilla) si existe.
+
+CRITERIO DE ACEPTACIÓN F4
+    - Al crear un DPR se ofrece su plantilla DPR descargable.
+    - El documento lleno queda ligado a su plantilla_origen (por descarga o
+      selección).
+
+================================================================================
+9. FASE 5 — UNIFICACIÓN DE APROBACIONES (Opción B)
+================================================================================
+ARCHIVO NUEVO: apps/documentos/services/aprobacion_flujo.py
+    Adaptador común sobre los 3 tipos (documento / planilla / plantilla) SIN
+    modificar los modelos. Funciones sugeridas:
+      crear_cadena(objeto, usuario, departamento, accion, plantilla=False)
+      avanzar_paso(...)
+      aprobar(objeto, ...), rechazar(objeto, ...)
+      notificar(paso, ...)
+    Internamente despacha a crear_cadena_aprobacion_documento /
+    crear_cadena_aprobacion_planilla y a los pasos de cada modelo.
+
+ARCHIVO: apps/documentos/views.py
+    - bandeja_aprobaciones (~602): mostrar/etiquetar los 3.
+    - aprobar_planilla (~3313) y vistas de aprobación de documento: usar el
+      servicio para comportamiento idéntico.
+ARCHIVO: apps/documentos/templates/documentos/bandeja_aprobaciones.html
+    - Sección/etiqueta para plantillas; misma UX de aprobación.
+ARCHIVO: apps/documentos/services/solicitudes.py
+    - Incluir/etiquetar solicitudes de plantilla.
+CRITERIO DE ACEPTACIÓN F5
+    - Los 3 tipos se aprueban desde la misma bandeja con la misma UX.
+
+================================================================================
+10. TESTS
+================================================================================
+Nuevos (apps/documentos/tests_*.py, preferir tests_plantillas.py):
+  T1. Crear plantilla como trabajador -> crea 1 paso (evaluador) y queda
+      'en_revision'/pendiente; aprobar -> 'activo'.
+  T2. Crear plantilla como jefe -> 'activo' directo, sin SolicitudAprobacionDocumento.
+  T3. Coordinador SIN delegación -> pendiente del jefe.
+  T4. Coordinador CON delegación vigente (DelegacionJefatura) -> 'activo' directo.
+  T5. Código plantilla = {DEPTO}-{TIPO}-PLT-{SEC} y NO colisiona con el
+      documento del mismo tipo.
+  T6. Catálogo: plantilla 'publico' visible por todos; 'restringido' solo
+      admin/propietario.
+  T7. Modificar plantilla -> planilla FOR-005. Eliminar plantilla -> FOR-001.
+  T8. plantilla_origen se guarda por descarga (autocompletado) y por selección.
+  T9. Filtro del listado general: documentos / plantillas / todos.
+Actualizar:
+  A1. Tests del catálogo (hoy basados en tipo='formulario').
+  A2. Cualquier test que asuma que los listados solo muestran documentos.
+  A3. Tests que llamen generar_codigo_secuencial/construir_codigo (nueva firma).
+
+Comando de tests dirigidos:
+  python manage.py test documentos.tests_plantillas documentos.tests_endpoints \
+      -k plantilla -k catalogo -k departamento --settings=polidoc.test_settings
+
+================================================================================
+11. VERIFICACIÓN / COMANDOS
+================================================================================
+  python manage.py check
+  python manage.py makemigrations --check --dry-run
+  python manage.py migrate            # aplica 0054_plantillas
+  python manage.py test documentos.tests_plantillas documentos.tests_endpoints \
+      -k plantilla -k catalogo --settings=polidoc.test_settings
+  # Suite completa (opcional; espera 1 fallo preexistente):
+  python manage.py test documentos --settings=polidoc.test_settings
+
+FALLO PREEXISTENTE (ajeno, no tocar):
+  documentos.tests_performance.ConteosVigenciaPerformanceTest.test_un_solo_aggregate
+
+NOTA STATIC: con DEBUG=True (tu .env) NO requiere collectstatic.
+NOTA DJANGO 6.1: tags {% ... %} en una sola línea (tag_re sin re.DOTALL).
+
+================================================================================
+12. RIESGOS Y NOTAS
+================================================================================
+  R1. Documento.codigo es unique=True -> resuelto con el segmento PLT.
+  R2. Backfill de FOR existentes a es_plantilla=True: salen del listado de
+      "solo documentos"; quedan visibles en el listado general y en el catálogo.
+  R3. La firma de generar_codigo_secuencial/construir_codigo cambia -> actualizar
+      todos los llamadores (grep obligatorio).
+  R4. avisar_paso_sin_asignar hoy depende de PlanillaCambios -> generalizar o
+      crear variante para documento/plantilla.
+  R5. Migración sobre SQLite db_new.sqlite3 (hacer respaldo antes de migrar).
+  R6. ~940 tests en documentos; correr dirigidos primero.
+  R7. aprobar() de documento: confirmar que no falla sin SolicitudCambio
+      (debería hacer no-op en autocompletar_respuestas).
+  R8. No usar `git stash push -u` (prohibido).
+
+================================================================================
+13. INVENTARIO DE ARCHIVOS AFECTADOS
+================================================================================
+MODELOS:
+  apps/documentos/models.py                      (F0, F2/6.3 verificación)
+MIGRACIONES:
+  apps/documentos/migrations/0054_plantillas.py  (F0, NUEVO)
+VISTAS:
+  apps/documentos/views.py                       (F1,F2,F3,F4,F5)
+URLS:
+  apps/documentos/urls.py                        (F2)
+FORMS:
+  apps/documentos/forms.py                       (F4)
+SERVICIOS:
+  apps/documentos/services/aprobacion_flujo.py   (F5, NUEVO)
+  apps/documentos/services/solicitudes.py        (F2/F5 etiquetas)
+  apps/documentos/services/aprobaciones.py       (F2 avisar_*)
+PERMISOS:
+  apps/documentos/permissions.py                 (verificación F1)
+TEMPLATES:
+  apps/documentos/templates/documentos/formularios.html        (F1)
+  apps/documentos/templates/documentos/seleccionar_tipo.html   (F1)
+  apps/documentos/templates/documentos/formulario.html         (F2,F4)
+  apps/documentos/templates/documentos/mis_documentos.html     (F1)
+  apps/documentos/templates/documentos/documentos_departamento.html (F1)
+  apps/documentos/templates/documentos/detalle.html            (F3,F4)
+  apps/documentos/templates/documentos/bandeja_aprobaciones.html (F5)
+  apps/autenticacion/templates/base_app.html                   (F1)
+TESTS:
+  apps/documentos/tests_plantillas.py            (NUEVO)
+  apps/documentos/tests_endpoints.py, tests.py, etc. (actualizaciones)
+
+================================================================================
+14. CHECKLIST POR ARCHIVO (tildar a medida que se avanza)
+================================================================================
+[ ] F0  models.py: Documento.es_plantilla
+[ ] F0  models.py: Documento.plantilla_origen
+[ ] F0  models.py: construir_codigo(..., es_plantilla)
+[ ] F0  models.py: generar_codigo_secuencial(..., es_plantilla)
+[ ] F0  grep llamadores de generar_codigo_secuencial/construir_codigo
+[ ] F0  migración 0054_plantillas (+backfill FOR)
+[ ] F0  migrate + makemigrations --check
+[ ] F1  views.formularios (catálogo -> plantillas + visibilidad)
+[ ] F1  formularios.html (título/badge/tipo/botón subir)
+[ ] F1  base_app.html sidebar -> "Plantillas"
+[ ] F1  seleccionar_tipo (+?plantilla=1) + template
+[ ] F1  listado general: filtro es_plantilla (mis_documentos, departamento)
+[ ] F1  badge "Plantilla" en listados
+[ ] F2  urls: plantilla_crear
+[ ] F2  views.crear_plantilla (sin SolicitudCambio, archivo obligatorio)
+[ ] F2  crear_cadena_aprobacion_documento(plantilla=True)
+[ ] F2  avisar_paso_sin_asignar para documento/plantilla
+[ ] F2  formulario.html modo plantilla (ocultar formato dinámico)
+[ ] F2  etiquetas bandeja/mis_solicitudes + notificación + auditoría
+[ ] F3  verificar crear_planilla en plantillas
+[ ] F3  verificar eliminar/destruir en plantillas
+[ ] F3  detalle.html acciones para plantillas
+[ ] F4  DocumentoForm.plantilla_origen
+[ ] F4  crear_documento: descarga + autocompletado + guardar vínculo
+[ ] F4  formulario.html bloque "Plantilla de origen"
+[ ] F4  detalle.html muestra "Plantilla de origen"
+[ ] F5  services/aprobacion_flujo.py
+[ ] F5  bandeja/aprobar usan el servicio
+[ ] F5  solicitudes.py etiquetas
+[ ] T   tests_plantillas.py (T1..T9)
+[ ] T   actualizar tests del catálogo/códigos
+[ ] V   manage.py check
+[ ] V   makemigrations --check
+[ ] V   tests dirigidos -k plantilla -k catalogo
+[ ] V   (opcional) suite completa documentos
+
+================================================================================
+15. HISTORIAL DE DECISIONES (Q&A con la jefa TI)
+================================================================================
+P: ¿Hasta dónde la unificación del flujo de aprobación?
+R: Opción B (conservar modelos, unificar comportamiento).
+P: ¿Qué entidad es la "plantilla"?
+R: Documento en blanco (no el Formato FOR-001/005); FOR-001=crear/eliminar,
+   FOR-005=modificar. Casi todos los documentos usan plantillas como esquema.
+P: ¿Cómo se aprueba una plantilla / versiones?
+R: Depende del rol del creador (ver D4/D5).
+P: ¿Documentos ligados a la plantilla de origen + por TipoDocumento?
+R: Sí, y además por TipoDocumento.
+P: ¿La plantilla pasa por aprobación / quién sube / modelo / relación tipo /
+   versiones?
+R: Creación condicional por rol; todos suben; reutilizar Documento; hereda tipo
+   y departamento; maneja versiones.
+P: ¿Códigos?
+R: {DEPTO}-{TIPO}-PLT-{SEC}.
+P: ¿Listado general?
+R: Listado de todo el modelo Documento (documentos + plantillas) con filtro.
+P: ¿plantilla_origen?
+R: Dos vías (descarga = autocompleta; subida = el usuario selecciona; la
+   plantilla debe existir).
+P: ¿Tipo 'formulario'?
+R: Se mantiene activo.
+
+================================================================================
+FIN DEL PLAN — POLIDOC / PLANTILLAS
+================================================================================

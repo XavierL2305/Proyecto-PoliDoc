@@ -56,21 +56,33 @@
               <span class="form-error">{{ form.motivo.errors.0 }}</span>
               {% endif %}
             </div>
-            {% if aprobador %}
-            <div class="alert alert--success" style="margin-top: 1rem; padding: 0.75rem 1rem; border-radius: var(--radius); font-size: 0.8125rem;">
-              <i class="fa-solid fa-circle-check"></i>
-              Se ha encontrado un {% if aprobador_tipo == 'autorizador' %}admin{% else %}{{ aprobador_tipo }}{% endif %} aprobador: <strong>{{ aprobador.get_full_name|default:aprobador.username }}</strong>{% if aprobadores|length > 1 %}, y se requerirá además la autorización del administrador{% endif %}.
-              Tu solicitud será enviada para su aprobación.
-            </div>
-            {% else %}
+            {% if not documento.departamento %}
             <div class="alert alert--danger" style="margin-top: 1rem; padding: 0.75rem 1rem; border-radius: var(--radius); font-size: 0.8125rem;">
               <i class="fa-solid fa-circle-exclamation"></i>
-              No se puede realizar la solicitud en este momento. Comuníquese con el administrador.
+              El documento no tiene departamento asignado; no se puede determinar
+              al jefe que debe aprobar la descarga.
             </div>
+            {% else %}
+              {% with paso1=pasos.0 %}
+              {% if paso1.usuario %}
+              <div class="alert alert--success" style="margin-top: 1rem; padding: 0.75rem 1rem; border-radius: var(--radius); font-size: 0.8125rem;">
+                <i class="fa-solid fa-circle-check"></i>
+                Aprobará el jefe de departamento:
+                <strong>{{ paso1.usuario.get_full_name|default:paso1.usuario.username }}</strong>{% if pasos|length > 1 %}; luego se requerirá la autorización del jefe de Gerencia General{% endif %}.
+                Tu solicitud será enviada para su aprobación.
+              </div>
+              {% else %}
+              <div class="alert alert--warning" style="margin-top: 1rem; padding: 0.75rem 1rem; border-radius: var(--radius); font-size: 0.8125rem;">
+                <i class="fa-solid fa-hourglass-half"></i>
+                El departamento aún no tiene jefe asignado. Tu solicitud quedará
+                <strong>en espera</strong> hasta que se asigne uno.
+              </div>
+              {% endif %}
+              {% endwith %}
             {% endif %}
             <div class="form-card-footer">
               <a href="{% url 'documentos:detalle' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost">Cancelar</a>
-              <button type="submit" formmethod="post" class="btn btn--primary"{% if not aprobador %} disabled{% endif %}>Enviar Solicitud</button>
+              <button type="submit" formmethod="post" class="btn btn--primary"{% if not documento.departamento %} disabled{% endif %}>Enviar Solicitud</button>
             </div>
           </form>
         </div>

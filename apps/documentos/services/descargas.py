@@ -4,20 +4,26 @@ ISO 9001:2015 7.5.3: la copia de un documento solo sale del control del
 organismo con una **autorización temporal, trazable y revocable**. Este
 módulo es la fuente única de verdad del flujo:
 
-* **Alta** -- :func:`crear_solicitud_descarga` crea la solicitud y una
-  ``AprobacionDescarga`` por cada aprobador requerido, con notificación a
-  cada uno. Documento ``restringido`` exige doble control (jefe +
-  autorizador).
+* **Alta** -- :func:`crear_solicitud_descarga` crea la solicitud y un paso
+  de aprobación por cada aprobador requerido, con notificación a los pasos
+  accionables. El **jefe del departamento dueño del documento** es el primer
+  aprobador; el documento ``restringido`` exige **doble control secuencial**
+  (jefe → jefe de Gerencia General). Un paso sin jefe asignado nace en
+  ``esperando`` (``aprobador=None``), sin fallback a administrador.
 * **Resolución** -- :func:`resolver_aprobacion` registra la decisión de un
-  aprobador dentro de una transacción bloqueada. Una solicitud ya
-  resuelta **no puede procesarse dos veces**: no se re-finaliza, no se
-  duplica la distribución y no se reinicia la vigencia. Un rechazo
-  cancela las aprobaciones hermanas; la aprobación completa fija vigencia
-  y crea la distribución **una sola vez**.
+  aprobador (o de su delegado vigente) dentro de una transacción bloqueada.
+  Una solicitud ya resuelta **no puede procesarse dos veces**: no se
+  re-finaliza, no se duplica la distribución y no se reinicia la vigencia.
+  Un rechazo cancela los pasos hermanos; la aprobación final fija vigencia y
+  crea la distribución **una sola vez**.
+
+El flujo espeja el de aprobación de documentos (§7.3/§20): cadena de uno o
+dos pasos, estado ``esperando`` cuando falta el jefe, delegación de jefatura
+y escalado por antigüedad (``tasks.escalar_aprobaciones_vencidas``).
 """
 import logging
 from datetime import timedelta
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 
 from django.conf import settings
 from django.db import transaction
@@ -31,59 +37,114 @@ logger = logging.getLogger(__name__)
 APROBACIONES_PENDIENTES = ('pendiente',)
 
 
+class PasoDescarga(NamedTuple):
+    """Un paso de la cadena de aprobación de una descarga.
+
+    ``usuario`` es ``None`` cuando el paso nace en espera (no hay jefe
+    asignado todavía). ``es_final`` marca el paso que, al aprobarse, fija la
+    vigencia y crea la distribución.
+    """
+
+    usuario: Optional[object]
+    rol: str
+    es_final: bool
+    estado_inicial: str
+
+
 class ResultadoDescarga(NamedTuple):
     """Resultado de alta/resolución de una descarga.
 
     ``codigo`` permite mapear la respuesta HTTP:
 
     * ``ok`` -- aprobación completa (vigencia + distribución).
-    * ``parcial`` -- aprobación registrada, falta el otro control.
+    * ``parcial`` -- aprobación registrada, falta el control final.
     * ``rechazada`` -- rechazo con cancelación de las aprobaciones hermanas.
-    * ``sin_aprobadores`` -- sin jefe ni admin: no se puede solicitar.
+    * ``sin_departamento`` -- el documento no tiene departamento: no se puede
+      determinar al jefe aprobador.
     * ``pendiente`` -- ya hay una solicitud en trámite del mismo usuario.
     * ``ya_puede`` / ``ya_autorizada`` -- ya tiene permiso vigente.
     * ``ya_resuelta`` -- la solicitud ya fue resuelta (idempotencia).
+    * ``en_espera`` -- el paso del usuario aún no está activo (falta el jefe
+      del paso anterior o de su propio departamento).
     * ``sin_pendiente`` -- el usuario no es aprobador asignado o ya decidió.
     * ``no_existe`` -- la solicitud ya no existe.
     """
 
     codigo: str
-    solicitud: SolicitudDescarga
+    solicitud: Optional[SolicitudDescarga]
     mensaje: str
 
 
-def aprobadores_descarga(documento):
-    """Aprobadores ``[(usuario, rol)]`` de una descarga según clasificación.
+def _jefe_departamento(documento):
+    """Jefe NATURAL del departamento del documento (o ``None``).
 
-    Normal: jefe del departamento (o admin activo si no hay jefe).
-    ``restringido``: jefe + autorizador (admin activo); ISO 9001:7.5.3
-    (doble control). Solo administradores activos, con orden estable.
+    La delegación vigente no cambia quién queda asignado en el paso, pero sí
+    permite resolverlo (``resolver_aprobacion`` usa ``aprobadores_que_repr``).
     """
-    from autenticacion.models import PerfilUsuario
-
     depto = getattr(documento, 'departamento', None)
-    jefe = depto.jefe if depto and depto.jefe else None
-    admin_perfil = (
-        PerfilUsuario.objects
-        .filter(rol='administrador', usuario__is_active=True)
-        .select_related('usuario')
-        .order_by('usuario__date_joined', 'usuario_id')
-        .first()
-    )
-    admin = admin_perfil.usuario if admin_perfil else None
+    return depto.jefe if depto and depto.jefe_id else None
 
-    aprobadores = []
+
+def aprobadores_descarga(documento):
+    """Pasos de aprobación ``[PasoDescarga, ...]`` de una descarga.
+
+    * ``restringido``: doble control **secuencial** -- jefe del departamento
+      del documento (paso 1, no final) → jefe de Gerencia General (paso 2,
+      final).
+    * resto: un solo paso -- jefe del departamento del documento (final).
+
+    Un paso sin jefe asignado nace en ``esperando`` con ``usuario=None`` (no
+    hay fallback a administrador): al asignarse el jefe, el servicio de
+    reasignación lo activa.
+    """
+    from .cambios_estado import jefe_gerencia_general
+
+    jefe = _jefe_departamento(documento)
+
     if documento.clasificacion == 'restringido':
-        if jefe:
-            aprobadores.append((jefe, 'jefe'))
-        if admin and (not jefe or admin.id != jefe.id):
-            aprobadores.append((admin, 'autorizador'))
-    else:
-        if jefe:
-            aprobadores.append((jefe, 'jefe'))
-        elif admin:
-            aprobadores.append((admin, 'autorizador'))
-    return aprobadores
+        autorizador = jefe_gerencia_general()
+        return [
+            PasoDescarga(
+                usuario=jefe, rol='jefe', es_final=False,
+                estado_inicial='pendiente' if jefe else 'esperando',
+            ),
+            PasoDescarga(
+                usuario=autorizador, rol='autorizador', es_final=True,
+                estado_inicial='esperando',
+            ),
+        ]
+
+    return [
+        PasoDescarga(
+            usuario=jefe, rol='jefe', es_final=True,
+            estado_inicial='pendiente' if jefe else 'esperando',
+        ),
+    ]
+
+
+def _avisar_admins(titulo, mensaje, solicitud, tipo='solicitud_descarga'):
+    """Avisa a los administradores activos de una situación sin aprobador."""
+    from autenticacion.models import PerfilUsuario, Notificacion
+
+    documento = solicitud.documento if solicitud else None
+    admins = [
+        perfil.usuario for perfil in (
+            PerfilUsuario.objects
+            .filter(rol='administrador', usuario__is_active=True)
+            .select_related('usuario')
+        )
+    ]
+    for admin in admins:
+        Notificacion.objects.create(
+            usuario=admin, titulo=titulo, mensaje=mensaje, tipo=tipo,
+            url_accion=(
+                f'/documentos/{documento.tipo_id}/{documento.uuid}/'
+                if documento else '/documentos/bandeja-aprobaciones/'
+            ),
+            departamento=getattr(documento, 'departamento', None),
+            documento=documento,
+        )
+    return len(admins)
 
 
 def _notificar_solicitante(solicitud, aprobada):
@@ -115,42 +176,52 @@ def _notificar_solicitante(solicitud, aprobada):
     )
 
 
-def _notificar_aprobadores(solicitud, solicitante, aprobadores):
-    """Avisa a cada aprobador de una solicitud recién creada."""
+def _notificar_aprobador(solicitud, aprobacion, *, es_autorizacion=False):
+    """Avisa a un aprobador accionable (paso pendiente) de la solicitud."""
     from autenticacion.models import Notificacion
 
     documento = solicitud.documento
-    for aprobador, _rol in aprobadores:
-        Notificacion.objects.create(
-            usuario=aprobador,
-            titulo='Nueva solicitud de descarga',
-            mensaje=(
-                f'{solicitante.get_full_name() or solicitante.username} '
-                f'solicita descargar "{documento.nombre}" ({documento.codigo})'
-            ),
-            tipo='solicitud_descarga',
-            url_accion=f'/documentos/solicitud/{solicitud.id}/aprobar/',
-            departamento=documento.departamento,
-            documento=documento,
-        )
+    solicitante = solicitud.solicitado_por
+    if es_autorizacion:
+        titulo = 'Descarga pendiente de autorización'
+        verbo = 'autorización'
+    else:
+        titulo = 'Nueva solicitud de descarga'
+        verbo = 'aprobación'
+    Notificacion.objects.create(
+        usuario=aprobacion.aprobador,
+        titulo=titulo,
+        mensaje=(
+            f'{solicitante.get_full_name() or solicitante.username} '
+            f'solicita descargar "{documento.nombre}" ({documento.codigo}). '
+            f'Requiere tu {verbo}.'
+        ),
+        tipo='solicitud_descarga',
+        url_accion=f'/documentos/solicitud/{solicitud.id}/aprobar/',
+        departamento=documento.departamento,
+        documento=documento,
+    )
 
 
 def bloqueo_solicitud_descarga(documento, usuario):
     """Motivo por el que no procede solicitar la descarga, o ``None``.
 
     Devuelve un :class:`ResultadoDescarga` cuyo ``codigo`` explica el
-    bloqueo (``sin_aprobadores``, ``ya_puede``, ``pendiente``,
+    bloqueo (``sin_departamento``, ``ya_puede``, ``pendiente``,
     ``ya_autorizada``) o ``None`` si procede solicitar. Es la misma
     comprobación que aplica :func:`crear_solicitud_descarga`, expuesta
     para que la vista pueda redirigir en GET sin crear nada.
+
+    Nota: la ausencia de jefe de departamento **no** bloquea -- la solicitud
+    queda ``esperando`` (ver :func:`aprobadores_descarga`).
     """
     from ..permissions import descarga_autorizada, puede_descargar
 
-    if not aprobadores_descarga(documento):
+    if getattr(documento, 'departamento', None) is None:
         return ResultadoDescarga(
-            'sin_aprobadores', None,
-            'No se puede realizar la solicitud en este momento. '
-            'Comuníquese con el administrador.',
+            'sin_departamento', None,
+            'El documento no tiene departamento asignado; no se puede '
+            'determinar al jefe que debe aprobar la descarga.',
         )
     if puede_descargar(usuario, documento):
         return ResultadoDescarga(
@@ -174,28 +245,53 @@ def bloqueo_solicitud_descarga(documento, usuario):
 
 
 def crear_solicitud_descarga(documento, solicitado_por, motivo, *, ip_address=None):
-    """Crea la solicitud y sus aprobaciones. Devuelve :class:`ResultadoDescarga`."""
+    """Crea la solicitud y sus pasos. Devuelve :class:`ResultadoDescarga`."""
     bloqueo = bloqueo_solicitud_descarga(documento, solicitado_por)
     if bloqueo:
         return bloqueo
 
-    aprobadores = aprobadores_descarga(documento)
+    pasos = aprobadores_descarga(documento)
     solicitud = SolicitudDescarga.objects.create(
         documento=documento, solicitado_por=solicitado_por, motivo=motivo,
     )
-    for aprobador, rol in aprobadores:
-        AprobacionDescarga.objects.create(
-            solicitud=solicitud, aprobador=aprobador, rol_aprobador=rol,
+    creadas = []
+    for paso in pasos:
+        creadas.append(AprobacionDescarga.objects.create(
+            solicitud=solicitud,
+            aprobador=paso.usuario,
+            rol_aprobador=paso.rol,
+            es_final=paso.es_final,
+            estado=paso.estado_inicial,
+            fecha_activacion=(
+                timezone.now() if paso.estado_inicial == 'pendiente' else None
+            ),
+        ))
+
+    for aprobacion in creadas:
+        if aprobacion.estado == 'pendiente' and aprobacion.aprobador_id:
+            _notificar_aprobador(solicitud, aprobacion)
+
+    # Si el primer paso no tiene aprobador, la solicitud queda muda: se avisa
+    # a los administradores para que asignen un jefe de departamento.
+    primer_paso = creadas[0] if creadas else None
+    if primer_paso is not None and primer_paso.estado == 'esperando':
+        _avisar_admins(
+            'Solicitud de descarga en espera',
+            f'La solicitud de descarga de "{documento.nombre}" ({documento.codigo}) '
+            'quedó en espera porque el departamento no tiene jefe asignado. '
+            'Asigna un jefe para poder tramitarla.',
+            solicitud,
+            tipo='solicitud_descarga',
         )
-    _notificar_aprobadores(solicitud, solicitante=solicitado_por, aprobadores=aprobadores)
+
     return ResultadoDescarga('ok', solicitud, 'Solicitud de descarga enviada correctamente.')
 
 
 def finalizar_descarga(solicitud, aprobador, *, ip_address=None):
     """Fija vigencia/versión, crea la distribución y audita la autorización.
 
-    Llamar **solo** cuando todas las aprobaciones están resueltas, dentro
-    de la transacción de :func:`resolver_aprobacion`.
+    Llamar **solo** cuando el paso final se aprobó, dentro de la transacción
+    de :func:`resolver_aprobacion`.
     """
     from auditoria.middleware import get_client_ip
     from auditoria.services import registrar_distribucion
@@ -236,14 +332,48 @@ def finalizar_descarga(solicitud, aprobador, *, ip_address=None):
         )
 
 
+def _promover_autorizador(solicitud):
+    """Activa el paso final (autorizador/GG) tras aprobar el jefe.
+
+    Si el paso final ya tenía aprobador, lo notifica; si no, avisa a los
+    administradores para que se asigne un jefe de Gerencia General.
+    """
+    siguiente = (
+        AprobacionDescarga.objects
+        .filter(solicitud=solicitud, es_final=True, estado='esperando')
+        .order_by('id').first()
+    )
+    if siguiente is None:
+        return None
+    siguiente.estado = 'pendiente'
+    siguiente.fecha_activacion = timezone.now()
+    siguiente.save(update_fields=['estado', 'fecha_activacion'])
+    if siguiente.aprobador_id:
+        _notificar_aprobador(solicitud, siguiente, es_autorizacion=True)
+    else:
+        documento = solicitud.documento
+        _avisar_admins(
+            'Solicitud de descarga sin autorizador',
+            f'La solicitud de descarga de "{documento.nombre}" ({documento.codigo}) '
+            'fue evaluada por el jefe de departamento y quedó pendiente de '
+            'autorización porque no hay jefe de Gerencia General asignado.',
+            solicitud,
+            tipo='solicitud_descarga',
+        )
+    return siguiente
+
+
 def resolver_aprobacion(solicitud, aprobador, aprobar, observaciones='', *, ip_address=None):
     """Registra la decisión de un aprobador. Devuelve :class:`ResultadoDescarga`.
 
-    Bloquea la solicitud con ``select_for_update`` para que el doble
-    control concurrente no pueda resolverla dos veces ni dejar la
-    vigencia sin fijar. El rechazo cancela las aprobaciones hermanas
+    Bloquea la solicitud con ``select_for_update`` para que el doble control
+    secuencial no pueda resolverse dos veces ni dejar la vigencia sin fijar.
+    El aprobador puede ser el jefe natural **o su delegado vigente**
+    (``aprobadores_que_repr``). El rechazo cancela los pasos hermanos
     (actualización masiva: no auditan, porque nunca hubo decisión).
     """
+    from ..jefatura import aprobadores_que_repr
+
     with transaction.atomic():
         bloqueada = (
             SolicitudDescarga.objects
@@ -264,13 +394,20 @@ def resolver_aprobacion(solicitud, aprobador, aprobar, observaciones='', *, ip_a
         aprobacion = (
             AprobacionDescarga.objects
             .select_for_update()
-            .filter(solicitud=bloqueada, aprobador=aprobador)
+            .filter(solicitud=bloqueada, aprobador_id__in=aprobadores_que_repr(aprobador))
+            .order_by('id')
             .first()
         )
         if aprobacion is None:
             return ResultadoDescarga(
                 'sin_pendiente', bloqueada,
                 'No tienes una aprobación asignada para esta solicitud.',
+            )
+        if aprobacion.estado == 'esperando':
+            return ResultadoDescarga(
+                'en_espera', bloqueada,
+                'Este paso aún no está activo: falta asignar al jefe que debe '
+                'resolverlo.',
             )
         if aprobacion.estado not in APROBACIONES_PENDIENTES:
             return ResultadoDescarga(
@@ -284,7 +421,9 @@ def resolver_aprobacion(solicitud, aprobador, aprobar, observaciones='', *, ip_a
         if not aprobar:
             # ISO: el rechazo de cualquier control cierra la solicitud y
             # libera a los demás aprobadores (quedan como 'cancelada').
-            solicitud.aprobaciones.filter(estado='pendiente').update(estado='cancelada')
+            bloqueada.aprobaciones.filter(
+                estado__in=('pendiente', 'esperando'),
+            ).update(estado='cancelada')
             bloqueada.estado = 'rechazada'
             bloqueada.observaciones = observaciones
             bloqueada.fecha_resolucion = timezone.now()
@@ -292,13 +431,14 @@ def resolver_aprobacion(solicitud, aprobador, aprobar, observaciones='', *, ip_a
             _notificar_solicitante(bloqueada, aprobada=False)
             return ResultadoDescarga('rechazada', bloqueada, 'Descarga rechazada.')
 
-        pendientes = bloqueada.aprobaciones.filter(estado__in=APROBACIONES_PENDIENTES).exists()
-        if pendientes:
-            # Doble control (restringido): falta la autorización final.
+        if not aprobacion.es_final:
+            # Doble control secuencial: activa el paso del jefe de GG.
+            _promover_autorizador(bloqueada)
             return ResultadoDescarga(
                 'parcial', bloqueada,
                 'Evaluación registrada. Pendiente de autorización final.',
             )
+
         finalizar_descarga(bloqueada, aprobador, ip_address=ip_address)
         _notificar_solicitante(bloqueada, aprobada=True)
         return ResultadoDescarga('ok', bloqueada, 'Descarga aprobada.')

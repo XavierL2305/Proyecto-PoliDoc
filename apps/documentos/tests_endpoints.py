@@ -1674,14 +1674,14 @@ class SolicitudDescargaTest(BaseDocumentosTest):
         ).last()
         self.assertIsNotNone(notif)
 
-    def test_solicitar_descarga_fallback_admin_sin_jefe(self):
-        """Sin jefe en el depto, asigna a un admin."""
+    def test_solicitar_descarga_sin_jefe_queda_en_espera(self):
+        """Sin jefe en el depto, la solicitud queda EN ESPERA (sin fallback admin)."""
         self.depto_th.jefe = None
         self.depto_th.save(update_fields=['jefe'])
         self.client.login(username='trab01', password='testpass123')
         resp = self.client.post(
             f'/documentos/formulario/{self.doc_th.uuid}/solicitar-descarga/',
-            data={'motivo': 'Fallback test'},
+            data={'motivo': 'Espera test'},
         )
         self.assertEqual(resp.status_code, 302)
         from documentos.models import AprobacionDescarga, SolicitudDescarga
@@ -1690,10 +1690,11 @@ class SolicitudDescargaTest(BaseDocumentosTest):
         ).last()
         self.assertIsNotNone(sol)
         aprobacion = AprobacionDescarga.objects.get(solicitud=sol)
-        self.assertEqual(aprobacion.aprobador, self.user_admin)
+        self.assertIsNone(aprobacion.aprobador)
+        self.assertEqual(aprobacion.estado, 'esperando')
 
-    def test_solicitar_descarga_sin_jefe_ni_admin_muestra_error(self):
-        """Sin jefe ni admin: no crea solicitud y muestra error."""
+    def test_solicitar_descarga_sin_jefe_ni_admin_queda_en_espera(self):
+        """Sin jefe ni admin: la solicitud se crea igualmente en espera."""
         from autenticacion.models import PerfilUsuario
         PerfilUsuario.objects.filter(rol='administrador').update(rol='trabajador')
         self.depto_th.jefe = None
@@ -1703,13 +1704,14 @@ class SolicitudDescargaTest(BaseDocumentosTest):
             f'/documentos/formulario/{self.doc_th.uuid}/solicitar-descarga/',
             data={'motivo': 'Sin aprobador test'},
         )
-        self.assertEqual(resp.status_code, 200)
-        self.assertContains(resp, 'No se puede realizar la solicitud')
-        from documentos.models import SolicitudDescarga
-        self.assertFalse(
-            SolicitudDescarga.objects.filter(
-                documento=self.doc_th, solicitado_por=self.user_trabajador
-            ).exists()
+        self.assertEqual(resp.status_code, 302)
+        from documentos.models import AprobacionDescarga, SolicitudDescarga
+        sol = SolicitudDescarga.objects.filter(
+            documento=self.doc_th, solicitado_por=self.user_trabajador
+        ).last()
+        self.assertIsNotNone(sol)
+        self.assertEqual(
+            AprobacionDescarga.objects.get(solicitud=sol).estado, 'esperando',
         )
 
     def test_solicitar_descarga_muestra_banner_jefe(self):
@@ -1719,11 +1721,11 @@ class SolicitudDescargaTest(BaseDocumentosTest):
             f'/documentos/formulario/{self.doc_th.uuid}/solicitar-descarga/',
         )
         self.assertEqual(resp.status_code, 200)
-        self.assertContains(resp, 'Se ha encontrado un jefe aprobador')
+        self.assertContains(resp, 'Aprobará el jefe de departamento')
         self.assertContains(resp, 'Jefe TH')
 
-    def test_solicitar_descarga_muestra_banner_admin(self):
-        """Sin jefe, GET muestra banner con admin aprobador."""
+    def test_solicitar_descarga_muestra_banner_en_espera(self):
+        """Sin jefe, GET avisa que la solicitud quedará en espera."""
         self.depto_th.jefe = None
         self.depto_th.save(update_fields=['jefe'])
         self.client.login(username='trab01', password='testpass123')
@@ -1731,7 +1733,7 @@ class SolicitudDescargaTest(BaseDocumentosTest):
             f'/documentos/formulario/{self.doc_th.uuid}/solicitar-descarga/',
         )
         self.assertEqual(resp.status_code, 200)
-        self.assertContains(resp, 'Se ha encontrado un admin aprobador')
+        self.assertContains(resp, 'en espera')
 
     def test_aprobar_descarga_como_aprobador_asignado(self):
         """Solo el aprobador asignado puede aprobar."""

@@ -1,5 +1,7 @@
 import logging
+
 from django.db import transaction
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -109,32 +111,49 @@ def reasignar_pendientes_departamento(departamento, nuevo_aprobador, actor):
                 _auditar_reasignacion_planilla_espera(actor, ap, anterior, departamento)
             planillas_afectadas += 1
 
-        # === Descargas y accesos (solo con destino disponible) ===
+        # === Descargas (paso 'jefe' del departamento del documento) ===
+        qs_descargas = (AprobacionDescarga.objects
+                        .filter(
+                            solicitud__documento__departamento=departamento,
+                            solicitud__estado='pendiente',
+                            rol_aprobador='jefe',
+                            estado__in=('pendiente', 'esperando'),
+                        ))
         if nuevo_aprobador:
-            qs_descargas = (AprobacionDescarga.objects
-                            .filter(
-                                solicitud__documento__departamento=departamento,
-                                solicitud__estado='pendiente',
-                                estado='pendiente',
-                            )
-                            .exclude(aprobador=nuevo_aprobador)
+            qs_descargas = (qs_descargas.exclude(aprobador=nuevo_aprobador)
                             .exclude(solicitud__solicitado_por=nuevo_aprobador))
-            for desc in qs_descargas.select_related('solicitud', 'solicitud__documento',
-                                                    'solicitud__solicitado_por', 'aprobador'):
+        else:
+            qs_descargas = qs_descargas.filter(estado='pendiente')
+        for desc in qs_descargas.select_related(
+            'solicitud', 'solicitud__documento',
+            'solicitud__solicitado_por', 'aprobador',
+        ):
+            anterior = desc.aprobador
+            if nuevo_aprobador:
                 if AprobacionDescarga.objects.filter(
-                    solicitud=desc.solicitud, aprobador=nuevo_aprobador
+                    solicitud=desc.solicitud, aprobador=nuevo_aprobador,
+                    rol_aprobador='jefe',
                 ).exists():
                     desc.delete()
                     continue
-                anterior = desc.aprobador
                 desc.aprobador = nuevo_aprobador
-                desc.save(update_fields=['aprobador'])
+                desc.estado = 'pendiente'
+                desc.fecha_activacion = timezone.now()
+                desc.save(update_fields=['aprobador', 'estado', 'fecha_activacion'])
                 descargas_reasignadas += 1
                 _notificar_reasignacion_descarga(nuevo_aprobador, desc)
                 _marcar_notif_previas_como_leidas(
                     anterior, desc.solicitud.documento, tipo='solicitud_descarga')
                 _auditar_reasignacion_descarga(actor, desc, anterior, nuevo_aprobador)
+            else:
+                desc.aprobador = None
+                desc.estado = 'esperando'
+                desc.save(update_fields=['aprobador', 'estado'])
+                descargas_reasignadas += 1
+                _auditar_reasignacion_descarga_espera(actor, desc, anterior, departamento)
 
+        # === Accesos (solo con destino disponible) ===
+        if nuevo_aprobador:
             qs_accesos = (SolicitudAccesoDocumento.objects
                           .filter(
                               departamento_destino=departamento,
@@ -178,10 +197,11 @@ def reasignar_autorizadores_gg(nuevo_jefe_gg, actor):
     evaluación) son accionables de inmediato: quedan 'pendiente'.
     Aplica a documentos y planillas.
     """
-    from documentos.models import SolicitudAprobacionDocumento, AprobacionPlanilla
+    from documentos.models import SolicitudAprobacionDocumento, AprobacionPlanilla, AprobacionDescarga
 
     docs = 0
     planillas = 0
+    descargas = 0
     with transaction.atomic():
         qs_docs = (SolicitudAprobacionDocumento.objects
                    .filter(rol_aprobador='autorizador',
@@ -238,16 +258,46 @@ def reasignar_autorizadores_gg(nuevo_jefe_gg, actor):
                 _notificar_autorizacion_pendiente_planilla(nuevo_jefe_gg, ap)
             _auditar_reasignacion_planilla(actor, ap, anterior, nuevo_jefe_gg)
 
+        qs_descargas = (AprobacionDescarga.objects
+                        .filter(rol_aprobador='autorizador',
+                                estado__in=('pendiente', 'esperando'))
+                        .exclude(aprobador=nuevo_jefe_gg)
+                        .select_related('solicitud', 'solicitud__documento'))
+        for desc in qs_descargas:
+            if AprobacionDescarga.objects.filter(
+                solicitud=desc.solicitud, aprobador=nuevo_jefe_gg,
+                rol_aprobador='autorizador',
+            ).exists():
+                desc.estado = 'cancelada'
+                desc.save(update_fields=['estado'])
+                continue
+            anterior = desc.aprobador
+            jefe = AprobacionDescarga.objects.filter(
+                solicitud=desc.solicitud, rol_aprobador='jefe',
+            ).order_by('id').first()
+            evaluado = jefe is None or jefe.estado == 'aprobada'
+            desc.aprobador = nuevo_jefe_gg
+            desc.estado = 'pendiente' if evaluado else 'esperando'
+            if evaluado:
+                desc.fecha_activacion = timezone.now()
+                desc.save(update_fields=['aprobador', 'estado', 'fecha_activacion'])
+                _notificar_autorizacion_pendiente_descarga(nuevo_jefe_gg, desc)
+            else:
+                desc.save(update_fields=['aprobador', 'estado'])
+            descargas += 1
+            _auditar_reasignacion_descarga(actor, desc, anterior, nuevo_jefe_gg)
+
     logger.info(
         f'reasignar_autorizadores_gg → {nuevo_jefe_gg.username}: '
-        f'{docs} docs, {planillas} planillas (actor: {actor.username if actor else "sistema"})'
+        f'{docs} docs, {planillas} planillas, {descargas} descargas '
+        f'(actor: {actor.username if actor else "sistema"})'
     )
-    return {'documentos': docs, 'planillas': planillas}
+    return {'documentos': docs, 'planillas': planillas, 'descargas': descargas}
 
 
 def desasignar_autorizadores_gg(anterior_jefe, actor):
     """El jefe de GG salió: sus pasos autorizador vuelven a espera (sin asignar)."""
-    from documentos.models import SolicitudAprobacionDocumento, AprobacionPlanilla
+    from documentos.models import SolicitudAprobacionDocumento, AprobacionPlanilla, AprobacionDescarga
 
     with transaction.atomic():
         qs_docs = (SolicitudAprobacionDocumento.objects
@@ -269,6 +319,17 @@ def desasignar_autorizadores_gg(anterior_jefe, actor):
             ap.save(update_fields=['aprobador', 'estado'])
             _auditar_reasignacion_planilla_espera(
                 actor, ap, anterior_jefe, ap.planilla.documento.departamento)
+
+        qs_descargas = (AprobacionDescarga.objects
+                        .filter(rol_aprobador='autorizador', aprobador=anterior_jefe,
+                                estado__in=('pendiente', 'esperando'))
+                        .select_related('solicitud', 'solicitud__documento'))
+        for desc in qs_descargas:
+            desc.aprobador = None
+            desc.estado = 'esperando'
+            desc.save(update_fields=['aprobador', 'estado'])
+            _auditar_reasignacion_descarga_espera(
+                actor, desc, anterior_jefe, desc.solicitud.documento.departamento)
 
 
 def reasignar_solicitud(solicitud, nuevo_aprobador, actor):
@@ -377,6 +438,25 @@ def _notificar_reasignacion_descarga(destino, desc):
             f'{sol.solicitado_por.get_full_name() or sol.solicitado_por.username} '
             f'solicita descargar "{doc.nombre}" ({doc.codigo}). '
             f'Requiere tu aprobación.'
+        ),
+        tipo='solicitud_descarga',
+        url_accion=f'/documentos/solicitud/{sol.id}/aprobar/',
+        departamento=doc.departamento,
+        documento=doc,
+    )
+
+
+def _notificar_autorizacion_pendiente_descarga(destino, desc):
+    """Notifica al jefe de GG que una descarga evaluada requiere autorización."""
+    from autenticacion.models import Notificacion
+    sol = desc.solicitud
+    doc = sol.documento
+    Notificacion.objects.create(
+        usuario=destino,
+        titulo='Descarga pendiente de autorización',
+        mensaje=(
+            f'La solicitud de descarga de "{doc.nombre}" ({doc.codigo}) fue '
+            f'evaluada y requiere tu autorización.'
         ),
         tipo='solicitud_descarga',
         url_accion=f'/documentos/solicitud/{sol.id}/aprobar/',
@@ -541,6 +621,30 @@ def _auditar_reasignacion_descarga(actor, desc, anterior, destino):
             'aprobador_anterior': _username(anterior),
             'aprobador_nuevo': _username(destino),
             'motivo': 'cambio_jefe_departamento',
+        },
+    )
+
+
+def _auditar_reasignacion_descarga_espera(actor, desc, anterior, departamento):
+    """Auditoría cuando el paso jefe de una descarga queda en espera."""
+    from auditoria.services import registrar_log_iso
+    sol = desc.solicitud
+    doc = sol.documento
+    registrar_log_iso(
+        usuario=actor,
+        accion_tipo='reasignacion',
+        accion_categoria='documento',
+        recurso_tipo='descarga',
+        recurso_id=sol.id,
+        recurso_codigo=doc.codigo,
+        recurso_nombre=doc.nombre,
+        estado_anterior=f'aprobador:{_username(anterior)}',
+        estado_posterior='aprobador:esperando_jefe',
+        detalles={
+            'solicitud_descarga_id': sol.id,
+            'documento_codigo': doc.codigo,
+            'departamento': departamento.codigo if departamento else '',
+            'motivo': 'sin_jefe_departamento',
         },
     )
 
