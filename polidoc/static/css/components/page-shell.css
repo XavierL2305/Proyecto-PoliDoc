@@ -1,0 +1,62 @@
+/* ==========================================================================
+   POLIDOC - COMPONENTE: PAGE SHELL
+   Encabezados de página y tarjetas de detalle compartidos por las vistas
+   de configuración y detalle. Las plantillas que definen estas clases
+   inline sobrescriben estas reglas base (se cargan después vía extra_css).
+   ========================================================================== */
+
+/* === PAGE HEADER === */
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.page-header h1,
+.page-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.page-subtitle {
+  margin: 0.25rem 0 0;
+  font-size: 0.875rem;
+  color: var(--color-muted);
+}
+
+/* === DETAIL CARD === */
+.detail-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  min-width: 0;
+}
+
+.detail-header {
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.detail-header h2,
+.detail-header h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.detail-body {
+  padding: 1.5rem;
+}
+
+@media (max-width: 639px) {
+  .detail-header,
+  .detail-body {
+    padding: 1rem;
+  }
+}

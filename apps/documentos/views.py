@@ -891,6 +891,7 @@ def crear_documento(request, tipo):
                 respuestas_formato, errores_formato = validar_respuestas(
                     formato_dinamico, request.POST, parcial=(accion == 'borrador')
                 )
+                respuestas_formato['descripcion'] = form.cleaned_data.get('descripcion') or ''
                 if errores_formato:
                     for err in errores_formato:
                         messages.error(request, err)
@@ -1108,12 +1109,17 @@ def editar_borrador(request, tipo, documento_id):
             departamento_id=perfil.departamento.id,
             tipo_documento=tipo
         )
+        form_valido = form.is_valid()
         respuestas_formato_post, errores_formato = respuestas_formato, []
         if formato_dinamico:
             respuestas_formato_post, errores_formato = validar_respuestas(
                 formato_dinamico, request.POST, parcial=(accion == 'borrador')
             )
-        if form.is_valid():
+            if form_valido:
+                respuestas_formato_post['descripcion'] = (
+                    form.cleaned_data.get('descripcion') or ''
+                )
+        if form_valido:
             if errores_formato:
                 for err in errores_formato:
                     messages.error(request, err)
@@ -1503,6 +1509,7 @@ def eliminar_documento(request, tipo, documento_id):
         respuestas_formato, errores_formato = {}, []
         if formato_dinamico:
             respuestas_formato, errores_formato = validar_respuestas(formato_dinamico, request.POST)
+            respuestas_formato['descripcion'] = documento.descripcion or ''
             if errores_formato:
                 for err in errores_formato:
                     messages.error(request, err)
@@ -3047,6 +3054,10 @@ def crear_planilla(request):
                     messages.error(request, err)
 
         if form.is_valid() and not errores_formato:
+            if formato_dinamico:
+                respuestas_formato['descripcion_cambio'] = (
+                    form.cleaned_data.get('descripcion_propuesta') or ''
+                )
             planilla = form.save(commit=False)
             nueva_justificacion = (
                 respuestas_formato.get('descripcion_cambio')

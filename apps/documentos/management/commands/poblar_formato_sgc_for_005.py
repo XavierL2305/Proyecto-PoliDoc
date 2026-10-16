@@ -93,7 +93,7 @@ class Command(BaseCommand):
                 'orden': 4,
                 'campos': [
                     {'clave': 'descripcion_cambio', 'etiqueta': 'Descripción del Cambio',
-                     'tipo': 'textarea', 'requerido': True, 'celda_excel': 'A19',
+                     'tipo': 'textarea', 'origen': 'descripcion_solicitud', 'requerido': True, 'celda_excel': 'A19',
                      'ayuda': 'Breve resumen del cambio que se debe realizar'},
                     {'clave': 'proposito_cambio', 'etiqueta': 'Propósito del Cambio',
                      'tipo': 'textarea', 'requerido': True, 'celda_excel': 'A22',

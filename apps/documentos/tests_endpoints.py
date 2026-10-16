@@ -1514,6 +1514,31 @@ class VistasDepartamentosTest(BaseDocumentosTest):
         )
         self.assertEqual(resp.status_code, 200)
 
+    def test_departamento_form_usa_form_card(self):
+        """El formulario usa la tarjeta .form-card y el checkbox .form-checkbox."""
+        for url in (
+            '/documentos/configuracion/departamentos/nuevo/',
+            f'/documentos/configuracion/departamentos/{self.depto_ti.id}/editar/',
+        ):
+            resp = self.client.get(url)
+            self.assertContains(resp, 'class="form-card"')
+            self.assertContains(resp, 'form-card-footer')
+            self.assertContains(resp, 'form-checkbox')
+
+    def test_departamento_form_sin_volver_redundante(self):
+        """El encabezado ya no incluye el enlace 'Volver' redundante."""
+        resp = self.client.get('/documentos/configuracion/departamentos/nuevo/')
+        self.assertContains(resp, 'class="form-card-footer"')
+        self.assertNotContains(resp, 'fa-arrow-left')
+
+    def test_departamento_confirmar_usa_btn_danger(self):
+        """La confirmación de eliminación usa el botón .btn--danger."""
+        resp = self.client.get(
+            f'/documentos/configuracion/departamentos/{self.depto_ti.id}/eliminar/'
+        )
+        self.assertContains(resp, 'btn--danger')
+        self.assertNotContains(resp, 'fa-arrow-left')
+
 
 # =============================================================================
 # VISTAS: OTRAS CONFIGURACIONES
@@ -1534,6 +1559,9 @@ class VistasOtrasConfigTest(BaseDocumentosTest):
     def test_roles_permisos(self):
         resp = self.client.get('/documentos/configuracion/roles-permisos/')
         self.assertEqual(resp.status_code, 200)
+        # Encabezado y tarjeta de detalle estilizados por page-shell.css
+        self.assertContains(resp, 'class="page-header"')
+        self.assertContains(resp, 'class="detail-card"')
 
     def test_seleccionar_tipo(self):
         resp = self.client.get('/documentos/seleccionar-tipo/')

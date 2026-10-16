@@ -59,3 +59,22 @@
     font-size: 0.875rem;
   }
 }
+
+@media (max-width: 639px) {
+  .form-card-footer {
+    flex-wrap: wrap;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .form-card-footer > a,
+  .form-card-footer > form,
+  .form-card-footer > .btn,
+  .form-card-footer .btn {
+    width: 100%;
+  }
+  .form-card-footer .btn {
+    white-space: normal;
+    text-align: center;
+    height: auto;
+  }
+}

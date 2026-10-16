@@ -5,10 +5,14 @@
 {# Los estilos viven en static/css/components/formato-dinamico.css (cargado en base_app.html) #}
 
 {% for seccion in formato.get_secciones %}
+{% seccion_visible_edicion seccion as seccion_ok %}
+{% if read_only or seccion_ok %}
 <div class="formato-seccion">
   <h4 class="formato-seccion-title">{{ seccion.titulo }}</h4>
   {% for campo in seccion.campos.all %}
+  {% campo_visible_edicion campo as campo_ok %}
   {% with val=respuestas|get_item:campo.clave %}
+  {% if read_only or campo_ok %}
   <div class="formato-campo">
     <label class="formato-campo-label" for="campo_{{ campo.clave }}">
       {{ campo.etiqueta }}{% if campo.requerido and campo.origen == 'usuario' or campo.origen == 'nombre_solicitante' and not request.user.get_full_name and permitir_nombre_manual != False %}<span class="required">*</span>{% endif %}{% if campo.ayuda %}<span class="form-label-help" data-tooltip="{{ campo.ayuda }}" data-tooltip-position="right" tabindex="0" aria-label="{{ campo.ayuda }}"><i class="fa-solid fa-circle-info" aria-hidden="true"></i></span>{% endif %}
@@ -150,9 +154,11 @@
       {% endif %}
     {% endif %}
   </div>
+  {% endif %}
   {% endwith %}
   {% endfor %}
 </div>
+{% endif %}
 {% endfor %}
 
 {% if not read_only %}
@@ -162,7 +168,8 @@
 
   {% for seccion in formato.get_secciones %}
   {% for campo in seccion.campos.all %}
-  {% if campo.tipo == 'tabla' %}
+  {% campo_visible_edicion campo as campo_ok %}
+  {% if campo.tipo == 'tabla' and campo_ok %}
   (function() {
     var campo_clave = '{{ campo.clave }}';
     var tbody = document.querySelector('[data-campo="' + campo_clave + '"] .tabla-body');

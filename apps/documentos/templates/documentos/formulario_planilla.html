@@ -1,5 +1,5 @@
 {% extends 'base_app.html' %}
-{% load static %}
+{% load static formato_extras %}
 
 {% block title %}{{ titulo }} - POLIDOC{% endblock %}
 
@@ -256,31 +256,12 @@
         </div>
         {% endif %}
 
-        <div class="form-card">
-          <div class="form-card-header"><h3><i class="fa-solid fa-circle-info"></i> Información Automática</h3></div>
-          <div class="form-card-body">
-            <div class="form-row">
-              <div class="form-group">
-                <label class="form-label disabled-label">
-                  Responsable del Cambio
-                  <span data-tooltip="Se asigna automáticamente al usuario actual" data-tooltip-position="right" class="tooltip-help"><i class="fa-solid fa-circle-question"></i></span>
-                </label>
-                <input type="text" class="form-input disabled-field" value="{{ request.user.get_full_name|default:request.user.username }}" disabled readonly>
-                <input type="hidden" name="responsable" value="{{ request.user.pk }}">
-              </div>
-              <div class="form-group">
-                <label class="form-label disabled-label">
-                  Versión del Documento
-                  <span data-tooltip="Se calcula automáticamente según el control de versiones" data-tooltip-position="right" class="tooltip-help"><i class="fa-solid fa-circle-question"></i></span>
-                </label>
-                <input type="text" class="form-input disabled-field" value="{{ proxima_version }}" disabled readonly>
-                <input type="hidden" name="version_destino" value="{{ proxima_version }}">
-              </div>
-            </div>
-          </div>
-        </div>
+        <input type="hidden" name="responsable" value="{{ request.user.pk }}">
+        <input type="hidden" name="version_destino" value="{{ proxima_version }}">
 
         {% if formato_dinamico %}
+        {% formato_visible_edicion formato_dinamico as formato_ok %}
+        {% if formato_ok %}
         <div class="form-card">
           <div class="form-card-header">
             <h3><i class="fa-solid fa-file-circle-plus" style="margin-right:0.5rem;"></i> {{ formato_dinamico.codigo }} — {{ formato_dinamico.nombre }} <span style="font-weight:400;font-size:0.8125rem;color:var(--color-muted);">v{{ formato_dinamico.version }} E{{ formato_dinamico.edicion }}</span></h3>
@@ -289,6 +270,7 @@
             {% include 'documentos/_formato_dinamico.html' with formato=formato_dinamico respuestas=respuestas_formato read_only=False %}
           </div>
         </div>
+        {% endif %}
         {% endif %}
 
         <div class="form-card">

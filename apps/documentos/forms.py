@@ -421,7 +421,7 @@ class DepartamentoForm(forms.ModelForm):
         widgets = {
             'nombre': forms.TextInput(attrs={'class': 'form-input'}),
             'codigo': forms.TextInput(attrs={'class': 'form-input', 'maxlength': 4}),
-            'activo': forms.CheckboxInput(attrs={'class': 'form-check'}),
+            'activo': forms.CheckboxInput(attrs={'class': 'form-checkbox'}),
         }
 
 

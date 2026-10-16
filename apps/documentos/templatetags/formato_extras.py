@@ -96,3 +96,64 @@ def a_lista(value):
     if isinstance(value, str):
         return [value] if value else []
     return value
+
+
+def _nombre_completo(user):
+    if not user:
+        return ''
+    try:
+        return user.get_full_name() or ''
+    except Exception:  # noqa: BLE001 - usuarios sin perfil en test
+        return ''
+
+
+def _campo_visible_en_edicion(campo, user, permitir_nombre_manual=True):
+    """True si el campo debe mostrarse cuando se llena el formulario."""
+    if campo.origen == 'usuario':
+        return True
+    if campo.origen == 'nombre_solicitante':
+        if not _nombre_completo(user) and permitir_nombre_manual is not False:
+            return True
+    return False
+
+
+@register.simple_tag(takes_context=True, name='campo_visible_edicion')
+def campo_visible_edicion(context, campo):
+    """True si el campo debe renderizarse al llenar el formulario."""
+    if not campo:
+        return False
+    if context.get('read_only'):
+        return True
+    return _campo_visible_en_edicion(
+        campo,
+        getattr(context.get('request'), 'user', None),
+        context.get('permitir_nombre_manual'),
+    )
+
+
+@register.simple_tag(takes_context=True, name='seccion_visible_edicion')
+def seccion_visible_edicion(context, seccion):
+    """True si la sección tiene algún campo visible al llenar el formulario."""
+    if context.get('read_only'):
+        return True
+    if not seccion:
+        return False
+    user = getattr(context.get('request'), 'user', None)
+    permitir = context.get('permitir_nombre_manual')
+    return any(
+        _campo_visible_en_edicion(c, user, permitir)
+        for c in seccion.campos.all()
+    )
+
+
+@register.simple_tag(takes_context=True, name='formato_visible_edicion')
+def formato_visible_edicion(context, formato):
+    """True si el Formato aporta algún campo visible al llenar el formulario."""
+    if not formato:
+        return False
+    if context.get('read_only'):
+        return True
+    return any(
+        seccion_visible_edicion(context, s)
+        for s in formato.get_secciones()
+    )

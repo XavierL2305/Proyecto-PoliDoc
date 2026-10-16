@@ -1,5 +1,5 @@
 {% extends 'base_app.html' %}
-{% load static %}
+{% load static formato_extras %}
 
 {% block title %}Confirmar Inhabilitación - POLIDOC{% endblock %}
 
@@ -44,6 +44,8 @@
     {% csrf_token %}
 
     {% if formato_dinamico %}
+    {% formato_visible_edicion formato_dinamico as formato_ok %}
+    {% if formato_ok %}
     <div class="form-card">
       <div class="form-card-header">
         <h3><i class="fa-solid fa-file-circle-plus" style="margin-right:0.5rem;"></i> {{ formato_dinamico.codigo }} — {{ formato_dinamico.nombre }}</h3>
@@ -52,6 +54,7 @@
         {% include 'documentos/_formato_dinamico.html' with formato=formato_dinamico respuestas=respuestas_formato read_only=False permitir_nombre_manual=False %}
       </div>
     </div>
+    {% endif %}
     {% endif %}
 
     <div class="confirm-actions">

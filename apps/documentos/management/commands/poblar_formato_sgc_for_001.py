@@ -80,7 +80,7 @@ class Command(BaseCommand):
                     {'clave': 'fecha_vigencia', 'etiqueta': 'Fecha de Vigencia',
                      'tipo': 'fecha', 'origen': 'fecha_vigencia_documento', 'celda_excel': 'H18'},
                     {'clave': 'descripcion', 'etiqueta': 'Descripción de la Creación/Modificación/Eliminación',
-                     'tipo': 'textarea', 'origen': 'usuario', 'requerido': True,
+                     'tipo': 'textarea', 'origen': 'descripcion_solicitud', 'requerido': True,
                      'celda_excel': 'A21',
                      'ayuda': 'Breve resumen de la creación, modificación o eliminación'},
                 ],

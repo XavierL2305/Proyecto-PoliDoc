@@ -1,5 +1,5 @@
 {% extends 'base_app.html' %}
-{% load static %}
+{% load static formato_extras %}
 
 {% block title %}{{ titulo }} - POLIDOC{% endblock %}
 
@@ -316,6 +316,8 @@
         {% endif %}
 
         {% if formato_dinamico %}
+        {% formato_visible_edicion formato_dinamico as formato_ok %}
+        {% if formato_ok %}
         <div class="form-card">
           <div class="form-card-header">
             <h3><i class="fa-solid fa-file-circle-plus" style="margin-right:0.5rem;"></i> {{ formato_dinamico.codigo }} — {{ formato_dinamico.nombre }} <span style="font-weight:400;font-size:0.8125rem;color:var(--color-muted);">v{{ formato_dinamico.version }} E{{ formato_dinamico.edicion }}</span></h3>
@@ -324,6 +326,7 @@
             {% include 'documentos/_formato_dinamico.html' with formato=formato_dinamico respuestas=respuestas_formato read_only=False %}
           </div>
         </div>
+        {% endif %}
         {% endif %}
 
         {% if edicion and tipo != 'proceso' %}

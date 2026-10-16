@@ -402,3 +402,96 @@ class PasoSinAprobadorTest(BasePlanillaAprobacionTest):
         self.assertFalse(Notificacion.objects.filter(
             usuario=self.user_admin, tipo='planilla_pendiente',
         ).exists())
+
+
+# =============================================================================
+# ESTRUCTURA DEL FORMULARIO DE APROBACIÓN (responsive + observaciones)
+# =============================================================================
+class FormularioAprobarPlanillaTest(BasePlanillaAprobacionTest):
+    """El pie de la página de aprobación.
+
+    Regresión: el ``textarea`` de observaciones vivía en un ``<form>`` propio
+    sin botón de envío, así que nunca viajaba junto con la acción. El backend
+    sí lee ambos (``views.aprobar_planilla``: ``accion`` y ``observaciones``).
+    """
+
+    def _formularios(self, contenido):
+        from html.parser import HTMLParser
+
+        class Formularios(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.abierto = None
+                self.formularios = []
+
+            def handle_starttag(self, tag, attrs):
+                attrs = dict(attrs)
+                if tag == 'form':
+                    self.abierto = {'id': attrs.get('id', ''), 'controles': []}
+                    self.formularios.append(self.abierto)
+                elif self.abierto is not None and tag in ('input', 'textarea', 'button'):
+                    self.abierto['controles'].append(attrs)
+
+            def handle_endtag(self, tag):
+                if tag == 'form':
+                    self.abierto = None
+
+        parser = Formularios()
+        parser.feed(contenido)
+        return parser.formularios
+
+    def _get(self):
+        self.client.login(username='jefe_gg', password='testpass123')
+        return self.client.get(
+            reverse('documentos:aprobar_planilla', args=[self.planilla.uuid]),
+        )
+
+    def test_observaciones_y_accion_en_el_mismo_formulario(self):
+        resp = self._get()
+        self.assertEqual(resp.status_code, 200)
+
+        formularios = self._formularios(resp.content.decode())
+        con_accion = [
+            f for f in formularios
+            if any(c.get('name') == 'accion' for c in f['controles'])
+        ]
+        self.assertEqual(len(con_accion), 1)
+
+        nombres = [c.get('name') for c in con_accion[0]['controles']]
+        self.assertIn('observaciones', nombres,
+                      'las observaciones no se envían con la acción')
+
+        acciones = {
+            c.get('value')
+            for c in con_accion[0]['controles'] if c.get('name') == 'accion'
+        }
+        self.assertEqual(acciones, {'aprobar', 'rechazar'})
+
+    def test_botones_de_accion_son_submit_con_name(self):
+        resp = self._get()
+        formularios = self._formularios(resp.content.decode())
+        botones = [
+            c for f in formularios for c in f['controles']
+            if c.get('name') == 'accion'
+        ]
+        self.assertEqual(len(botones), 2)
+        for boton in botones:
+            self.assertEqual(boton.get('type'), 'submit')
+
+    def test_pagina_pdf_usa_type_button(self):
+        """Los controles de paginación no deben enviar el formulario."""
+        planilla = PlanillaCambios.objects.get(pk=self.planilla.pk)
+        planilla.archivo_propuesto_pdf = 'planillas/PC-TEST-0001.pdf'
+        planilla.save(update_fields=['archivo_propuesto_pdf'])
+
+        resp = self._get()
+        contenido = resp.content.decode()
+        formularios = self._formularios(contenido)
+        controles = {
+            c.get('id'): c for f in formularios for c in f['controles']
+        }
+        self.assertIn('btn-prev', controles)
+        self.assertIn('btn-next', controles)
+        self.assertEqual(controles['btn-prev'].get('type'), 'button')
+        self.assertEqual(controles['btn-next'].get('type'), 'button')
+        self.assertIn('event.preventDefault()', contenido)

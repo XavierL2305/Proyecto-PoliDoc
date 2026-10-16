@@ -3,47 +3,119 @@
 
 {% block title %}{{ accion }} Departamento — Configuración{% endblock %}
 
-{% block app_content %}
-<div class="page-header">
-  <div>
-    <h1 class="page-title">{{ accion }} Departamento</h1>
-    <p class="page-subtitle">
-      {% if accion == 'Crear' %}Registrar nuevo departamento{% else %}Editar {{ depto.nombre }}{% endif %}
-    </p>
-  </div>
-  <a href="{% url 'documentos:departamentos_lista' %}" class="btn btn--ghost">
-    <i class="fa-solid fa-arrow-left"></i> Volver
-  </a>
-</div>
+{% block extra_css %}
+<style>
+  .page-content {
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+  }
+  .form-card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    max-width: 600px;
+    width: 100%;
+  }
+  .form-card-header {
+    padding: 1.25rem 1.5rem;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .form-card-header h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--color-text);
+    margin: 0;
+  }
+  .form-card-body {
+    padding: 1.5rem;
+  }
+  .form-card-footer {
+    padding: 1rem 1.5rem;
+    border-top: 1px solid var(--color-border);
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.75rem;
+  }
+  .form-group {
+    margin-bottom: 1rem;
+  }
+  .form-label {
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--color-text);
+    margin-bottom: 0.5rem;
+  }
+  .checkbox-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+    color: var(--color-text);
+    cursor: pointer;
+  }
+  .jefe-info {
+    padding: 0.75rem;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    margin-bottom: 1rem;
+  }
+  .jefe-info p {
+    font-size: 0.8rem;
+    margin: 0;
+    color: var(--color-muted);
+  }
+  .jefe-info p.jefe-actual {
+    margin: 0.5rem 0 0;
+    font-weight: 600;
+    color: var(--color-text);
+  }
+</style>
+{% endblock %}
 
-<div class="detail-card" style="margin-top: 1.5rem; max-width: 600px;">
+{% block app_content %}
+<div class="form-card">
+  <div class="form-card-header">
+    <h3>{{ accion }} Departamento</h3>
+  </div>
   <form method="post">
     {% csrf_token %}
-    {% for field in form %}
-    <div class="form-group" style="margin-bottom: 1.25rem;">
-      <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
-      {{ field }}
-      {% if field.errors %}
-      <div style="color: var(--color-danger); font-size: 0.75rem; margin-top: 0.25rem;">
-        {{ field.errors.0 }}
+    <div class="form-card-body">
+      {% for field in form %}
+      {% if field.name == 'activo' %}
+      <div class="form-group">
+        <label class="checkbox-item">{{ field }} {{ field.label }}</label>
+        {% if field.errors %}
+        <span class="form-error">{{ field.errors.0 }}</span>
+        {% endif %}
+      </div>
+      {% else %}
+      <div class="form-group">
+        <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+        {{ field }}
+        {% if field.errors %}
+        <span class="form-error">{{ field.errors.0 }}</span>
+        {% endif %}
+      </div>
+      {% endif %}
+      {% endfor %}
+
+      {% if accion == 'Editar' and depto.jefe %}
+      <div class="jefe-info">
+        <p>
+          <i class="fa-solid fa-info-circle"></i>
+          El jefe de departamento se asigna automáticamente desde el perfil del usuario. No se puede editar aquí.
+        </p>
+        <p class="jefe-actual">
+          Jefe actual: {{ depto.jefe.get_full_name|default:depto.jefe.username }}
+        </p>
       </div>
       {% endif %}
     </div>
-    {% endfor %}
-
-    {% if accion == 'Editar' and depto.jefe %}
-    <div style="padding: 0.75rem; background: var(--color-bg); border: 1px solid var(--color-border); border-radius: var(--radius); margin-bottom: 1.25rem;">
-      <p style="font-size: 0.8rem; margin: 0; color: var(--color-muted);">
-        <i class="fa-solid fa-info-circle"></i>
-        El jefe de departamento se asigna automáticamente desde el perfil del usuario. No se puede editar aquí.
-      </p>
-      <p style="font-size: 0.8rem; margin: 0.5rem 0 0; font-weight: 600;">
-        Jefe actual: {{ depto.jefe.get_full_name|default:depto.jefe.username }}
-      </p>
-    </div>
-    {% endif %}
-
-    <div style="display: flex; gap: 0.75rem; justify-content: flex-end;">
+    <div class="form-card-footer">
       <a href="{% url 'documentos:departamentos_lista' %}" class="btn btn--ghost">Cancelar</a>
       <button type="submit" class="btn btn--primary">{{ accion }}</button>
     </div>

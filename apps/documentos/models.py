@@ -1689,6 +1689,7 @@ class CampoFormato(models.Model):
         ('version_documento', 'Versión del documento (auto)'),
         ('edicion_documento', 'Edición del documento (auto)'),
         ('fecha_vigencia_documento', 'Fecha de vigencia del documento (auto)'),
+        ('descripcion_solicitud', 'Descripción de la solicitud (auto)'),
     ]
 
     seccion = models.ForeignKey(
