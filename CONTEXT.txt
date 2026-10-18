@@ -2069,9 +2069,12 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
       escapa el HTML antes de insertar `<strong>` (seguro ante inyección).
       `GEMINI_MODEL` debe ser un modelo vigente (p. ej. `gemini-3.8-flash`);
       Google retira modelos para usuarios nuevos (404 NOT_FOUND).
-      Recomendado para el tier gratuito: un modelo **lite** (p. ej.
-      `gemini-3.1-flash-lite` / `gemini-flash-lite-latest`), que no usa
-      thinking y evita el truncamiento. `IA_RESUMEN_MAX_TOKENS` (default 4096)
+      Con la cuenta de pago (API de AI Studio con facturación habilitada), el
+      modelo **lite** ya no es una necesidad de cuota sino una decisión de
+      costo/latencia: se puede usar un modelo más capaz (p. ej.
+      `gemini-3.8-flash`) o mantener `gemini-3.1-flash-lite` /
+      `gemini-flash-lite-latest` (no usa thinking y evita el truncamiento).
+      `IA_RESUMEN_MAX_TOKENS` (default 4096)
       define `max_output_tokens`; los modelos Gemini 3.x "flash" gastan parte
       de ese presupuesto en thinking y pueden truncar el JSON. Si la respuesta
       termina con `finish_reason=MAX_TOKENS`, `generar_resumen` devuelve un
