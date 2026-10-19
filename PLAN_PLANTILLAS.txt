@@ -8,7 +8,8 @@ Enfoque         : Opción B — conservar los modelos de aprobación actuales y
                   unificar el comportamiento/UI con una capa de servicios.
 Aprobación      : 1 paso (jefe de departamento). Sin Gerencia General para
                   plantillas.
-Migración nueva : 0054_plantillas (última aplicada: 0053_origen_descripcion_solicitud)
+Migración nueva : 0055_plantillas (última aplicada:
+                  0054_alter_aprobaciondescarga_unique_together_and_more)
 
 --------------------------------------------------------------------------------
 ÍNDICE
@@ -22,7 +23,7 @@ Migración nueva : 0054_plantillas (última aplicada: 0053_origen_descripcion_so
   6. FASE 2 — Alta de plantilla + aprobación condicional
   7. FASE 3 — Modificación / Eliminación de plantilla
   8. FASE 4 — Vínculo Plantilla ↔ Tipo ↔ Documento
-  9. FASE 5 — Unificación de aprobaciones (servicio)
+  9. FASE 5 — Unificación de aprobaciones (OPCIONAL / FUERA DE ALCANCE)
  10. Tests
  11. Verificación / comandos
  12. Riesgos y notas
@@ -46,6 +47,10 @@ Relación con lo existente:
   - SGC-FOR-001 = motor de "creación/eliminación" de documentos (Formato).
   - SGC-FOR-005 = motor de "planilla de cambios / modificación" (Formato).
   - La PLANTILLA NO es el Formato FOR-001/005: es un Documento en blanco.
+
+NOTA DE NOMENCLATURA: el antiguo modelo `Plantilla` fue ELIMINADO en la
+migración 0005. Aquí NO se revive ese modelo: se agrega el booleano
+`Documento.es_plantilla` como discriminador sobre el modelo unificado.
 
 ================================================================================
 1. CONCEPTOS Y MAPEO
@@ -79,8 +84,10 @@ Plantilla = Documento en blanco que reutiliza:
  D8. UI: catálogo /documentos/ pasa a "Plantillas"; sidebar
      "Formularios" -> "Plantillas". Alta reutiliza seleccionar_tipo con
      indicador visual de plantilla.
- D9. FOR existentes (Documento.tipo.key == 'formulario') -> backfill
-     es_plantilla=True.
+ D9. FOR existentes (Documento.tipo.key == 'formulario') -> NO se
+     backfillean automáticamente. Se reclasifican con el comando
+     `marcar_formularios_como_plantillas` (--dry-run por defecto, --apply
+     para ejecutar) tras revisar el reporte.
  D10. Modificación de plantilla -> FOR-005 (crear_planilla);
       Eliminación de plantilla -> FOR-001 (eliminar_documento/destruir_documento).
  D11. Vigencia / vencimiento / retención de plantilla: OPCIONALES (como hoy).
@@ -189,12 +196,20 @@ ARCHIVO: apps/documentos/models.py
     construir_codigo:
       grep -rn "generar_codigo_secuencial\|construir_codigo" apps/
 
-ARCHIVO: apps/documentos/migrations/0054_plantillas.py
+ARCHIVO: apps/documentos/migrations/0055_plantillas.py
     - AddField Documento.es_plantilla
     - AddField Documento.plantilla_origen
-    - RunPython(backfill, noop):
-        Documento.objects.filter(tipo__key='formulario').update(es_plantilla=True)
+    - SIN cambios de datos (el backfill se difiere al comando de la sección
+      4.5; no reclasificar formularios ya llenos a ciegas).
     - (reverse = noop)
+
+4.5 RECLASIFICACIÓN DE FOR EXISTENTES (COMANDO, NO MIGRACIÓN)
+ARCHIVO NUEVO: apps/documentos/management/commands/marcar_formularios_como_plantillas.py
+    - --dry-run (por defecto): lista los formularios que se marcarían
+      (codigo, nombre, estado, departamento) SIN escribir en la BD.
+    - --apply: marca es_plantilla=True solo a los revisados.
+    - Motivo: no todos los `tipo.key == 'formulario'` son plantillas en blanco;
+      algunos pueden ser formularios ya llenos. Revisar antes de aplicar.
 
 CRITERIO DE ACEPTACIÓN F0
     - `python manage.py makemigrations --check --dry-run` sin cambios pendientes.
@@ -387,8 +402,13 @@ CRITERIO DE ACEPTACIÓN F4
       selección).
 
 ================================================================================
-9. FASE 5 — UNIFICACIÓN DE APROBACIONES (Opción B)
+9. FASE 5 — UNIFICACIÓN DE APROBACIONES (Opción B) — OPCIONAL, FUERA DEL
+   ALCANCE DE LA FASE 2 (deuda técnica futura)
 ================================================================================
+NOTA: esta fase es un refactor de deuda técnica, no una funcionalidad visible.
+Queda FUERA del alcance entregable de la Fase 2; se abordará en una fase
+posterior. El contenido siguiente se conserva como referencia.
+
 ARCHIVO NUEVO: apps/documentos/services/aprobacion_flujo.py
     Adaptador común sobre los 3 tipos (documento / planilla / plantilla) SIN
     modificar los modelos. Funciones sugeridas:
@@ -440,24 +460,26 @@ Comando de tests dirigidos:
 ================================================================================
   python manage.py check
   python manage.py makemigrations --check --dry-run
-  python manage.py migrate            # aplica 0054_plantillas
+  python manage.py migrate            # aplica 0055_plantillas
   python manage.py test documentos.tests_plantillas documentos.tests_endpoints \
       -k plantilla -k catalogo --settings=polidoc.test_settings
-  # Suite completa (opcional; espera 1 fallo preexistente):
+  # Suite completa (opcional):
   python manage.py test documentos --settings=polidoc.test_settings
 
-FALLO PREEXISTENTE (ajeno, no tocar):
+FALLO PREEXISTENTE (verificar al ejecutar; si persiste es ajeno, no tocar):
   documentos.tests_performance.ConteosVigenciaPerformanceTest.test_un_solo_aggregate
 
 NOTA STATIC: con DEBUG=True (tu .env) NO requiere collectstatic.
-NOTA DJANGO 6.1: tags {% ... %} en una sola línea (tag_re sin re.DOTALL).
+NOTA DJANGO 6.0.x: tags {% ... %} en una sola línea (tag_re sin re.DOTALL).
 
 ================================================================================
 12. RIESGOS Y NOTAS
 ================================================================================
   R1. Documento.codigo es unique=True -> resuelto con el segmento PLT.
-  R2. Backfill de FOR existentes a es_plantilla=True: salen del listado de
-      "solo documentos"; quedan visibles en el listado general y en el catálogo.
+  R2. Reclasificación de FOR existentes: se hace con el comando
+      `marcar_formularios_como_plantillas` (--dry-run por defecto), NO en la
+      migración. Los marcados salen del listado de "solo documentos"; quedan
+      visibles en el listado general y en el catálogo.
   R3. La firma de generar_codigo_secuencial/construir_codigo cambia -> actualizar
       todos los llamadores (grep obligatorio).
   R4. avisar_paso_sin_asignar hoy depende de PlanillaCambios -> generalizar o
@@ -474,17 +496,20 @@ NOTA DJANGO 6.1: tags {% ... %} en una sola línea (tag_re sin re.DOTALL).
 MODELOS:
   apps/documentos/models.py                      (F0, F2/6.3 verificación)
 MIGRACIONES:
-  apps/documentos/migrations/0054_plantillas.py  (F0, NUEVO)
+  apps/documentos/migrations/0055_plantillas.py  (F0, NUEVO)
+COMANDOS:
+  apps/documentos/management/commands/marcar_formularios_como_plantillas.py
+                                                 (F0, NUEVO; dry-run/apply)
 VISTAS:
-  apps/documentos/views.py                       (F1,F2,F3,F4,F5)
+  apps/documentos/views.py                       (F1,F2,F3,F4)
 URLS:
   apps/documentos/urls.py                        (F2)
 FORMS:
   apps/documentos/forms.py                       (F4)
 SERVICIOS:
-  apps/documentos/services/aprobacion_flujo.py   (F5, NUEVO)
-  apps/documentos/services/solicitudes.py        (F2/F5 etiquetas)
+  apps/documentos/services/solicitudes.py        (F2 etiquetas)
   apps/documentos/services/aprobaciones.py       (F2 avisar_*)
+  # F5 (OPCIONAL, fuera de alcance): services/aprobacion_flujo.py, NUEVO
 PERMISOS:
   apps/documentos/permissions.py                 (verificación F1)
 TEMPLATES:
@@ -494,7 +519,7 @@ TEMPLATES:
   apps/documentos/templates/documentos/mis_documentos.html     (F1)
   apps/documentos/templates/documentos/documentos_departamento.html (F1)
   apps/documentos/templates/documentos/detalle.html            (F3,F4)
-  apps/documentos/templates/documentos/bandeja_aprobaciones.html (F5)
+  apps/documentos/templates/documentos/bandeja_aprobaciones.html (F5 opcional)
   apps/autenticacion/templates/base_app.html                   (F1)
 TESTS:
   apps/documentos/tests_plantillas.py            (NUEVO)
@@ -508,7 +533,8 @@ TESTS:
 [ ] F0  models.py: construir_codigo(..., es_plantilla)
 [ ] F0  models.py: generar_codigo_secuencial(..., es_plantilla)
 [ ] F0  grep llamadores de generar_codigo_secuencial/construir_codigo
-[ ] F0  migración 0054_plantillas (+backfill FOR)
+[ ] F0  migración 0055_plantillas (SIN backfill automático)
+[ ] F0  comando marcar_formularios_como_plantillas (--dry-run/--apply)
 [ ] F0  migrate + makemigrations --check
 [ ] F1  views.formularios (catálogo -> plantillas + visibilidad)
 [ ] F1  formularios.html (título/badge/tipo/botón subir)
@@ -529,9 +555,9 @@ TESTS:
 [ ] F4  crear_documento: descarga + autocompletado + guardar vínculo
 [ ] F4  formulario.html bloque "Plantilla de origen"
 [ ] F4  detalle.html muestra "Plantilla de origen"
-[ ] F5  services/aprobacion_flujo.py
-[ ] F5  bandeja/aprobar usan el servicio
-[ ] F5  solicitudes.py etiquetas
+[ ] F5  (OPCIONAL / FUTURO) services/aprobacion_flujo.py
+[ ] F5  (OPCIONAL / FUTURO) bandeja/aprobar usan el servicio
+[ ] F5  (OPCIONAL / FUTURO) solicitudes.py etiquetas
 [ ] T   tests_plantillas.py (T1..T9)
 [ ] T   actualizar tests del catálogo/códigos
 [ ] V   manage.py check
