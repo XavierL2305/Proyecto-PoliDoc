@@ -1,0 +1,44 @@
+%% POLIDOC — estados de la planilla de cambios y sus aprobaciones.
+%% Fuente: PlanillaCambios.ESTADO_CHOICES, SolicitudCambio.ESTADO_CHOICES,
+%% AprobacionPlanilla.ESTADO_CHOICES.
+stateDiagram-v2
+  state "PlanillaCambios" as P {
+    state "Borrador" as P1
+    state "En revisión" as P2
+    state "Aprobado" as P3
+    state "Rechazado" as P4
+    [*] --> P1
+    P1 --> P2: enviar
+    P2 --> P3: aprobación final
+    P2 --> P4: rechazo
+  }
+
+  state "SolicitudCambio" as S {
+    state "Borrador" as S1
+    state "En revisión" as S2
+    state "Aprobado" as S3
+    state "Rechazado" as S4
+    [*] --> S1
+    S1 --> S2: enviar
+    S2 --> S3: aprobación
+    S2 --> S4: rechazo
+  }
+
+  state "AprobacionPlanilla" as A {
+    state "Pendiente" as A1
+    state "En espera" as A2
+    state "Aprobada" as A3
+    state "Rechazada" as A4
+    state "Cancelada" as A5
+    [*] --> A1
+    A1 --> A3: aprobar
+    A1 --> A4: rechazar
+    A2 --> A1: activar paso (promoción)
+    A1 --> A5: rechazo de paso hermano
+    A2 --> A5: rechazo de paso hermano
+  }
+
+  note right of A
+    La cadena es de 1 o 2 pasos según el responsable.
+    El paso final es el que aplica el cambio al documento.
+  end note

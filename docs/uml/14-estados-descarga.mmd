@@ -1,0 +1,43 @@
+%% POLIDOC — estados de la descarga controlada.
+%% Fuente: SolicitudDescarga, AprobacionDescarga y DistribucionDocumento.
+stateDiagram-v2
+  state "SolicitudDescarga" as S {
+    state "Pendiente" as S1
+    state "Aprobada" as S2
+    state "Rechazada" as S3
+    [*] --> S1
+    S1 --> S2: aprobación final
+    S1 --> S3: rechazo
+  }
+
+  state "AprobacionDescarga" as A {
+    state "Pendiente" as A1
+    state "En espera" as A2
+    state "Aprobada" as A3
+    state "Rechazada" as A4
+    state "Cancelada" as A5
+    [*] --> A1
+    A1 --> A3: aprobar
+    A1 --> A4: rechazar
+    A2 --> A1: activar paso (promoción)
+    A1 --> A5: rechazo de paso hermano
+    A2 --> A5: rechazo de paso hermano
+  }
+
+  state "DistribucionDocumento" as D {
+    state "Vigente" as D1
+    state "Revocada" as D2
+    [*] --> D1
+    D1 --> D2: revocar
+  }
+
+  note right of A
+    interno / confidencial: 1 paso (jefe del depto dueño).
+    restringido: 2 pasos secuenciales (jefe del depto dueño -> jefe de GG).
+    Sin jefe: el paso nace en "En espera" con aprobador=None.
+  end note
+
+  note right of D
+    La autorización dura 30 días (DESCARGA_VIGENCIA_DIAS)
+    y queda ligada a la versión aprobada.
+  end note

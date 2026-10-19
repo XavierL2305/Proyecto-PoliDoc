@@ -2791,6 +2791,8 @@ def delegaciones_jefatura(request):
             'estado': estado,
             'clase': clase,
             'en_curso': d.activa and d.fecha_inicio <= hoy <= d.fecha_fin,
+            # Revocar antes del fin de la vigencia exige motivo (trazabilidad).
+            'revocacion_anticipada': d.activa and hoy < d.fecha_fin,
             'puede_revocar': d.activa and (
                 perfil.es_administrador
                 or request.user.id in (d.jefe_id, d.delegado_id)
@@ -2950,10 +2952,21 @@ def revocar_delegacion(request, deleg_id):
         messages.info(request, 'Esta delegación ya estaba revocada.')
         return redirect('documentos:delegaciones_jefatura')
 
+    # ISO 15489 / no repudio: revocar antes de la fecha de fin exige motivo,
+    # lo haga el jefe, el delegado (renuncia) o un administrador.
+    motivo = (request.POST.get('motivo_revocacion') or '').strip()
+    if timezone.now().date() < delegacion.fecha_fin and len(motivo) < 10:
+        messages.error(
+            request,
+            'Debes indicar el motivo de la revocación anticipada '
+            '(mínimo 10 caracteres).',
+        )
+        return redirect('documentos:delegaciones_jefatura')
+
     delegacion.activa = False
     delegacion.fecha_revocacion = timezone.now()
     delegacion.revocada_por = request.user
-    delegacion.motivo_revocacion = (request.POST.get('motivo_revocacion') or '').strip()
+    delegacion.motivo_revocacion = motivo
     delegacion.save(update_fields=[
         'activa', 'fecha_revocacion', 'revocada_por', 'motivo_revocacion',
     ])

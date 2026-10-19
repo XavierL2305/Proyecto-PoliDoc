@@ -263,6 +263,26 @@ class CrearDelegacionTest(BaseDocumentosTest):
         self.assertEqual(resp.status_code, 302)
         self.assertFalse(DelegacionJefatura.objects.exists())
 
+    def test_admin_get_con_departamento_carga_solo_sus_candidatos(self):
+        """Elegir depto (GET ?departamento=) recalcula los candidatos del depto."""
+        self.client.login(username='admin01', password='testpass123')
+        resp = self.client.get(self.url, {'departamento': self.depto_th.id})
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['departamento_activo'].pk, self.depto_th.id)
+        candidatos = set(resp.context['candidatos'].values_list('pk', flat=True))
+        self.assertEqual(candidatos, {self.user_trabajador_otro.id})
+
+    def test_select_departamento_navega_por_get_y_no_envia_el_post(self):
+        """Regresión: cambiar de depto no debe disparar la creación (POST)."""
+        self.client.login(username='admin01', password='testpass123')
+        resp = self.client.get(self.url, {'departamento': self.depto_th.id})
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotContains(resp, 'this.form.submit()')
+        self.assertContains(resp, 'window.location.href=')
+        self.assertContains(resp, '?departamento=')
+
     def test_trabajador_no_accede_a_la_gestion(self):
         self.client.login(username='trab01', password='testpass123')
         resp = self.client.get(self.url)
@@ -312,20 +332,70 @@ class RevocarDelegacionTest(BaseDelegacionTest):
 
     def test_delegado_puede_renunciar(self):
         self.client.login(username='coord01', password='testpass123')
-        resp = self.client.post(self.url)
+        resp = self.client.post(
+            self.url, {'motivo_revocacion': 'Renuncia por cambio de funciones'},
+        )
 
         self.assertEqual(resp.status_code, 302)
         self.delegacion.refresh_from_db()
         self.assertFalse(self.delegacion.activa)
         self.assertEqual(self.delegacion.revocada_por, self.user_coordinador)
+        self.assertEqual(
+            self.delegacion.motivo_revocacion, 'Renuncia por cambio de funciones',
+        )
 
     def test_admin_revoca(self):
         self.client.login(username='admin01', password='testpass123')
-        resp = self.client.post(self.url)
+        resp = self.client.post(
+            self.url, {'motivo_revocacion': 'Revocación administrativa'},
+        )
 
         self.assertEqual(resp.status_code, 302)
         self.delegacion.refresh_from_db()
         self.assertFalse(self.delegacion.activa)
+
+    def test_revocacion_anticipada_sin_motivo_no_revoca(self):
+        """Antes de la fecha de fin, el motivo es obligatorio."""
+        self.client.login(username='coord01', password='testpass123')
+        resp = self.client.post(self.url, {}, follow=True)
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'motivo de la revocación anticipada')
+        self.delegacion.refresh_from_db()
+        self.assertTrue(self.delegacion.activa)
+
+    def test_revocacion_anticipada_motivo_corto_no_revoca(self):
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.post(self.url, {'motivo_revocacion': 'corto'}, follow=True)
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'motivo de la revocación anticipada')
+        self.delegacion.refresh_from_db()
+        self.assertTrue(self.delegacion.activa)
+
+    def test_revocacion_vencida_sin_motivo_permite(self):
+        """Si la vigencia ya terminó, el motivo vuelve a ser opcional."""
+        DelegacionJefatura.objects.filter(pk=self.delegacion.pk).update(
+            fecha_inicio=HOY - timedelta(days=10),
+            fecha_fin=HOY - timedelta(days=1),
+        )
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.post(self.url, {})
+
+        self.assertEqual(resp.status_code, 302)
+        self.delegacion.refresh_from_db()
+        self.assertFalse(self.delegacion.activa)
+
+    def test_contexto_marca_revocacion_anticipada(self):
+        self.client.login(username='admin01', password='testpass123')
+        resp = self.client.get(reverse('documentos:delegaciones_jefatura'))
+
+        fila = next(
+            f for f in resp.context['delegaciones']
+            if f['obj'].pk == self.delegacion.pk
+        )
+        self.assertTrue(fila['revocacion_anticipada'])
+        self.assertTrue(fila['puede_revocar'])
 
     def test_tercero_no_puede_revocar(self):
         self.client.login(username='trab01', password='testpass123')
@@ -345,7 +415,9 @@ class RevocarDelegacionTest(BaseDelegacionTest):
 
     def test_revocar_notifica_al_delegado(self):
         self.client.login(username='jefe_ti', password='testpass123')
-        self.client.post(self.url)
+        self.client.post(
+            self.url, {'motivo_revocacion': 'Reincorporación del jefe'},
+        )
 
         self.assertTrue(
             Notificacion.objects.filter(

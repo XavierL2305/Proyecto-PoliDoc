@@ -1,0 +1,30 @@
+%% POLIDOC — condiciones de la delegación de jefatura.
+%% No es un ESTADO_CHOICES persistido: se deriva de activa + fecha_inicio/fin.
+%% Fuente: apps/documentos/models.py y views.py (delegaciones_jefatura).
+stateDiagram-v2
+  state elegibilidad <<choice>>
+  [*] --> elegibilidad: activa=True
+  elegibilidad --> Programada: fecha_inicio > hoy
+  elegibilidad --> Vigente: inicio <= hoy <= fecha_fin
+
+  Programada --> Vigente: llega fecha_inicio
+  Vigente --> Vencida: pasa fecha_fin
+  Vencida --> Vencida: sigue activa (solo historial)
+
+  Programada --> Revocada: activa=False
+  Vigente --> Revocada: activa=False
+  Vencida --> Revocada: activa=False
+
+  Revocada --> [*]
+
+  note right of Vigente
+    El delegado ejerce los poderes operativos del jefe
+    (aprobar, transferir, asignar, descargar, solicitar acceso).
+    No ejerce la configuración global del sistema.
+  end note
+
+  note right of Revocada
+    Revocar antes de fecha_fin exige motivo (mínimo 10 caracteres),
+    lo haga el jefe, el delegado (renuncia) o un admin.
+    Si la vigencia ya terminó, el motivo es opcional.
+  end note

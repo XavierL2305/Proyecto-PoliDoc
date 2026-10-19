@@ -1,0 +1,62 @@
+%% POLIDOC — secuencia de aprobación de documento (creación/edición/versión).
+%% Regla: 1 paso si el solicitante ejerce jefatura (jefe natural o delegado
+%% vigente); 2 pasos secuenciales si no. El evaluador cae a GG si no hay jefe
+%% de departamento o si el jefe es el propio solicitante.
+sequenceDiagram
+  autonumber
+  actor S as Solicitante
+  participant SA as Servicio de aprobación
+  participant E as Evaluador
+  participant GG as Autorizador (GG)
+  participant DOC as Documento
+  participant CEL as Celery
+  participant AUD as Auditoría
+
+  S->>SA: Enviar documento a revisión
+  SA->>SA: _es_jefe(usuario)<br/>(jefe natural o delegado vigente)
+
+  alt Ejerce jefatura
+    SA->>GG: Crear paso único<br/>rol=autorizador, es_final=True
+    opt No hay jefe de GG
+      SA->>SA: estado=esperando, aprobador=None
+      SA->>AUD: Notificar a administradores
+    end
+  else No ejerce jefatura
+    SA->>SA: determinar_evaluador()
+    alt Sin jefe de depto o el jefe es el solicitante
+      SA->>SA: evaluador = jefe de GG
+    end
+    SA->>E: Crear paso evaluador<br/>rol=evaluador, es_final=False
+    SA->>GG: Crear paso autorizador<br/>estado=esperando, es_final=True
+  end
+
+  Note over S,GG: En el modo de 1 paso (solicitante jefe/delegado)<br/>se omite el bloque de evaluación.
+
+  alt Flujo de dos pasos
+    E->>SA: Aprobar evaluación
+    SA->>GG: Activar autorizador (estado=pendiente)
+    SA->>AUD: registrar_log_iso(evaluación)
+  else Rechazo del evaluador
+    SA->>GG: Cancelar paso hermano
+    SA->>DOC: estado=borrador<br/>(creacion/edicion/version)
+    SA->>AUD: registrar_log_iso(rechazo)
+  end
+
+  GG->>SA: Aprobar autorización final
+  SA->>DOC: aplicar_cambio() / activación
+  SA->>DOC: versión/revisión según planilla
+  SA->>CEL: Generar planilla SGC-FOR-001/005
+  alt Broker disponible
+    CEL-->>SA: PDF generado
+  else Broker caído
+    SA->>SA: fallback síncrono
+  end
+  SA->>AUD: registrar_log_iso(aprobación final)
+  SA-->>S: Documento activo / notificación
+
+  opt Rechazo del autorizador
+    SA->>SA: Cancelar paso hermano
+    SA->>DOC: estado=borrador<br/>(creacion/edicion/version)
+    SA->>AUD: registrar_log_iso(rechazo final)
+    SA-->>S: Notificación de rechazo
+  end

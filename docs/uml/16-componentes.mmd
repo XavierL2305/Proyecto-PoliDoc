@@ -1,0 +1,55 @@
+%% POLIDOC — componentes del stack (vista lógica).
+%% Fuente: polidoc/settings.py, docker-compose.yml, apps/auditoria.
+flowchart LR
+  subgraph WEB["Capa web"]
+    BROWSER["Navegador"]
+    DJANGO["Django 6.1<br/>plantillas + django-compressor"]
+    WHITENOISE["WhiteNoise<br/>estáticos comprimidos"]
+  end
+
+  subgraph ASYNC["Asíncrono"]
+    WORKER["Celery Worker"]
+    BEAT["Celery Beat"]
+    RABBIT[("RabbitMQ<br/>broker")]
+    REDIS[("Redis<br/>caché / rate limiting")]
+  end
+
+  subgraph DATA["Persistencia"]
+    SQL[("SQLite db_new.sqlite3<br/>PostgreSQL opcional")]
+    MONGO[("MongoDB<br/>AuditLog")]
+    BUFFER["Buffer local<br/>AUDIT_BUFFER_DIR"]
+    MEDIA["MEDIA_ROOT<br/>ReporteAuditoriaStorage"]
+  end
+
+  subgraph EXT["Servicios externos"]
+    LDAP["AD / LDAP"]
+    LO["LibreOffice"]
+    GEM["Google AI Studio<br/>Gemini"]
+    SMTP["SMTP / Mailpit"]
+  end
+
+  BROWSER --> DJANGO
+  DJANGO --> WHITENOISE
+  DJANGO --> SQL
+  DJANGO --> MONGO
+  DJANGO --> LDAP
+  DJANGO --> SMTP
+  DJANGO --> MEDIA
+  DJANGO --> RABBIT
+  DJANGO --> REDIS
+
+  RABBIT --> WORKER
+  RABBIT --> BEAT
+  REDIS --> DJANGO
+  WORKER --> LO
+  WORKER --> GEM
+  WORKER --> SQL
+  WORKER --> MONGO
+  WORKER --> SMTP
+
+  MONGO --> BUFFER
+  BEAT -. reintenta .-> BUFFER
+
+  NOTE["Si el broker no responde,<br/>PDF/planillas/IA caen a modo síncrono"]
+  classDef note fill:#FEF9C3,stroke:#CA8A04,color:#422006
+  class NOTE note

@@ -1,0 +1,45 @@
+%% POLIDOC — secuencia de cambio de estado (inhabilitar, reactivar, renovar).
+%% Admin y jefe de GG aplican directo. El resto pasa por UN aprobador cuyo rol
+%% depende de quién solicita; no es una cadena de dos pasos.
+sequenceDiagram
+  autonumber
+  actor U as Usuario
+  participant SA as Servicio de cambios
+  participant AP as Aprobador
+  participant DOC as Documento
+  participant RV as RenovacionVencimiento
+  participant AUD as Auditoría
+
+  U->>SA: Solicitar cambio de estado
+  SA->>SA: puede_iniciar(usuario, documento)
+  alt No autorizado
+    SA-->>U: Error de permisos
+  else Admin o jefe de GG
+    SA->>DOC: Aplicar cambio directo
+    SA->>AUD: registrar_log_iso(...)
+  else Requiere aprobación
+    SA->>SA: aprobador_de_cambio(usuario, documento)
+    alt Usuario ejerce jefatura (jefe o delegado)
+      SA->>AP: Jefe de GG (rol=autorizador)
+    else Usuario no ejerce jefatura
+      SA->>AP: Jefe del departamento (rol=evaluador)
+      opt Sin jefe de departamento
+        SA->>AP: Jefe de GG (fallback)
+      end
+    end
+    AP->>SA: Aprobar
+    alt Renovar vencimiento
+      SA->>RV: Crear registro (fecha anterior/nueva)
+      SA->>DOC: Actualizar fecha_vencimiento
+    else Inhabilitar
+      SA->>DOC: estado=obsoleto
+    else Reactivar
+      SA->>DOC: estado=activo (solo si no vencido)
+    end
+    SA->>AUD: registrar_log_iso(aprobación)
+
+    opt Rechazo
+      SA->>AUD: registrar_log_iso(rechazo)
+      Note over SA,DOC: El estado del documento no cambia
+    end
+  end

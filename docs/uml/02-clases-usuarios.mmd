@@ -1,0 +1,67 @@
+%% POLIDOC — organización, usuarios y delegación de jefatura.
+%% Fuente: apps/autenticacion/models.py, apps/documentos/models.py.
+classDiagram
+  class User {
+    +string username
+    +string email
+    +bool is_active
+  }
+
+  class PerfilUsuario {
+    +string rol
+    +string grupo_ldap
+    +string cedula_identidad
+    +string numero_empleado
+    +string telefono
+    +datetime ultimo_sync
+    +bool acepto_terminos
+    +datetime fecha_acepto_terminos
+    +string terminos_version
+  }
+
+  class Departamento {
+    +string nombre
+    +string codigo
+    +bool activo
+  }
+
+  class SubArea {
+    +string nombre
+    +bool activo
+  }
+
+  class DelegacionJefatura {
+    +string motivo
+    +date fecha_inicio
+    +date fecha_fin
+    +bool activa
+    +datetime fecha_creacion
+    +datetime fecha_revocacion
+    +string motivo_revocacion
+  }
+
+  class Notificacion {
+    +string titulo
+    +string mensaje
+    +string tipo
+    +bool leida
+    +string url_accion
+    +datetime fecha_creacion
+  }
+
+  class Documento
+
+  User "1" --> "1" PerfilUsuario : perfil
+  Departamento "1" --> "*" PerfilUsuario : miembros
+  Departamento "1" --> "*" SubArea
+  Departamento "1" --> "*" DelegacionJefatura
+  User "1" --> "*" DelegacionJefatura : jefe
+  User "1" --> "*" DelegacionJefatura : delegado
+  User "0..1" --> "*" DelegacionJefatura : creada_por
+  User "0..1" --> "*" DelegacionJefatura : revocada_por
+  User "1" --> "*" Notificacion
+  Departamento "0..1" --> "*" Notificacion : origen
+  Documento "0..1" --> "*" Notificacion : documento
+
+  note for PerfilUsuario "Roles: administrador, jefe_departamento, coordinador, trabajador.<br/>El grupo LDAP se sincroniza con Active Directory."
+  note for DelegacionJefatura "Condiciones derivadas: Vigente, Programada, Vencida, Revocada.<br/>No hay un ESTADO_CHOICES persistido."

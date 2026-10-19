@@ -1,0 +1,63 @@
+%% POLIDOC — secuencia de descarga controlada (ISO 9001 7.5.3 / 27001).
+%% Descargas directas: público, propietario de interno, jefe en interno,
+%% admin y distribución vigente. El resto requiere solicitud.
+sequenceDiagram
+  autonumber
+  actor U as Usuario
+  participant SA as Servicio de descargas
+  participant JD as Jefe del depto dueño
+  participant GG as Jefe de GG
+  participant DOC as Documento
+  participant DIST as DistribucionDocumento
+  participant MONGO as Auditoría (MongoDB)
+  participant ADM as Administradores
+
+  alt Descarga directa
+    SA->>SA: puede_descargar(usuario, documento)
+    SA->>DOC: servir archivo
+    SA->>MONGO: registrar_descarga(...)
+    MONGO-->>SA: ok / fail-closed
+  else Solicitud de descarga
+    U->>SA: Solicitar descarga (motivo obligatorio)
+    SA->>SA: Determinar jefe del depto DUEÑO
+    alt interno / confidencial
+      SA->>JD: Crear paso jefe (final)
+    else restringido
+      SA->>JD: Crear paso jefe (no final)
+      SA->>GG: Crear paso autorizador (esperando)
+    end
+
+    opt Sin jefe del departamento
+      SA->>ADM: Notificar "solicitud en espera"
+      Note over SA: aprobador=None, estado=esperando<br/>sin fallback a administrador
+    end
+
+    JD->>SA: Aprobar evaluación
+    opt restringido
+      SA->>GG: Activar autorizador (pendiente)
+      GG->>SA: Aprobar autorización final
+    end
+
+    SA->>DOC: Fijar version_aprobada
+    SA->>SA: fecha_expiracion = hoy + 30 días
+    SA->>DIST: Crear distribución (método=sistema)
+    SA->>MONGO: registrar_distribucion(...)
+    SA-->>U: Notificación "Descarga aprobada"
+
+    opt Rechazo
+      SA->>SA: Cancelar pasos hermanos
+      SA->>MONGO: registrar rechazo
+      SA-->>U: Notificación "Descarga rechazada"
+    end
+  end
+
+  U->>SA: Descargar archivo autorizado
+  SA->>SA: validar vigencia + versión actual
+  SA->>MONGO: registrar_descarga(...)
+  alt Mongo disponible
+    MONGO-->>SA: log confirmado
+    SA-->>U: Entrega del archivo
+  else Mongo no disponible y AUDIT_FAIL_CLOSED=True
+    SA->>SA: buffer local (AUDIT_BUFFER_DIR)
+    SA-->>U: Bloquear entrega (fail-closed)
+  end

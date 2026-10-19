@@ -1,0 +1,101 @@
+%% POLIDOC — motor dinámico SGC (formularios y cambios).
+%% Fuente: apps/documentos/models.py (Formato, SeccionFormato, CampoFormato,
+%% FormatoPublicacion, SolicitudCambio, PlanillaCambios, DocumentoAsociadoPlanilla).
+classDiagram
+  class Formato {
+    +string codigo
+    +string nombre
+    +string version
+    +string edicion
+    +date fecha_vigencia
+    +string procedimiento
+    +string instructivo_html
+    +string plantilla_xlsx
+    +string plantilla_pdf
+    +bool aplica_creacion
+    +bool aplica_modificacion
+    +bool aplica_eliminacion
+    +bool activo
+  }
+
+  class SeccionFormato {
+    +string titulo
+    +string descripcion
+    +int orden
+  }
+
+  class CampoFormato {
+    +string clave
+    +string etiqueta
+    +string tipo
+    +string origen
+    +string ancho
+    +bool requerido
+    +int orden
+  }
+
+  class FormatoPublicacion {
+    +string tipo
+    +string version_anterior
+    +string version_nueva
+    +string edicion_anterior
+    +string edicion_nueva
+    +string observaciones
+    +datetime fecha
+  }
+
+  class SolicitudCambio {
+    +uuid uuid
+    +string codigo
+    +string operacion
+    +json respuestas
+    +string origen_cambio
+    +string num_solicitud
+    +string formato_version
+    +string formato_edicion
+    +string estado
+    +string archivo_adjunto
+  }
+
+  class PlanillaCambios {
+    +uuid uuid
+    +string codigo
+    +string tipo_cambio
+    +string justificacion
+    +bool afecta_todos
+    +json participantes_propuestos
+    +string version_destino
+    +string estado
+    +string version_actual_snapshot
+    +string nombre_propuesto
+    +string clasificacion_propuesta
+    +json referencias_pendientes
+    +string archivo_propuesto
+    +string archivo_propuesto_pdf
+  }
+
+  class DocumentoAsociadoPlanilla
+
+  class User
+  class Documento
+  class Departamento
+
+  Formato "1" --> "*" SeccionFormato
+  SeccionFormato "1" --> "*" CampoFormato
+  Formato "1" --> "*" FormatoPublicacion
+  Formato "1" --> "*" SolicitudCambio
+  User "1" --> "*" SolicitudCambio : solicitante
+  Departamento "1" --> "*" SolicitudCambio : departamento
+  Documento "0..1" --> "*" SolicitudCambio : documento
+  SolicitudCambio "1" --> "*" PlanillaCambios : solicitud_cambio
+  Documento "0..1" --> "*" PlanillaCambios : documento
+  User "1" --> "*" PlanillaCambios : responsable
+  PlanillaCambios "1" --> "*" DocumentoAsociadoPlanilla
+  Documento "1" --> "*" DocumentoAsociadoPlanilla
+  PlanillaCambios "*" -- "*" Departamento : afectados
+  PlanillaCambios "*" -- "*" Departamento : responsables_propuestos
+
+  note for CampoFormato "Tipos: texto, textarea, fecha, select, checkbox_grupo, tabla.<br/>unique_together: (seccion, clave)."
+  note for DocumentoAsociadoPlanilla "unique_together: (planilla, documento)."
+  note for SolicitudCambio "Estados: borrador, en_revision, aprobado, rechazado."
+  note for PlanillaCambios "Estados: borrador, en_revision, aprobado, rechazado."

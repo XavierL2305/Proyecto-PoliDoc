@@ -1,0 +1,82 @@
+%% POLIDOC — clases del núcleo documental ISO.
+%% Fuente: apps/documentos/models.py (Periodo, TipoDocumento, Documento,
+%% VersionDocumento, ReferenciaDocumento, RenovacionVencimiento).
+classDiagram
+  class Periodo {
+    +int id
+    +string nombre
+    +int meses
+    +bool activo
+    +int orden
+  }
+
+  class TipoDocumento {
+    +string key
+    +string codigo
+    +string nombre
+    +bool requiere_vigencia
+    +bool solo_jefes
+    +bool sin_prefijo_depto
+    +bool usa_departamentos_afectados
+    +bool usa_responsables
+    +bool usa_participantes
+    +bool usa_documentos_relacionados
+  }
+
+  class Documento {
+    +uuid uuid
+    +string codigo
+    +string nombre
+    +string descripcion
+    +string estado
+    +string version_actual
+    +string clasificacion
+    +bool afecta_todos
+    +date fecha_vencimiento
+    +date fecha_retencion
+    +date fecha_destruccion
+    +bool aviso_vencimiento_enviado
+    +string hash_integridad
+    +json participantes
+  }
+
+  class VersionDocumento {
+    +string numero_version
+    +string archivo
+    +string cambios
+    +bool activa
+    +datetime fecha_creacion
+  }
+
+  class ReferenciaDocumento {
+    +string codigo_destino
+    +datetime fecha_creacion
+    +bool esta_resuelta
+  }
+
+  class RenovacionVencimiento {
+    +date fecha_anterior
+    +date fecha_nueva
+    +datetime fecha_renovacion
+    +string observacion
+  }
+
+  class Departamento
+  class User
+
+  Periodo "1" --> "*" TipoDocumento : periodo_vigencia
+  Periodo "1" --> "*" TipoDocumento : periodo_retencion
+  Periodo "1" --> "*" Documento : periodo_retencion
+  TipoDocumento "1" --> "*" Documento : tipo (FK a key)
+  User "1" --> "*" Documento : propietario
+  Departamento "1" --> "*" Documento : departamento
+  Documento "1" --> "*" VersionDocumento
+  Documento "1" --> "*" ReferenciaDocumento : salientes
+  ReferenciaDocumento "*" --> "0..1" Documento : destino
+  Documento "1" --> "*" RenovacionVencimiento
+  Documento "*" -- "*" Departamento : afectados
+  Documento "*" -- "*" Departamento : responsables
+
+  note for Documento "Estados persistidos: borrador, en_revision, activo, obsoleto.<br/>Clasificación: publico, interno, confidencial, restringido.<br/>'Vencido' es una condición derivada de fecha_vencimiento."
+  note for VersionDocumento "unique_together: (documento, numero_version)"
+  note for ReferenciaDocumento "unique_together: (documento, codigo_destino).<br/>No es M2M: entidad de asociación con destino nullable."

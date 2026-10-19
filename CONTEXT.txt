@@ -1562,6 +1562,33 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
        - Matriz estática: funcionalidades por rol (admin, jefe, coordinador, trabajador)
        - Categorías: Documentos, Aprobaciones, Distribución, Vencimiento, Configuración
 
+  22.7 DELEGACIÓN DE JEFATURA (vacaciones / permisos):
+       - Página: /documentos/delegaciones/ (jefe, admin y delegado vigente).
+       - Modelo `DelegacionJefatura`: `jefe` (delegante), `delegado`,
+         `departamento`, `fecha_inicio`/`fecha_fin`, `activa`, `motivo`,
+         `creada_por`, `revocada_por`, `fecha_revocacion`, `motivo_revocacion`.
+       - Alta: solo el jefe (su propio depto) y el admin (cualquier depto con
+         jefe). El delegado debe ser coordinador/trabajador activo del MISMO
+         departamento y distinto del jefe. No se solapan vigencias del mismo
+         delegado/departamento.
+       - Vigencia: el delegado ejerce jefatura solo si `activa=True` y
+         `fecha_inicio <= hoy <= fecha_fin` (`jefatura.es_delegado_vigente`,
+         `es_jefe_efectivo`, `departamentos_jefados`, `aprobadores_que_repr`).
+         La configuración global (tipos/períodos/roles/auditoría) NO se delega.
+       - Selector de departamento del admin: navega por GET
+         (`?departamento=<id>`) para recalcular los candidatos del depto; NO
+         envía el POST del formulario (evita crear una delegación incompleta al
+         elegir departamento).
+       - Revocación: POST `/documentos/delegaciones/<id>/revocar/`. Pueden
+         revocar el admin, el jefe delegante o el propio delegado (renuncia).
+         Efecto inmediato (`activa=False`), notifica a la otra parte, audita
+         ISO como 'revocacion' y conserva la fila en el historial (no se
+         borra). Un GET no revoca.
+       - Motivo OBLIGATORIO si se revoca ANTES de `fecha_fin`, lo haga quien lo
+         haga (jefe, delegado o admin), con mínimo 10 caracteres. Si la
+         vigencia ya terminó, el motivo es opcional. El motivo se muestra en el
+         historial.
+
 23. ESTADO DE IMPLEMENTACIÓN Y GUÍA PARA AGENTES IA
 -------------------------------------------------------------------
   Esta sección resume el estado real del código para que una nueva sesión
@@ -1794,6 +1821,16 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
       `documentos/_doc_card_departamento.html` (reutilizado por ambos
       bloques). El ítem del sidebar se muestra a ambos.
     - Seeds: poblar_formato_sgc_for_001 y poblar_formato_sgc_for_005
+    - Delegación de jefatura (vacaciones/permisos): el delegado ejerce los
+      poderes operativos del jefe dentro de la vigencia; alta, renuncia y
+      revocación con motivo obligatorio si es anticipada (§22.7).
+    - Diagramas UML en `docs/uml/` (fuente Mermaid + `Makefile` para SVG).
+      Ver `docs/uml/README.md` para índice, convenciones y render.
+      PDF único compilado: `docs/uml/out/POLIDOC-UML-001_v1.0.pdf` (portada con
+      código + clasificación CONFIDENCIAL, índice y una página por diagrama;
+      `make pdf` lo regenera; `make checklist` audita sincronización). Aislados
+      por decisión de producto: sin enlaces desde el manual ni la UI; detalles
+      en `docs/uml/checklist-sync.md`.
     - Email personal editable en /perfil/ (guarda en `User.email`). El backend
       LDAP solo sobrescribe el email si AD trae `mail`, así no borra el dato
       personal cuando AD no lo provee.

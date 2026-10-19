@@ -1,0 +1,74 @@
+%% POLIDOC — acceso, distribución y descargas controladas.
+%% Fuente: apps/documentos/models.py, services/descargas.py, permissions.py.
+classDiagram
+  class AsignacionDocumento {
+    +bool puede_leer
+    +bool puede_editar
+    +bool puede_eliminar
+    +datetime fecha_asignacion
+    +bool activa
+  }
+
+  class SolicitudDescarga {
+    +string motivo
+    +string estado
+    +datetime fecha_solicitud
+    +datetime fecha_resolucion
+    +string observaciones
+    +string version_aprobada
+    +datetime fecha_expiracion
+  }
+
+  class AprobacionDescarga {
+    +string rol_aprobador
+    +bool es_final
+    +string estado
+    +datetime fecha_aprobacion
+    +datetime fecha_activacion
+    +datetime fecha_escalado
+  }
+
+  class DistribucionDocumento {
+    +string metodo
+    +datetime fecha_distribucion
+    +string observaciones
+    +bool enviado
+    +string error
+    +bool revocado
+    +datetime fecha_revocacion
+    +string motivo_revocacion
+    +bool email_revocacion_enviado
+    +string error_revocacion
+  }
+
+  class SolicitudAccesoDocumento {
+    +string estado
+    +string motivo
+    +datetime fecha_solicitud
+    +datetime fecha_respuesta
+    +string observaciones
+  }
+
+  class Documento
+  class User
+  class Departamento
+
+  Documento "1" --> "*" AsignacionDocumento
+  User "1" --> "*" AsignacionDocumento : coordinador
+  User "1" --> "*" AsignacionDocumento : jefe_asignador
+  Documento "1" --> "*" SolicitudDescarga
+  User "1" --> "*" SolicitudDescarga : solicitado_por
+  SolicitudDescarga "1" --> "*" AprobacionDescarga
+  Documento "1" --> "*" DistribucionDocumento
+  User "1" --> "*" DistribucionDocumento : usuario
+  User "1" --> "*" DistribucionDocumento : distribuido_por
+  User "0..1" --> "*" DistribucionDocumento : revocado_por
+  Documento "1" --> "*" SolicitudAccesoDocumento
+  User "1" --> "*" SolicitudAccesoDocumento : solicitante
+  User "1" --> "*" SolicitudAccesoDocumento : jefe_destino
+  Departamento "1" --> "*" SolicitudAccesoDocumento : destino
+
+  note for AsignacionDocumento "unique_together: (documento, coordinador)."
+  note for SolicitudDescarga "Estados: pendiente, aprobada, rechazada.<br/>Vigencia de la autorización: 30 días (DESCARGA_VIGENCIA_DIAS)."
+  note for AprobacionDescarga "Estados: pendiente, esperando, aprobada, rechazada, cancelada.<br/>restringido: jefe del depto dueño -> jefe de GG (secuencial)."
+  note for SolicitudAccesoDocumento "unique_together: (documento, solicitante).<br/>Solicitan jefes, administradores y delegados vigentes."

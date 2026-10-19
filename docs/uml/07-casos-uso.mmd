@@ -1,0 +1,88 @@
+%% POLIDOC — casos de uso por actor (adaptación UML a flowchart de Mermaid).
+%% Los actores de sistema representan automatismos, no usuarios humanos.
+flowchart LR
+  T["Trabajador"]
+  C["Coordinador"]
+  J["Jefe de Departamento"]
+  D["Delegado de Jefatura"]
+  GG["Jefe de Gerencia General"]
+  A["Administrador"]
+  CB["Celery Beat"]
+  IA["Motor IA (Gemini)"]
+
+  subgraph UCDOC["Documentos"]
+    U1(["Crear / editar documento"])
+    U2(["Enviar a aprobación"])
+    U3(["Aprobar / rechazar documento"])
+    U4(["Consultar vigencia"])
+  end
+
+  subgraph UCDL["Descargas y distribución"]
+    U5(["Solicitar descarga"])
+    U6(["Aprobar descarga"])
+    U7(["Autorizar descarga restringida"])
+    U8(["Descargar documento"])
+    U9(["Revocar distribución"])
+  end
+
+  subgraph UCCTRL["Control y administración"]
+    U10(["Asignar documento a coordinador"])
+    U11(["Transferir propiedad"])
+    U12(["Gestionar usuarios y catálogos"])
+    U13(["Gestionar delegación de jefatura"])
+    U14(["Exportar reportes de auditoría"])
+  end
+
+  subgraph UCAUTO["Automatismos"]
+    U15(["Escalar aprobaciones vencidas"])
+    U16(["Marcar obsoletos por vencimiento"])
+    U17(["Generar resumen IA"])
+    U18(["Purgar reportes de auditoría"])
+    U19(["Reprocesar buffer de auditoría"])
+  end
+
+  T --> U1
+  T --> U4
+  T --> U5
+  T --> U8
+
+  C --> U1
+  C --> U4
+  C --> U8
+
+  J --> U2
+  J --> U3
+  J --> U4
+  J --> U6
+  J --> U10
+  J --> U11
+  J --> U13
+
+  D --> U1
+  D --> U3
+  D --> U4
+  D --> U6
+  D --> U8
+  D --> U13
+
+  GG --> U3
+  GG --> U7
+
+  A --> U9
+  A --> U10
+  A --> U11
+  A --> U12
+  A --> U13
+  A --> U14
+
+  CB --> U15
+  CB --> U16
+  CB --> U18
+  CB --> U19
+
+  IA --> U17
+
+  classDef actor fill:#E0F2FE,stroke:#005A9C,stroke-width:1.5px,color:#0F172A
+  classDef uc fill:#F8FAFC,stroke:#64748B,color:#0F172A
+  class T,C,J,D,GG,A,CB,IA actor
+  class U1,U2,U3,U4,U5,U6,U7,U8,U9,U10,U11,U12,U13,U14,U15,U16,U17,U18,U19 uc

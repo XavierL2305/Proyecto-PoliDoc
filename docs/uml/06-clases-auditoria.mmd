@@ -1,0 +1,67 @@
+%% POLIDOC — auditoría e infraestructura de soporte.
+%% Fuente: apps/auditoria/models.py, apps/auditoria/storage.py,
+%% apps/documentos/models.py (ResumenIAUso, ConversionPDFDiagnostico).
+classDiagram
+  class ReporteAuditoria {
+    +uuid uuid
+    +string codigo
+    +string archivo
+    +string tipo_reporte
+    +date fecha_inicio
+    +date fecha_fin
+    +json filtros
+    +string formato
+    +string orientacion
+    +int total_registros
+    +int tamano_bytes
+    +string hash_sha256
+    +datetime fecha_generacion
+  }
+
+  class ReporteAuditoriaStorage {
+    +string location
+    +guardar()
+  }
+
+  class ResumenIAUso {
+    +date fecha
+    +int contador
+  }
+
+  class ConversionPDFDiagnostico {
+    +string origen
+    +string pdf
+    +json defectos
+    +string estado
+    +int intentos
+    +datetime creado
+    +datetime actualizado
+  }
+
+  class AuditLogMongo {
+    +string usuario
+    +string accion_tipo
+    +string accion_categoria
+    +string recurso_tipo
+    +string recurso_id
+    +string estado_anterior
+    +string estado_posterior
+    +string resultado
+    +string ip_address
+    +string correlation_id
+    +string prev_hash
+    +string hash
+    +datetime timestamp
+  }
+
+  class User
+  class Documento
+
+  User "0..1" --> "*" ReporteAuditoria : generado_por
+  ReporteAuditoria --> ReporteAuditoriaStorage : usa
+  User "1" --> "*" ResumenIAUso
+  Documento "0..1" --> "*" ConversionPDFDiagnostico : ruta de origen
+
+  note for ReporteAuditoriaStorage "FileSystemStorage privado; no es una entidad de dominio."
+  note for AuditLogMongo "Documento NoSQL en MongoDB, no una tabla Django.<br/>Encadenado con prev_hash + HMAC-SHA256.<br/>Buffer local y tarea reprocesar_logs_buffer si Mongo no responde."
+  note for ConversionPDFDiagnostico "Estados: ok, pendiente, reparado, fallido."

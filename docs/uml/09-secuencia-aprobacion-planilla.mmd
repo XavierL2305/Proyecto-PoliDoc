@@ -1,0 +1,46 @@
+%% POLIDOC — secuencia de aprobación de planilla de cambios (SGC-FOR-005).
+%% Misma regla de cadena que documentos: 1 paso si el responsable ejerce
+%% jefatura; 2 pasos si no. El paso final aplica el cambio al documento.
+sequenceDiagram
+  autonumber
+  actor R as Responsable
+  participant SA as Servicio de aprobación
+  participant E as Evaluador
+  participant GG as Autorizador (GG)
+  participant P as PlanillaCambios
+  participant DOC as Documento
+  participant CEL as Celery
+  participant AUD as Auditoría
+
+  R->>P: Crear planilla (borrador)
+  R->>P: Enviar a revisión (en_revision)
+  P->>SA: Crear cadena de aprobación
+  SA->>SA: _es_jefe(responsable)
+
+  alt Ejerce jefatura
+    SA->>GG: Crear paso único (autorizador, final)
+  else No ejerce jefatura
+    SA->>E: Crear paso evaluador (no final)
+    SA->>GG: Crear paso autorizador (esperando)
+  end
+
+  alt Dos pasos
+    E->>SA: Aprobar evaluación
+    SA->>GG: Activar autorizador
+  end
+
+  GG->>SA: Aprobar autorización final
+  SA->>P: estado=aprobado
+  SA->>DOC: aplicar_planilla_al_documento()
+  SA->>DOC: Documento.aplicar_cambio()<br/>(versión/revisión)
+  SA->>CEL: Generar PDF de la planilla
+  CEL-->>SA: PDF listo (o fallback síncrono)
+  SA->>AUD: registrar_log_iso(aprobación)
+  SA-->>R: Notificación de aprobación
+
+  opt Rechazo
+    SA->>P: estado=rechazado
+    SA->>DOC: estado=activo
+    SA->>AUD: registrar_log_iso(rechazo)
+    SA-->>R: Notificación de rechazo
+  end

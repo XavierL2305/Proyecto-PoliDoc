@@ -1,0 +1,58 @@
+%% POLIDOC — despliegue Docker (docker-compose.yml).
+%% Servicios reales: rabbitmq, redis, mongodb, mongo_express, web,
+%% celery_worker, celery_beat, mailpit.
+flowchart TB
+  USER["Usuario / navegador"]
+
+  subgraph HOST["Host con Docker Engine"]
+    subgraph NET["Red interna del compose"]
+      WEB["web:8001<br/>Django + WhiteNoise"]
+      WORKER["celery_worker"]
+      BEAT["celery_beat"]
+      RABBIT[("rabbitmq:5672")]
+      REDIS[("redis:6379")]
+      MONGO[("mongodb:27017")]
+      MONGOEXP["mongo_express:8081"]
+      MAIL["mailpit<br/>SMTP 1025 / UI 8025"]
+    end
+
+    subgraph VOLS["Volúmenes persistentes"]
+      V1[("rabbitmq_data")]
+      V2[("redis_data")]
+      V3[("mongodb_data")]
+      V4[("data<br/>SQLite / media / buffer")]
+    end
+
+    LO["LibreOffice<br/>(en web y worker)"]
+  end
+
+  LDAP["AD / LDAP"]
+  GEM["Google AI Studio<br/>Gemini"]
+
+  USER -->|HTTP| WEB
+  WEB --> RABBIT
+  WEB --> REDIS
+  WEB --> MONGO
+  WEB --> MAIL
+  WEB --> LDAP
+  WEB --> LO
+  WEB --> V4
+
+  RABBIT --> WORKER
+  RABBIT --> BEAT
+  WORKER --> REDIS
+  WORKER --> MONGO
+  WORKER --> MAIL
+  WORKER --> GEM
+  WORKER --> LO
+  WORKER --> V4
+  BEAT --> RABBIT
+
+  RABBIT --- V1
+  REDIS --- V2
+  MONGO --- V3
+  MONGOEXP -. administra .-> MONGO
+
+  NOTE["PostgreSQL no está en el compose.<br/>Es opcional vía DB_ENGINE."]
+  classDef note fill:#FEF9C3,stroke:#CA8A04,color:#422006
+  class NOTE note

@@ -51,7 +51,9 @@
   aprobar, transferir, asignar, distribuir, establecer vigencia y ver documentos
   confidenciales o restringidos de ese departamento.
   <strong>La configuración global del sistema no se delega</strong> y la
-  delegación <strong>expira sola</strong> al terminar la vigencia.
+  delegación <strong>expira sola</strong> al terminar la vigencia. Si se revoca
+  antes de la fecha de fin (incluida la renuncia del delegado), es
+  <strong>obligatorio indicar el motivo</strong>.
 </p>
 
 {% if puede_crear %}
@@ -65,7 +67,8 @@
         <div class="form-group" style="margin-bottom:0;">
           <label class="form-label">Departamento *</label>
           {% if departamentos %}
-          <select name="departamento" class="form-input" onchange="this.form.submit();" required>
+          <select name="departamento" class="form-input" required
+                  onchange="window.location.href='{% url 'documentos:delegaciones_jefatura' %}?departamento=' + encodeURIComponent(this.value);">
             {% for dep in departamentos %}
             <option value="{{ dep.id }}" {% if departamento_activo and dep.id == departamento_activo.id %}selected{% endif %}>{{ dep.nombre }} ({{ dep.codigo }})</option>
             {% endfor %}
@@ -152,6 +155,7 @@
         {% if d.revocada_por %}
         &nbsp;·&nbsp; revocada por {{ d.revocada_por.get_full_name|default:d.revocada_por.username }}
         {% if d.fecha_revocacion %} el {{ d.fecha_revocacion|date:"d/m/Y H:i" }}{% endif %}
+        {% if d.motivo_revocacion %}&nbsp;·&nbsp; motivo: {{ d.motivo_revocacion|truncatechars:70 }}{% endif %}
         {% endif %}
       </div>
     </div>
@@ -169,7 +173,9 @@
       {% csrf_token %}
       <div class="dl-revocar">
         <input type="text" class="form-input" name="motivo_revocacion"
-          placeholder="Motivo de revocación (opcional)" maxlength="300" style="min-width:200px;">
+          placeholder="{% if fila.revocacion_anticipada %}Motivo de la revocación anticipada (obligatorio){% else %}Motivo de revocación (opcional){% endif %}"
+          {% if fila.revocacion_anticipada %}required minlength="10"{% endif %}
+          maxlength="300" style="min-width:200px;">
         <button type="submit" class="btn btn--danger btn--sm"
           onclick="return confirm('¿Revocar ahora esta delegación? El delegado dejará de ejercer la jefatura.');">
           <i class="fa-solid fa-user-slash"></i> Revocar

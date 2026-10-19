@@ -1,0 +1,44 @@
+%% POLIDOC — vista general de paquetes y dependencias.
+%% Fuente: apps/documentos/models.py, services/*, settings.py.
+flowchart TB
+  subgraph DOM["Núcleo documental"]
+    NUC["Documento · TipoDocumento · Periodo<br/>VersionDocumento · ReferenciaDocumento<br/>RenovacionVencimiento"]
+  end
+  subgraph ORG["Organización y usuarios"]
+    ORGU["User · PerfilUsuario · Departamento<br/>SubArea · DelegacionJefatura · Notificacion"]
+  end
+  subgraph SGC["Motor dinámico SGC"]
+    SGCM["Formato · SeccionFormato · CampoFormato<br/>SolicitudCambio · PlanillaCambios<br/>DocumentoAsociadoPlanilla"]
+  end
+  subgraph APRO["Aprobaciones"]
+    APRM["SolicitudAprobacionDocumento<br/>AprobacionPlanilla · AprobacionDescarga"]
+  end
+  subgraph ACC["Acceso y descargas"]
+    ACCM["AsignacionDocumento · SolicitudDescarga<br/>DistribucionDocumento<br/>SolicitudAccesoDocumento"]
+  end
+  subgraph AUD["Auditoría e infraestructura"]
+    AUDM["ReporteAuditoria · ResumenIAUso<br/>ConversionPDFDiagnostico"]
+  end
+
+  MONGO[("MongoDB<br/>AuditLog")]
+  ASYNC["Celery + RabbitMQ + Redis"]
+  LDAP["AD / LDAP"]
+  LO["LibreOffice"]
+  GEM["Gemini"]
+
+  ORG --> DOM
+  SGC --> DOM
+  SGC --> ORG
+  APRO --> DOM
+  APRO --> SGC
+  APRO --> ORG
+  ACC --> DOM
+  ACC --> ORG
+  ACC --> APRO
+  AUD --> ORG
+  AUD -. auditoría .-> MONGO
+  ASYNC -. tareas .-> APRO
+  ASYNC -. tareas .-> AUD
+  ORG -. identidad .-> LDAP
+  SGC -. PDF .-> LO
+  AUD -. resúmenes .-> GEM

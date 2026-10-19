@@ -1,0 +1,56 @@
+%% POLIDOC — cadenas de aprobación.
+%% Fuente: apps/documentos/models.py (SolicitudAprobacionDocumento,
+%% AprobacionPlanilla, AprobacionDescarga) y views.py (creación de cadenas).
+classDiagram
+  class SolicitudAprobacionDocumento {
+    +string accion_solicitud
+    +string rol_aprobador
+    +bool es_final
+    +string estado
+    +string observaciones
+    +string motivo_rechazo
+    +datetime fecha_solicitud
+    +datetime fecha_respuesta
+    +date fecha_propuesta
+    +datetime fecha_escalado
+  }
+
+  class AprobacionPlanilla {
+    +string rol_aprobador
+    +bool es_final
+    +string estado
+    +string observaciones
+    +datetime fecha_aprobacion
+    +datetime fecha_activacion
+    +datetime fecha_escalado
+  }
+
+  class AprobacionDescarga {
+    +string rol_aprobador
+    +bool es_final
+    +string estado
+    +string observaciones
+    +datetime fecha_aprobacion
+    +datetime fecha_activacion
+    +datetime fecha_escalado
+  }
+
+  class Documento
+  class PlanillaCambios
+  class SolicitudDescarga
+  class User
+  class Departamento
+
+  Documento "1" --> "*" SolicitudAprobacionDocumento
+  User "1" --> "*" SolicitudAprobacionDocumento : solicitante
+  User "1" --> "*" SolicitudAprobacionDocumento : propietario
+  User "0..1" --> "*" SolicitudAprobacionDocumento : aprobador
+  Departamento "1" --> "*" SolicitudAprobacionDocumento : origen
+  PlanillaCambios "1" --> "*" AprobacionPlanilla
+  User "0..1" --> "*" AprobacionPlanilla : aprobador
+  SolicitudDescarga "1" --> "*" AprobacionDescarga
+  User "0..1" --> "*" AprobacionDescarga : aprobador
+
+  note for SolicitudAprobacionDocumento "Estados: pendiente, esperando, aprobada, rechazada, cancelada.<br/>Acciones: creacion, edicion, inhabilitar, reactivar, renovar, version, eliminar_version."
+  note for AprobacionPlanilla "unique_together: (planilla, aprobador, rol_aprobador).<br/>Estados: pendiente, esperando, aprobada, rechazada, cancelada."
+  note for AprobacionDescarga "aprobador nullable. unique_together: (solicitud, aprobador, rol_aprobador).<br/>Estados: pendiente, esperando, aprobada, rechazada, cancelada."

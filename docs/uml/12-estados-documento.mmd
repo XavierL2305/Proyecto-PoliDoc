@@ -1,0 +1,27 @@
+%% POLIDOC — estados persistidos de Documento (4 valores de ESTADO_CHOICES).
+%% "Vencido" no es un estado: es una condición derivada de fecha_vencimiento.
+stateDiagram-v2
+  [*] --> borrador
+
+  borrador --> en_revision: enviar a aprobación
+  en_revision --> activo: aprobación final
+  en_revision --> borrador: rechazo (creación/edición/versión)
+
+  activo --> obsoleto: vencimiento (Celery) / inhabilitar
+  obsoleto --> activo: reactivar (si no vencido)
+
+  activo --> activo: nueva versión aprobada (sin cambio de estado)
+  obsoleto --> [*]: destrucción (fecha_destruccion)
+
+  note right of activo
+    Condiciones derivadas:
+    vencido = fecha_vencimiento <= hoy
+    vence_pronto = hoy < fecha_vencimiento <= hoy + 7 días
+  end note
+
+  note right of obsoleto
+    fecha_retencion y fecha_destruccion se fijan al vencer
+    si el documento tiene periodo_retencion.
+    verificar_destruccion es un management command
+    (notifica; no es una transición automática de Celery).
+  end note
