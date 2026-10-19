@@ -352,10 +352,20 @@
     <span class="accion-badge accion-badge--descarga">
       <i class="fa-solid fa-download"></i> Descarga
     </span>
+    <span class="accion-badge" style="background: {% if aprobacion.rol_aprobador == 'jefe' %}#FEF3C7;color:#92400E{% else %}#E0E7FF;color:#3730A3{% endif %};">
+      {% if aprobacion.rol_aprobador == 'jefe' %}
+        <i class="fa-solid fa-magnifying-glass"></i> Evaluación
+      {% else %}
+        <i class="fa-solid fa-stamp"></i> Autorización
+      {% endif %}
+    </span>
   </div>
   <div class="solicitud-meta">
     <span><i class="fa-solid fa-user"></i> {{ aprobacion.solicitud.solicitado_por.get_full_name|default:aprobacion.solicitud.solicitado_por.username }}</span>
     <span><i class="fa-solid fa-calendar"></i> {{ aprobacion.solicitud.fecha_solicitud|date:"d/m/Y H:i" }}</span>
+    {% if aprobacion.fecha_activacion %}
+    <span><i class="fa-solid fa-user-clock"></i> Activado {{ aprobacion.fecha_activacion|date:"d/m/Y H:i" }}</span>
+    {% endif %}
     {% if aprobacion.solicitud.motivo %}
     <span><i class="fa-solid fa-comment"></i> {{ aprobacion.solicitud.motivo|truncatewords:10 }}</span>
     {% endif %}
@@ -365,6 +375,10 @@
     <a href="{% url 'documentos:aprobar_descarga' solicitud_id=aprobacion.solicitud.id %}" class="btn btn--success btn--sm">
       <i class="fa-solid fa-check"></i> Aprobar / Rechazar
     </a>
+  </div>
+  {% elif aprobacion.estado == 'esperando' %}
+  <div class="solicitud-actions">
+    <span class="badge"><i class="fa-solid fa-hourglass-half"></i> En espera de aprobación</span>
   </div>
   {% elif aprobacion.estado == 'aprobada' %}
   <div class="solicitud-actions">

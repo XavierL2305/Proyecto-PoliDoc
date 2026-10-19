@@ -150,7 +150,8 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
        y además puede ver TODOS los departamentos en la vista "Departamento".
        La columna "Descargar documento depto" contempla la clasificación: el
        jefe descarga directo solo en `interno`; `confidencial`/`restringido`
-       requieren solicitud aprobada (`restringido`, doble control). Ver §10.3.
+       requieren solicitud aprobada (`restringido`, doble control secuencial
+       jefe del depto dueño → jefe de Gerencia General). Ver §10.3.
 
 5. FLUJO DE FORMULARIOS DESCARGABLES
 -------------------------------------------------------------------
@@ -172,7 +173,8 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
         resto del departamento solicita y el jefe aprueba.
       - `confidencial`: solicitud aprobada por el jefe del departamento (admin
         directo).
-      - `restringido`: solicitud con **doble control** (jefe + admin).
+      - `restringido`: solicitud con **doble control secuencial** (jefe del
+        departamento dueño → jefe de Gerencia General).
       - `motivo` OBLIGATORIO.
       - Botón "Solicitar" en el catálogo; notifica al aprobador.
 
@@ -201,28 +203,37 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
         delegan; no hay segunda implementación.
       - `resolver_aprobacion` corre con `transaction.atomic()` +
         `select_for_update`: el doble control concurrente no puede
-        resolver dos veces ni dejar la vigencia sin fijar.
+        resolver dos veces ni dejar la vigencia sin fijar. Acepta al
+        aprobador natural **o a su delegado de jefatura vigente**
+        (`jefatura.aprobadores_que_repr`).
       - Idempotencia: una solicitud ya resuelta devuelve `ya_resuelta`
         (no se re-finaliza, no se duplica la `DistribucionDocumento` ni se
         reinicia `fecha_expiracion`).
-      - Estados de `AprobacionDescarga`: pendiente / aprobada / rechazada
-        / **cancelada** (las hermanas de una solicitud rechazada).
+      - Estados de `AprobacionDescarga`: pendiente / **esperando** / aprobada
+        / rechazada / **cancelada** (las hermanas de una solicitud rechazada).
+        El paso nace en `esperando` (`aprobador=None`) cuando falta el jefe
+        que debe resolverlo; **no hay fallback a administrador**.
 
   6.1 SOLICITUD:
       - Usuario solicita descargar un documento
       - El sistema identifica al Jefe del departamento PROPIETARIO del documento
+        (primer aprobador; no aplica la regla "solicitante jefe → solo GG")
       - Se crea SolicitudDescarga con estado: "pendiente"
+      - Si el departamento no tiene jefe, el paso queda `esperando`
+        (`aprobador=None`) y se avisa a los administradores para que asignen
+        un jefe; la solicitud NO se bloquea ni cae en un admin.
       - En GET el formulario no se reofrece si ya hay una solicitud en
         trámite o una autorización vigente: se redirige a la ficha.
 
   6.2 APROBACIÓN:
-      - `interno`/`confidencial`: 1 aprobación (jefe del depto propietario; si
-        no hay jefe, un admin **activo**).
-      - `restringido`: **doble control** (jefe + admin); la solicitud queda
-        "aprobada" solo cuando todas las aprobaciones están aprobadas.
-      - Al aprobar (paso final): fija `version_aprobada` y `fecha_expiracion`
-        (30 días) y crea la `DistribucionDocumento`; el solicitante ve
-        "Descargar".
+      - `interno`/`confidencial`: **1 paso** — jefe del depto dueño (final).
+      - `restringido`: **2 pasos secuenciales** — jefe del depto dueño
+        (evaluación, no final) → jefe de Gerencia General (autorización,
+        final). El paso del GG nace en `esperando` y se activa al aprobar el
+        jefe; al quedar aprobado el paso final se fija `version_aprobada` y
+        `fecha_expiracion` (30 días) y se crea la `DistribucionDocumento`.
+      - Sin jefe de departamento (o sin jefe de GG en el paso final): el paso
+        queda `esperando` y se avisa a los administradores.
       - Rechazo → cierra la solicitud, cancela las aprobaciones hermanas,
         notifica al solicitante y no crea distribución.
       - El aprobador ya no puede actuar sobre una solicitud resuelta: la
@@ -488,9 +499,10 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
         - `interno`: el propietario descarga directo (crea distribución);
           jefe/admin directo; el resto del depto con solicitud aprobada.
         - `confidencial`: ver = jefe del depto/propietario/admin/grants (NO todo
-          el depto); descargar = solicitud aprobada por el jefe (admin directo).
+          el depto); descargar = solicitud aprobada por el jefe del depto dueño.
         - `restringido`: ver = propietario/admin/grants (jefe solo si
-          autorizado); descargar = solicitud con doble control (jefe + admin).
+          autorizado); descargar = solicitud con **doble control secuencial**
+          (jefe del depto dueño → jefe de Gerencia General).
        Vigencia: `settings.DESCARGA_VIGENCIA_DIAS` (30) y ligada a la versión;
        al vencer o cambiar de versión hay que re-solicitar. Al aprobar se crea
        `DistribucionDocumento` (copia controlada); revocarla corta ver y
@@ -499,8 +511,11 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
        `registrar_consulta`, fail-closed, HMAC-SHA256) con `correlation_id`
        `descarga-<id_solicitud>`; la creación de distribución también se audita
        (`registrar_distribucion`) además del espejo en `distribuciones_documento`.
-        Aprobadores: jefe del depto (admin **activo** si no hay jefe);
-        `restringido` jefe + admin. `SolicitudDescarga.motivo` OBLIGATORIO.
+        Aprobadores: jefe del depto dueño (primer paso); si no hay jefe, el paso
+        queda `esperando` (sin fallback a admin). `restringido` añade como paso
+        final al jefe de Gerencia General. Delegación de jefatura vigente y
+        escalado 48h (`tasks.escalar_aprobaciones_vencidas`) incluidos, igual
+        que en el flujo de documentos. `SolicitudDescarga.motivo` OBLIGATORIO.
         Implementación: `services/descargas.py` (única vía de aprobación).
         El endpoint JSON `api_responder_solicitud_descarga` fue **eliminado**
         (no tenía llamadores y no aplicaba doble control ni finalizaba la
@@ -1514,7 +1529,9 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
         - NO hay fallback a administrador (el admin no evalúa ni autoriza).
         - Tipos cubiertos: SolicitudAprobacionDocumento (evaluador/autorizador),
           AprobacionPlanilla (evaluador/autorizador),
-          AprobacionDescarga (solicitud__documento__departamento),
+          AprobacionDescarga (paso 'jefe' del depto dueño; el paso
+          'autorizador' —jefe de GG— lo cubren `reasignar_autorizadores_gg`/
+          `desasignar_autorizadores_gg`, nunca el jefe del depto),
           SolicitudAccesoDocumento (departamento_destino).
         - Captura pre_save: _old_rol y _old_departamento_id.
         - Idempotencia: Case 1 solo dispara si dejo_de_ser_jefe O

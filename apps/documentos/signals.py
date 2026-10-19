@@ -122,7 +122,11 @@ def solicitud_descarga_creada(sender, instance, created, **kwargs):
 
 @receiver(post_save, sender=AprobacionDescarga)
 def aprobacion_descarga_guardada(sender, instance, created, **kwargs):
-    if created:
+    # Solo se audita una DECISIÓN real: la creación de pasos, la activación de
+    # un paso en espera (fecha_activacion) o la reasignación no son aprobaciones.
+    if created or instance.aprobador_id is None:
+        return
+    if instance.estado not in ('aprobada', 'rechazada'):
         return
     try:
         registrar_aprobacion_descarga(

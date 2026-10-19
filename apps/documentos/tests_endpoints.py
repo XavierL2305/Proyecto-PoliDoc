@@ -2524,6 +2524,23 @@ class DescargaIntegridadTest(BaseDocumentosTest):
             clasificacion='restringido', version_actual='1.0',
         )
 
+    def _cadena_restringida(self):
+        """Cadena secuencial: jefe del depto → jefe de Gerencia General."""
+        doc = self._restringido_ti()
+        sol = SolicitudDescarga.objects.create(
+            documento=doc, solicitado_por=self.user_trabajador,
+            motivo='Integridad', estado='pendiente',
+        )
+        AprobacionDescarga.objects.create(
+            solicitud=sol, aprobador=self.user_jefe_ti, rol_aprobador='jefe',
+            es_final=False,
+        )
+        AprobacionDescarga.objects.create(
+            solicitud=sol, aprobador=self.user_jefe_gg, rol_aprobador='autorizador',
+            es_final=True, estado='esperando',
+        )
+        return sol
+
     def test_reaprobacion_no_duplica_distribucion_ni_reinicia_vigencia(self):
         """El segundo POST de aprobación no vuelve a finalizar la descarga."""
         sol = self._solicitud([self.user_jefe_ti])
@@ -2566,10 +2583,8 @@ class DescargaIntegridadTest(BaseDocumentosTest):
         self.assertEqual(aprobacion.estado, 'aprobada')
 
     def test_doble_control_rechazo_cancela_hermana(self):
-        """Restringido: el rechazo cierra la solicitud y libera al otro control."""
-        sol = self._solicitud(
-            [self.user_jefe_ti, self.user_admin], documento=self._restringido_ti()
-        )
+        """Restringido: el rechazo cierra la solicitud y cancela el otro paso."""
+        sol = self._cadena_restringida()
         url = f'/documentos/solicitud/{sol.id}/aprobar/'
 
         self.client.login(username='jefe_ti', password='testpass123')
@@ -2578,7 +2593,7 @@ class DescargaIntegridadTest(BaseDocumentosTest):
         self.assertEqual(sol.estado, 'pendiente')
 
         self.client.logout()
-        self.client.login(username='admin01', password='testpass123')
+        self.client.login(username='jefe_gg', password='testpass123')
         self.client.post(
             url, data={'accion': 'rechazar', 'observaciones': 'Sin respaldo'}
         )
@@ -2586,12 +2601,12 @@ class DescargaIntegridadTest(BaseDocumentosTest):
         self.assertEqual(sol.estado, 'rechazada')
         self.assertEqual(
             AprobacionDescarga.objects.get(
-                solicitud=sol, aprobador=self.user_jefe_ti
+                solicitud=sol, rol_aprobador='jefe'
             ).estado, 'aprobada',
         )
         self.assertEqual(
             AprobacionDescarga.objects.get(
-                solicitud=sol, aprobador=self.user_admin
+                solicitud=sol, rol_aprobador='autorizador'
             ).estado, 'rechazada',
         )
         self.assertEqual(
@@ -2601,12 +2616,20 @@ class DescargaIntegridadTest(BaseDocumentosTest):
         )
 
     def test_doble_control_ambos_aprueban_finaliza_una_vez(self):
-        """Restringido: ambos aprueban y solo entonces se distribuye."""
-        sol = self._solicitud(
-            [self.user_jefe_ti, self.user_admin], documento=self._restringido_ti()
-        )
+        """Restringido: ambos aprueban (secuencial) y solo entonces se distribuye."""
+        sol = self._cadena_restringida()
         url = f'/documentos/solicitud/{sol.id}/aprobar/'
 
+        # El autorizador (GG) todavía no puede resolver: su paso está en espera.
+        self.client.login(username='jefe_gg', password='testpass123')
+        self.client.post(url, data={'accion': 'aprobar'})
+        sol.refresh_from_db()
+        self.assertEqual(sol.estado, 'pendiente')
+        self.assertEqual(
+            sol.aprobaciones.get(rol_aprobador='autorizador').estado, 'esperando',
+        )
+
+        self.client.logout()
         self.client.login(username='jefe_ti', password='testpass123')
         self.client.post(url, data={'accion': 'aprobar'})
         sol.refresh_from_db()
@@ -2618,7 +2641,7 @@ class DescargaIntegridadTest(BaseDocumentosTest):
         )
 
         self.client.logout()
-        self.client.login(username='admin01', password='testpass123')
+        self.client.login(username='jefe_gg', password='testpass123')
         self.client.post(url, data={'accion': 'aprobar'})
         sol.refresh_from_db()
         self.assertEqual(sol.estado, 'aprobada')

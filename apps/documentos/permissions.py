@@ -249,8 +249,12 @@ def puede_ver_documento(usuario, documento, requerir_aprobada=False):
         documento=documento, solicitado_por=usuario
     ).exists():
         return True
+    # El aprobador natural o su delegado vigente deben poder ver el contenido
+    # antes de resolver la descarga.
+    from .jefatura import aprobadores_que_repr
     if AprobacionDescarga.objects.filter(
-        solicitud__documento=documento, aprobador=usuario
+        solicitud__documento=documento,
+        aprobador_id__in=aprobadores_que_repr(usuario),
     ).exists():
         return True
     if requerir_aprobada:

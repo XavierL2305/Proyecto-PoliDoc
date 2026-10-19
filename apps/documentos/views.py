@@ -1373,8 +1373,9 @@ def detalle_documento(request, tipo, documento_id):
 
     # Solo cuentan aprobaciones de solicitudes todavía en trámite: una
     # solicitud ya resuelta no debe ofrecer "Atender" de nuevo.
+    from .jefatura import aprobadores_que_repr
     descargas_pendientes_aprobar = AprobacionDescarga.objects.filter(
-        aprobador=request.user, estado='pendiente',
+        aprobador_id__in=aprobadores_que_repr(request.user), estado='pendiente',
         solicitud__estado='pendiente',
         solicitud__documento=documento
     ).select_related('solicitud', 'solicitud__solicitado_por')

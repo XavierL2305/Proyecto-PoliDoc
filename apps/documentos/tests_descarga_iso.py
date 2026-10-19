@@ -352,3 +352,90 @@ class TrazabilidadDescargaTest(BaseDescargaTest):
         self.assertIn('distribucion', tipos)
         distribuciones = [r for r in registros if r['accion']['tipo'] == 'distribucion']
         self.assertEqual(distribuciones[0]['correlation_id'], correlacion)
+
+
+class EscaladoDescargaTest(BaseDescargaTest):
+    """El escalado 48h también cubre las descargas estancadas."""
+
+    def setUp(self):
+        super().setUp()
+        from documentos.services.descargas import crear_solicitud_descarga
+        self.doc = self._doc(
+            clasificacion='confidencial', propietario=self.user_jefe_th,
+            departamento=self.depto_th, codigo='TH-FOR-ESC',
+        )
+        self.solicitud = crear_solicitud_descarga(
+            self.doc, self.user_trabajador, 'Auditoría',
+        ).solicitud
+        self._backdate(50)
+
+    def _backdate(self, horas):
+        self.solicitud.__class__.objects.filter(pk=self.solicitud.pk).update(
+            fecha_solicitud=timezone.now() - timedelta(hours=horas),
+        )
+        AprobacionDescarga.objects.filter(solicitud=self.solicitud).update(
+            fecha_activacion=timezone.now() - timedelta(hours=horas),
+        )
+
+    def test_escalada_notifica_admin(self):
+        from autenticacion.models import Notificacion
+        from documentos.tasks import escalar_aprobaciones_vencidas
+        resultado = escalar_aprobaciones_vencidas()
+        self.assertEqual(resultado['descargas_escaladas'], 1)
+        self.assertTrue(Notificacion.objects.filter(
+            usuario=self.user_admin, tipo='aprobacion_escalada',
+        ).exists())
+
+    def test_no_duplica_en_segunda_corrida(self):
+        from documentos.tasks import escalar_aprobaciones_vencidas
+        escalar_aprobaciones_vencidas()
+        resultado = escalar_aprobaciones_vencidas()
+        self.assertEqual(resultado['descargas_escaladas'], 0)
+
+    def test_no_escala_reciente(self):
+        from documentos.tasks import escalar_aprobaciones_vencidas
+        self._backdate(0)
+        resultado = escalar_aprobaciones_vencidas()
+        self.assertEqual(resultado['descargas_escaladas'], 0)
+
+
+class ReasignacionDescargaTest(BaseDescargaTest):
+    """La reasignación por cambio de jefe alcanza a las descargas."""
+
+    def test_activa_paso_en_espera_al_asignar_jefe(self):
+        from documentos.services.descargas import crear_solicitud_descarga
+        from documentos.services.reasignacion import reasignar_pendientes_departamento
+        self.depto_th.jefe = None
+        self.depto_th.save(update_fields=['jefe'])
+        doc = self._doc(
+            clasificacion='confidencial', propietario=self.user_jefe_th,
+            departamento=self.depto_th, codigo='TH-FOR-REAS',
+        )
+        sol = crear_solicitud_descarga(doc, self.user_trabajador, 'x').solicitud
+        paso = sol.aprobaciones.get()
+        self.assertEqual(paso.estado, 'esperando')
+        self.assertIsNone(paso.aprobador)
+
+        reasignar_pendientes_departamento(
+            self.depto_th, self.user_jefe_th, self.user_admin,
+        )
+        paso.refresh_from_db()
+        self.assertEqual(paso.estado, 'pendiente')
+        self.assertEqual(paso.aprobador, self.user_jefe_th)
+        self.assertIsNotNone(paso.fecha_activacion)
+
+    def test_no_reasigna_el_paso_autorizador_al_jefe_del_depto(self):
+        from documentos.services.descargas import crear_solicitud_descarga
+        from documentos.services.reasignacion import reasignar_pendientes_departamento
+        doc = self._doc(
+            clasificacion='restringido', propietario=self.user_jefe_ti,
+            codigo='TI-FOR-REAS2',
+        )
+        sol = crear_solicitud_descarga(doc, self.user_trabajador, 'x').solicitud
+        reasignar_pendientes_departamento(
+            self.depto_ti, self.user_coordinador, self.user_admin,
+        )
+        autorizador = sol.aprobaciones.get(rol_aprobador='autorizador')
+        self.assertEqual(autorizador.aprobador, self.user_jefe_gg)
+        jefe = sol.aprobaciones.get(rol_aprobador='jefe')
+        self.assertEqual(jefe.aprobador, self.user_coordinador)

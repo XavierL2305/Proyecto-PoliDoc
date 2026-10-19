@@ -69,8 +69,8 @@ class SolicitudDescargaAdmin(admin.ModelAdmin):
 
 @admin.register(AprobacionDescarga)
 class AprobacionDescargaAdmin(admin.ModelAdmin):
-    list_display = ['solicitud', 'aprobador', 'estado', 'fecha_aprobacion']
-    list_filter = ['estado']
+    list_display = ['solicitud', 'aprobador', 'rol_aprobador', 'estado', 'fecha_aprobacion']
+    list_filter = ['estado', 'rol_aprobador']
     search_fields = ['aprobador__username']
 
 
