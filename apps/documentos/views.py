@@ -689,7 +689,8 @@ def mis_solicitudes(request):
     })
 
 
-def _grupos_documentos(departamentos, clasificacion='', vigencia='', usuario=None):
+def _grupos_documentos(departamentos, clasificacion='', vigencia='', usuario=None,
+                       solo_departamento=False):
     """Agrupa documentos por departamento (propio | afectado) y por tipo, con
     consultas fijas (sin N+1). Reutilizado por jefe y admin.
 
@@ -697,6 +698,10 @@ def _grupos_documentos(departamentos, clasificacion='', vigencia='', usuario=Non
     `clasificacion`: filtro opcional por clasificación de seguridad.
     `vigencia`: filtro opcional ('vencido'|'vence_pronto'|'vigente'|'sin_vigencia').
     `usuario`: si se pasa, solo se incluyen documentos visibles para él.
+    `solo_departamento`: modo estricto de la vista "Departamento" para
+      jefes/delegados: solo documentos propiedad del departamento (sin
+      públicos ajenos, sin afectados de otros departamentos y sin la sección
+      "Todos los departamentos"). El admin no lo usa (vista de supervisión).
     """
     from .permissions import q_documentos_visibles
 
@@ -707,6 +712,10 @@ def _grupos_documentos(departamentos, clasificacion='', vigencia='', usuario=Non
     docs = Documento.objects.filter(tipo__activo=True).exclude(tipo__isnull=True)
     if usuario is not None:
         docs = docs.filter(q_documentos_visibles(usuario))
+    if solo_departamento:
+        docs = docs.filter(
+            departamento_id__in=[d.id for d in departamentos],
+        )
     if clasificacion:
         docs = docs.filter(clasificacion=clasificacion)
     if vigencia:
@@ -721,11 +730,10 @@ def _grupos_documentos(departamentos, clasificacion='', vigencia='', usuario=Non
             docs = docs.filter(fecha_vencimiento__gt=hoy + timedelta(days=7))
         elif vigencia == 'sin_vigencia':
             docs = docs.filter(fecha_vencimiento__isnull=True)
-    docs = (
-        docs.select_related('tipo')
-        .prefetch_related('departamentos_afectados')
-        .order_by('fecha_vencimiento' if vigencia else '-fecha_modificacion')
-    )
+    docs = docs.select_related('tipo', 'propietario')
+    if not solo_departamento:
+        docs = docs.prefetch_related('departamentos_afectados')
+    docs = docs.order_by('fecha_vencimiento' if vigencia else '-fecha_modificacion')
     if usuario is not None:
         perfil_u = usuario.perfil
         es_admin_u = perfil_u.es_administrador
@@ -746,15 +754,16 @@ def _grupos_documentos(departamentos, clasificacion='', vigencia='', usuario=Non
             doc.puede_distribuir = (
                 es_admin_u or es_jefe_depto or doc.propietario_id == usuario.id
             )
-        if doc.afecta_todos:
+        if doc.afecta_todos and not solo_departamento:
             generales_por_tipo.setdefault(doc.tipo_id, []).append(doc)
             continue
         afecta = set()
         if doc.departamento_id in agrupado:
             afecta.add(doc.departamento_id)
-        for dep in doc.departamentos_afectados.all():
-            if dep.id in agrupado:
-                afecta.add(dep.id)
+        if not solo_departamento:
+            for dep in doc.departamentos_afectados.all():
+                if dep.id in agrupado:
+                    afecta.add(dep.id)
         for dep_id in afecta:
             agrupado[dep_id].setdefault(doc.tipo_id, []).append(doc)
 
@@ -808,9 +817,11 @@ def documentos_departamento(request):
 
     generales, grupos = _grupos_documentos(
         departamentos, clasificacion_filter, vigencia_filter, usuario=request.user,
+        solo_departamento=not es_admin,
     )
     conteos_vigencia = calcular_conteos_vigencia(
         departamentos, clasificacion_filter, request.user,
+        solo_departamento=not es_admin,
     )
     return render(request, 'documentos/documentos_departamento.html', {
         'generales': generales,

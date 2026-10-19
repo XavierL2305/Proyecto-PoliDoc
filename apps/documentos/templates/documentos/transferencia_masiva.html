@@ -21,6 +21,7 @@
   .tm-empty { font-size: 0.875rem; color: var(--color-muted); font-style: italic; }
   .tm-footer { padding: 1rem 1.5rem; border-top: 1px solid var(--color-border); display: flex; align-items: center; justify-content: flex-end; gap: 0.75rem; flex-wrap: wrap; }
   .tm-todo { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem; font-weight: 600; font-size: 0.875rem; cursor: pointer; }
+  .tm-todo input { margin: 0; }
 </style>
 {% endblock %}
 
@@ -91,25 +92,25 @@
     <div class="tm-card-header"><h3>3. Elementos a transferir</h3></div>
     <div class="tm-card-body">
       {% if total %}
-      <label class="tm-todo"><input type="checkbox" id="tm-todo"> Seleccionar todo ({{ total }})</label>
+      <label class="tm-todo"><input type="checkbox" id="tm-todo" class="form-checkbox"> Seleccionar todo ({{ total }})</label>
 
       <div class="tm-group-title"><i class="fa-solid fa-file-lines"></i> Propiedad de documentos ({{ propiedad|length }})</div>
       {% for d in propiedad %}
-      <label class="tm-item"><input type="checkbox" name="propiedad_ids" value="{{ d.id }}"> <span><strong>{{ d.codigo }}</strong> — {{ d.nombre }} <span class="tm-meta">({{ d.get_estado_display }})</span></span></label>
+      <label class="tm-item"><input type="checkbox" class="form-checkbox" name="propiedad_ids" value="{{ d.id }}"> <span><strong>{{ d.codigo }}</strong> — {{ d.nombre }} <span class="tm-meta">({{ d.get_estado_display }})</span></span></label>
       {% empty %}
       <div class="tm-empty">Sin documentos propios.</div>
       {% endfor %}
 
       <div class="tm-group-title"><i class="fa-solid fa-user-pen"></i> Asignaciones como coordinador ({{ asignaciones|length }})</div>
       {% for a in asignaciones %}
-      <label class="tm-item"><input type="checkbox" name="asignacion_ids" value="{{ a.id }}"> <span><strong>{{ a.documento.codigo }}</strong> — {{ a.documento.nombre }} <span class="tm-meta">(leer {{ a.puede_leer|yesno:"sí,no" }}, editar {{ a.puede_editar|yesno:"sí,no" }}, eliminar {{ a.puede_eliminar|yesno:"sí,no" }})</span></span></label>
+      <label class="tm-item"><input type="checkbox" class="form-checkbox" name="asignacion_ids" value="{{ a.id }}"> <span><strong>{{ a.documento.codigo }}</strong> — {{ a.documento.nombre }} <span class="tm-meta">(leer {{ a.puede_leer|yesno:"sí,no" }}, editar {{ a.puede_editar|yesno:"sí,no" }}, eliminar {{ a.puede_eliminar|yesno:"sí,no" }})</span></span></label>
       {% empty %}
       <div class="tm-empty">Sin asignaciones activas.</div>
       {% endfor %}
 
       <div class="tm-group-title"><i class="fa-solid fa-share-nodes"></i> Distribuciones recibidas ({{ distribuciones|length }})</div>
       {% for r in distribuciones %}
-      <label class="tm-item"><input type="checkbox" name="distribucion_ids" value="{{ r.id }}"> <span><strong>{{ r.documento.codigo }}</strong> — {{ r.documento.nombre }} <span class="tm-meta">({{ r.get_metodo_display }})</span></span></label>
+      <label class="tm-item"><input type="checkbox" class="form-checkbox" name="distribucion_ids" value="{{ r.id }}"> <span><strong>{{ r.documento.codigo }}</strong> — {{ r.documento.nombre }} <span class="tm-meta">({{ r.get_metodo_display }})</span></span></label>
       {% empty %}
       <div class="tm-empty">Sin distribuciones vigentes.</div>
       {% endfor %}

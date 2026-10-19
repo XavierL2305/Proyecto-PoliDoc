@@ -9,8 +9,12 @@ Necesita en el contexto: hoy, dias7 (fechas de vencimiento).
               <i class="fa-solid fa-{{ tipo.icono }}"></i>
             </div>
             <div class="doc-info">
-              <h4>{{ doc.nombre }}</h4>
-              <p>{{ doc.codigo }}</p>
+              <h4 title="{{ doc.nombre }}">{{ doc.nombre }}</h4>
+              <p title="{{ doc.codigo }}">{{ doc.codigo }}</p>
+              <p class="doc-owner" title="Propietario: {{ doc.propietario.get_full_name|default:doc.propietario.username }}">
+                <i class="fa-solid fa-user"></i>
+                {{ doc.propietario.get_full_name|default:doc.propietario.username }}
+              </p>
             </div>
           </div>
           <div class="doc-meta">

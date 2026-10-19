@@ -12,22 +12,24 @@
   .dept-header:first-of-type { margin-top: 0; }
   .dept-header h2 { font-size: 1.25rem; font-weight: 700; color: var(--color-text); margin: 0; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
   .doc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; align-items: start; }
-  .doc-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: 1rem; transition: all var(--transition); }
+  .doc-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: 1rem; transition: all var(--transition); display: flex; flex-direction: column; }
   .doc-card:hover { box-shadow: var(--shadow-md); }
   .doc-card-header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; }
   .doc-icon { width: 40px; height: 40px; border-radius: var(--radius); display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0; }
-  .doc-info h4 { font-size: 0.875rem; font-weight: 600; color: var(--color-text); margin: 0 0 0.25rem 0; }
-  .doc-info p { font-size: 0.75rem; color: var(--color-muted); margin: 0; }
-  .doc-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; font-size: 0.75rem; color: var(--color-muted); }
-  .doc-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--color-border); }
+  .doc-info { flex: 1 1 auto; min-width: 0; }
+  .doc-info h4 { font-size: 0.875rem; font-weight: 600; color: var(--color-text); margin: 0 0 0.25rem 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .doc-info p { font-size: 0.75rem; color: var(--color-muted); margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .doc-info .doc-owner { font-size: 0.7rem; margin-top: 0.125rem; }
+  .doc-info .doc-owner i { margin-right: 0.25rem; }
+  .doc-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; font-size: 0.75rem; color: var(--color-muted); min-height: 3.8rem; }
+  .doc-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: auto; padding-top: 0.75rem; border-top: 1px solid var(--color-border); }
   .doc-actions--extras { margin-top: 0; padding-top: 0; border-top: none; }
   .doc-card-acciones { border: none; border-top: 1px solid var(--color-border); border-radius: 0; background: transparent; box-shadow: none; }
   .doc-card-acciones:hover, .doc-card-acciones.active { box-shadow: none; }
   .doc-card-acciones-toggle { justify-content: center; gap: 0.5rem; padding: 0.625rem 0.25rem; font-size: 0.8125rem; font-weight: 600; color: var(--color-muted); }
   .doc-card-acciones-toggle:hover { background: transparent; color: var(--color-primary); }
   .doc-card-acciones .accordion-body { padding: 0 0 0.75rem; }
-  .doc-card { min-width: 0; }
-  .dept-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 1.25rem; }
+  .doc-card { min-width: 0; }  .dept-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 1.25rem; }
   .dept-filter select { max-width: 260px; }
 </style>
 {% endblock %}

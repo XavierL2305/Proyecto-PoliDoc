@@ -13,7 +13,8 @@ from django.db.models import Count, Q
 from ..models import Documento
 
 
-def calcular_conteos_vigencia(departamentos, clasificacion, usuario):
+def calcular_conteos_vigencia(departamentos, clasificacion, usuario,
+                              solo_departamento=False):
     """Conteos de documentos por estado de vigencia para `departamentos`.
 
     - `departamentos`: iterable de `Departamento` que delimitan el alcance
@@ -21,6 +22,9 @@ def calcular_conteos_vigencia(departamentos, clasificacion, usuario):
     - `clasificacion`: valor de `Documento.clasificacion` para restringir, o
       cadena vacía para todas.
     - `usuario`: visibilidad (respeta `q_documentos_visibles`).
+    - `solo_departamento`: con `True`, cuenta solo documentos propiedad de
+      `departamentos` (mismo alcance estricto de la vista "Departamento"
+      para jefes/delegados), sin generales ni afectados ajenos.
 
     Devuelve un dict con las claves `vencidos`, `vence_pronto`, `vigentes` y
     `sin_vigencia`.
@@ -33,11 +37,14 @@ def calcular_conteos_vigencia(departamentos, clasificacion, usuario):
     base = base.filter(q_documentos_visibles(usuario))
     if clasificacion:
         base = base.filter(clasificacion=clasificacion)
-    base = base.filter(
-        Q(afecta_todos=True)
-        | Q(departamento_id__in=dep_ids)
-        | Q(departamentos_afectados__id__in=dep_ids)
-    )
+    if solo_departamento:
+        base = base.filter(departamento_id__in=dep_ids)
+    else:
+        base = base.filter(
+            Q(afecta_todos=True)
+            | Q(departamento_id__in=dep_ids)
+            | Q(departamentos_afectados__id__in=dep_ids)
+        )
     # Un único aggregate con filtros condicionales en vez de 4 consultas.
     # `distinct=True` compensa el JOIN con departamentos_afectados.
     return base.aggregate(

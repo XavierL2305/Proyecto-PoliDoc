@@ -1588,6 +1588,60 @@ class VistasCatalogoTest(BaseDocumentosTest):
         self.assertIn('TI', codigos)
         self.assertIn('TH', codigos)
 
+    def test_documentos_departamento_jefe_solo_su_departamento(self):
+        """La vista 'Departamento' del jefe solo muestra documentos de SU
+        departamento: ni públicos ajenos, ni afectados de otros deptos, ni la
+        sección 'Todos los departamentos'."""
+        publico_ajeno = Documento.objects.create(
+            tipo=self.tipo_formulario, nombre='Formulario Publico TH',
+            codigo='TH-FOR-900', estado='activo',
+            propietario=self.user_trabajador_otro, departamento=self.depto_th,
+            clasificacion='publico', version_actual='1.0',
+        )
+        afecta_ti = Documento.objects.create(
+            tipo=self.tipo_formulario, nombre='Afecta a TI',
+            codigo='TH-FOR-901', estado='activo',
+            propietario=self.user_trabajador_otro, departamento=self.depto_th,
+            version_actual='1.0',
+        )
+        afecta_ti.departamentos_afectados.add(self.depto_ti)
+
+        self.client.login(username='jefe_ti', password='testpass123')
+        resp = self.client.get('/documentos/departamento/')
+        self.assertEqual(resp.status_code, 200)
+        codigos = {
+            d.codigo
+            for t in resp.context['generales'] for d in t['documentos']
+        } | {
+            d.codigo
+            for g in resp.context['grupos']
+            for t in g['tipos_documento'] for d in t['documentos']
+        }
+        self.assertIn('TI-PRG-001', codigos)      # propio del departamento
+        self.assertIn('TI-FOR-003', codigos)      # público propio (sigue)
+        self.assertNotIn('TH-FOR-900', codigos)   # público ajeno
+        self.assertNotIn('TH-FOR-901', codigos)   # afectado ajeno
+        self.assertNotIn('TH-FOR-001', codigos)   # otro departamento
+        self.assertEqual(resp.context['generales'], [])
+
+    def test_documentos_departamento_admin_conserva_generales(self):
+        """El admin conserva la supervisión completa (generales + afectados)."""
+        general_ajeno = Documento.objects.create(
+            tipo=self.tipo_formulario, nombre='Manual General',
+            codigo='GG-MAP-900', estado='activo',
+            propietario=self.user_jefe_gg, departamento=self.depto_gg,
+            clasificacion='publico', afecta_todos=True, version_actual='1.0',
+        )
+        self.client.logout()
+        self.client.login(username='admin01', password='testpass123')
+        resp = self.client.get('/documentos/departamento/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotEqual(resp.context['generales'], [])
+        self.assertIn(
+            general_ajeno.codigo,
+            {d.codigo for t in resp.context['generales'] for d in t['documentos']},
+        )
+
     def test_documentos_departamento_tercero_redirigido(self):
         resp = self.client.get('/documentos/departamento/')
         self.assertEqual(resp.status_code, 302)
