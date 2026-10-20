@@ -716,17 +716,28 @@
           <div class="detail-body">
             <div id="tab-versiones" class="tab-content active">
               <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.5rem;">
-                <span style="font-size: 0.8rem; color: var(--color-muted);">Últimas {{ versiones|length }} versión{{ versiones|length|pluralize }}</span>
+                <span style="font-size: 0.8rem; color: var(--color-muted);">
+                  {% if versiones|length == 1 %}1 versión{% else %}{{ versiones|length }} versiones{% endif %}
+                </span>
                 <a href="{% url 'documentos:historial_versiones' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost btn--sm" data-anim="view">
                   <i class="fa-solid fa-clock-rotate-left"></i> <span class="btn-label">Ver historial de versiones</span>
                 </a>
               </div>
               {% if versiones %}
               <div class="version-list">
-                {% for version in versiones|slice:":5" %}
+                {% for version in versiones %}
                 <div class="version-item">
                   <div>
                     <span class="version-number">v{{ version.numero_version }}</span>
+                    {% if version.id == version_vigente_id %}
+                      {% if documento.estado == 'activo' %}
+                      <span class="badge badge--success badge--sm" style="margin-left: 0.35rem; font-size: 0.7rem;">Vigente</span>
+                      {% else %}
+                      <span class="badge badge--info badge--sm" style="margin-left: 0.35rem; font-size: 0.7rem;">Última</span>
+                      {% endif %}
+                    {% else %}
+                    <span class="badge badge--warning badge--sm" style="margin-left: 0.35rem; font-size: 0.7rem;">Superada</span>
+                    {% endif %}
                     <span class="version-date">{{ version.fecha_creacion|date:"d/m/Y" }}</span>
                   </div>
                   <span style="font-size: 0.75rem; color: var(--color-muted);">{{ version.creado_por.username }}</span>

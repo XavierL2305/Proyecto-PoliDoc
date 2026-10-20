@@ -46,8 +46,14 @@
           <div class="version-header">
             <div>
               <span class="version-number">Versión {{ version.numero_version }}</span>
-              {% if version.numero_version == documento.version_actual %}
-              <span class="badge badge--success" style="margin-left: 0.5rem; font-size: 0.7rem;">Actual</span>
+              {% if version.id == version_vigente_id %}
+                {% if documento.estado == 'activo' %}
+                <span class="badge badge--success" style="margin-left: 0.5rem; font-size: 0.7rem;">Vigente</span>
+                {% else %}
+                <span class="badge badge--info" style="margin-left: 0.5rem; font-size: 0.7rem;">Última</span>
+                {% endif %}
+              {% else %}
+              <span class="badge badge--warning" style="margin-left: 0.5rem; font-size: 0.7rem;">Superada</span>
               {% endif %}
               {% if not version.archivo %}
               <span class="badge badge--warning" style="margin-left: 0.5rem; font-size: 0.7rem;">Sin archivo</span>

@@ -732,6 +732,13 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
          `static/css/components/vigencia.css` y cálculo en
          `documentos/services/vigencia.py::calcular_conteos_vigencia` (un único
          aggregate; usado por `documentos_departamento` y por el dashboard).
+         A partir de esta versión, el alcance del **jefe/delegado es estricto**:
+         solo documentos propiedad de su departamento
+         (`_grupos_documentos(..., solo_departamento=True)` y
+         `calcular_conteos_vigencia(..., solo_departamento=True)`), sin
+         públicos ajenos, sin afectados de otros departamentos y sin sección
+         "Todos los departamentos". El **admin** conserva la supervisión
+         completa (todas las áreas + generales + afectados).
          El partial admite dos modos de link: por defecto filtra la propia
          página (`?vigencia=...&clasificacion=...`, marcando `is-active`); con
          `modo='redirect'` abre `documentos:documentos_departamento` ya

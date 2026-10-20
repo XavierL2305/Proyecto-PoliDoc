@@ -7,16 +7,20 @@ del documento con el cambio de clasificación).
 """
 
 import json
+import os
+import shutil
+import tempfile
 from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
 
 from tests_base import MONGO_PATCH_TARGET, BaseDocumentosTest
 from documentos.forms import PlanillaCambiosForm
-from documentos.models import AprobacionPlanilla, PlanillaCambios
+from documentos.models import AprobacionPlanilla, PlanillaCambios, VersionDocumento
 from documentos.services.planillas import aplicar_planilla_al_documento
 
 
@@ -109,6 +113,70 @@ class AplicarPlanillaHelperTest(BaseDocumentosTest):
         doc, cambios = aplicar_planilla_al_documento(planilla, usuario=self.user_jefe_ti)
         self.assertIsNone(doc)
         self.assertEqual(cambios, {})
+
+    def test_la_version_la_crea_el_responsable_de_la_planilla(self):
+        """El aprobador no es el autor: la versión firma al responsable."""
+        planilla = self._planilla(responsable=self.user_trabajador)
+
+        aplicar_planilla_al_documento(planilla, usuario=self.user_jefe_ti)
+
+        version = VersionDocumento.objects.get(
+            documento=self.doc_activo, numero_version='2',
+        )
+        self.assertEqual(version.creado_por, self.user_trabajador)
+
+    def test_registra_la_version_en_el_historial_sin_pegar_lineas(self):
+        self.doc_activo.historial_cambios = 'v1 - 2026-10-01 10:00 - creacion por X'
+        self.doc_activo.save(update_fields=['historial_cambios'])
+        planilla = self._planilla()
+
+        aplicar_planilla_al_documento(planilla, usuario=self.user_jefe_ti)
+
+        self.doc_activo.refresh_from_db()
+        lineas = self.doc_activo.historial_cambios.splitlines()
+        self.assertEqual(len(lineas), 2)
+        self.assertTrue(lineas[0].startswith('v1 - 2026-10-01'))
+        self.assertIn('v2', lineas[1])
+        self.assertIn('Planilla PC-CL-HELPER', lineas[1])
+        self.assertIn('modificacion por Jefe TI', lineas[1])
+        self.assertIn('aprobada por Jefe TI', lineas[1])
+
+    def test_limpia_el_pdf_obsoleto_cuando_cambia_el_archivo(self):
+        tmp = tempfile.mkdtemp(prefix='planilla-pdf-')
+        try:
+            with self.settings(MEDIA_ROOT=tmp):
+                carpeta = os.path.join(tmp, 'documentos', 'TI')
+                os.makedirs(carpeta, exist_ok=True)
+                ruta_pdf = os.path.join(carpeta, 'viejo_v1.pdf')
+                with open(ruta_pdf, 'wb') as fh:
+                    fh.write(b'%PDF-1.4 anterior')
+                self.doc_activo.archivo_pdf = 'documentos/TI/viejo_v1.pdf'
+                self.doc_activo.save(update_fields=['archivo_pdf'])
+                planilla = self._planilla(
+                    archivo_propuesto=SimpleUploadedFile(
+                        'nuevo.xlsx', b'contenido nuevo',
+                    ),
+                )
+
+                aplicar_planilla_al_documento(planilla, usuario=self.user_jefe_ti)
+
+                self.doc_activo.refresh_from_db()
+                self.assertFalse(self.doc_activo.archivo_pdf)
+                self.assertFalse(os.path.exists(ruta_pdf))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_conserva_el_pdf_si_la_planilla_no_cambia_el_archivo(self):
+        self.doc_activo.archivo_pdf = 'documentos/TI/vigente_v1.pdf'
+        self.doc_activo.save(update_fields=['archivo_pdf'])
+        planilla = self._planilla()
+
+        aplicar_planilla_al_documento(planilla, usuario=self.user_jefe_ti)
+
+        self.doc_activo.refresh_from_db()
+        self.assertEqual(
+            self.doc_activo.archivo_pdf.name, 'documentos/TI/vigente_v1.pdf',
+        )
 
     def test_no_reinicia_la_fecha_de_vigencia(self):
         """Aplicar una modificación sube versión pero no mueve la vigencia."""

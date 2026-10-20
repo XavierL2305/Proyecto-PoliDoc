@@ -11,6 +11,7 @@ from .permissions import (
     puede_transferir, documentos_usuario,
     puede_ver_documento, q_documentos_visibles
 )
+from .services.aprobaciones import autocompletar_planilla
 from .services.planillas import aplicar_planilla_al_documento
 from .cache_utils import tipos_activos
 from .jefatura import aprobadores_que_repr, es_delegado_vigente
@@ -792,6 +793,8 @@ def aprobar_planilla(request, planilla_uuid):
     aprobacion.observaciones = observaciones
     aprobacion.fecha_aprobacion = timezone.now()
     aprobacion.save()
+    # Firmas de evaluación/autorización en la planilla (FOR-005).
+    autocompletar_planilla(planilla, aprobacion, aprobada=True)
     if es_final:
         planilla.estado = 'aprobado'
         planilla.fecha_aprobacion = timezone.now()
@@ -843,6 +846,8 @@ def rechazar_planilla(request, planilla_uuid):
     aprobacion.observaciones = motivo
     aprobacion.fecha_aprobacion = timezone.now()
     aprobacion.save()
+    # Quien rechaza también firma la planilla (FOR-005).
+    autocompletar_planilla(planilla, aprobacion, aprobada=False)
     hermano = AprobacionPlanilla.objects.filter(
         planilla=planilla,
     ).exclude(id=aprobacion.id).exclude(estado__in=('aprobada', 'rechazada', 'cancelada')).first()

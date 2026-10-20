@@ -67,6 +67,7 @@ services:
     volumes:
       - .:/app
       - ./data:/data
+      - polidoc_media:/app/media
     ports:
       - "8001:8001"
     environment:
@@ -154,3 +155,4 @@ volumes:
   redis_data:
   mongodb_data:
   data:
+  polidoc_media:

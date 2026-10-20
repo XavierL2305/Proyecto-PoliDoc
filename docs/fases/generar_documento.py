@@ -28,8 +28,8 @@ GRIS = RGBColor(0x55, 0x55, 0x55)
 NEGRO = RGBColor(0x22, 0x22, 0x22)
 
 VERSION = "1.0"
-FECHA = "18/10/2026"
-COMMIT = "b1471c7"
+FECHA = "20/10/2026"
+COMMIT = "d79d89f"
 AUTOR = "Pasante TSU. Xavier Lara"
 ORGANIZACION = "Policlínica Táchira"
 
@@ -118,6 +118,10 @@ def h2(doc, texto):
     doc.add_heading(texto, level=2)
 
 
+def h3(doc, texto):
+    doc.add_heading(texto, level=3)
+
+
 def p(doc, texto="", *, bold=False, italic=False, size=None, align=None,
       color=None, space_after=6):
     par = doc.add_paragraph()
@@ -150,7 +154,8 @@ def numeros(doc, items):
         par.paragraph_format.space_after = Pt(2)
 
 
-def tabla(doc, encabezados, filas, *, anchos=None, tam=9.5):
+def tabla(doc, encabezados, filas, *, anchos=None, tam=9.5,
+          repetir_encabezado=False):
     t = doc.add_table(rows=1, cols=len(encabezados))
     t.style = "Table Grid"
     t.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -165,6 +170,12 @@ def tabla(doc, encabezados, filas, *, anchos=None, tam=9.5):
         run.font.size = Pt(tam)
         run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
         _sombra_celda(header[i], "1F3A5F")
+
+    if repetir_encabezado:
+        tr_pr = t.rows[0]._tr.get_or_add_trPr()
+        tbl_header = OxmlElement("w:tblHeader")
+        tbl_header.set(qn("w:val"), "true")
+        tr_pr.append(tbl_header)
 
     for fila in filas:
         celdas = t.add_row().cells
@@ -256,14 +267,13 @@ def contenido(doc):
         "2. Contexto y usuarios",
         "3. Fase 1 — V1.0 (Elaborada)",
         "4. Fase 2 — Plantillas (Pendiente)",
-        "5. Fase 3 — Cumplimiento ISO base (Pendiente)",
+        "5. Fase 3 — Cumplimiento ISO completo (Pendiente)",
         "6. Fase 4 — Producción y migración de datos (Propuesta)",
-        "7. Fase 5 — Cumplimiento ISO completo (Futura)",
-        "8. Fase 6 — Experiencia y alcance (Futura)",
-        "9. Fase 7 — Integraciones e IA (Futura)",
-        "10. Cronograma y estimaciones",
-        "11. Dependencias y riesgos",
-        "12. Anexos: glosario, mapeo de conceptos y trazabilidad",
+        "7. Fase 5 — Experiencia y alcance (Futura)",
+        "8. Fase 6 — Integraciones e IA (Futura)",
+        "9. Cronograma y estimaciones",
+        "10. Dependencias y riesgos",
+        "11. Anexos: glosario, mapeo de conceptos y trazabilidad",
     ]
     for s in secciones:
         par = doc.add_paragraph()
@@ -283,23 +293,23 @@ def resumen_ejecutivo(doc):
     p(doc, "La Fase 1 (V1.0) está elaborada y cubre el núcleo de la gestión "
            "documental para todos los cargos de la institución: trabajadores, "
            "coordinadores, jefes de departamento y administradores. La "
-           "siguiente etapa se concentra en dos entregables dentro de una "
-           "ventana contractual de tres meses:", align="justify")
+           "siguiente etapa se concentra en dos entregables:", align="justify")
     bullets(doc, [
         "Fase 2 — Módulo de Plantillas: documentos en blanco reutilizables "
         "que otros usuarios descargan, llenan y vuelven a subir.",
-        "Fase 3 — Cumplimiento ISO (alcance base): retención y disposición "
-        "programada, política de retención por tipo e informes de auditoría.",
+        "Fase 3 — Cumplimiento ISO completo: retención y disposición "
+        "programada, política de retención por tipo, informes de auditoría, "
+        "firma electrónica y sellado de tiempo, y control de copias "
+        "impresas.",
     ])
-    p(doc, "La base técnica de ambas fases se estima en 8,5 a 11,5 semanas de "
-           "trabajo; el resto de la ventana de tres meses se reserva para "
-           "pruebas, aceptación, ajustes e imprevistos. Las fases posteriores "
-           "(producción, ISO completo, experiencia e integraciones) se "
-           "presentan como propuesta y quedan fuera del contrato actual.",
-      align="justify")
+    p(doc, "La base técnica de ambas fases se estima en 10 a 12,5 semanas de "
+           "trabajo; el tiempo restante se reserva para pruebas, aceptación, "
+           "ajustes e imprevistos. Las fases siguientes (producción, "
+           "experiencia e integraciones) se presentan como propuesta y quedan "
+           "para etapas posteriores.", align="justify")
     nota(doc, "Estimaciones con un desarrollador (Xavier Lara) y desarrollo "
               "asistido por IA, con QA parcial. Se expresan como rangos, no "
-              "como fechas comprometidas.")
+              "como fechas cerradas.")
 
 
 def contexto(doc):
@@ -348,34 +358,103 @@ def fase1(doc):
            "aprobación y auditoría desde el primer día.", align="justify")
 
     h2(doc, "3.1 Módulos construidos")
-    tabla(doc, ["Módulo", "Qué incluye"], [
-        ["Autenticación y roles", "Acceso con Active Directory (LDAP) o "
-                                  "cuenta local, perfiles por rol, "
-                                  "notificaciones y aceptación de términos."],
-        ["Gestión documental", "15 tipos ISO, códigos automáticos, "
-                               "clasificación de seguridad, departamentos, "
-                               "vigencia y retención."],
-        ["Creación y formatos", "Formularios FOR-001 (creación/eliminación) y "
-                                "FOR-005 (modificación), formularios "
-                                "dinámicos configurables."],
-        ["Aprobaciones y versionado", "Cadenas de aprobación por rol, "
-                                      "bandeja de aprobaciones, planillas de "
-                                      "cambio y delegación de jefatura."],
-        ["Descargas y distribución", "Solicitudes de descarga, permisos por "
-                                     "clasificación, copias controladas y "
-                                     "revocación de distribución."],
-        ["Vigencia y vencimientos", "Revisión periódica, renovación, "
-                                    "establecimiento y retiro de vigencia, "
-                                    "alertas."],
-        ["Auditoría e informes", "Registro en MongoDB con HMAC y cadena de "
-                                 "hashes, reportes exportables y verificación "
-                                 "de integridad."],
-        ["Búsqueda y apoyo con IA", "Búsqueda de documentos, resumen con IA y "
-                                    "conversión a PDF con control de calidad."],
-        ["Configuración administrativa", "Tipos, departamentos, períodos, "
-                                         "formatos, ciclo de vida y auditoría "
-                                         "desde un panel único."],
-    ], anchos=[4.5, 11.5])
+    p(doc, "La V1.0 se organiza en 13 módulos operativos, verificables desde "
+           "la propia aplicación.", align="justify")
+    tabla(doc, ["Módulo", "Qué resuelve", "Funciones principales",
+                "Evidencia / acceso"], [
+        ["Autenticación, usuarios y roles",
+         "Acceso seguro y perfilado por rol.",
+         "Login LDAP/AD con respaldo local; logout; perfiles administrador, "
+         "jefe, coordinador y trabajador; aceptación de términos; foto de "
+         "perfil; gestión de usuarios y asignación de departamento.",
+         "/login/, /perfil/, /usuarios/"],
+        ["Notificaciones",
+         "Avisar los eventos del flujo dentro de la app.",
+         "16 tipos (solicitudes, aprobaciones, rechazos, asignaciones, "
+         "versiones, transferencias, distribución/revocación, vigencia, "
+         "escalado, formatos); campanita con contador; marcar leída/todas; "
+         "API JSON.",
+         "Campanita del navbar; /api/notificaciones/"],
+        ["Documentos (CRUD y versionado)",
+         "Núcleo del gestor documental.",
+         "Catálogo y alta por tipo (15 tipos ISO); edición de borrador y "
+         "documento; eliminación; envío a aprobación; detalle; versiones e "
+         "historial; archivo original + PDF; visor; clasificación "
+         "público/interno/confidencial/restringido; relaciones; departamentos "
+         "afectados; retención/vencimiento; destrucción controlada.",
+         "/documentos/, /documentos/mis-documentos/, detalle "
+         "/<tipo>/<uuid>/"],
+        ["Aprobaciones y planillas de cambio",
+         "Autorizar creaciones, cambios y estados.",
+         "Cadenas de 1/2 pasos; bandeja del jefe; aprobar/rechazar creación; "
+         "planillas FOR-005 (crear, enviar, aprobar, rechazar); solicitudes "
+         "de cambio de estado; delegación de jefatura; escalado a las 48 h; "
+         "mis solicitudes.",
+         "/documentos/bandeja-aprobaciones/, "
+         "/documentos/planilla-cambios/nueva/, /documentos/delegaciones/, "
+         "/documentos/mis-solicitudes/"],
+        ["Descargas y solicitudes de acceso",
+         "Entrega controlada de archivos.",
+         "Solicitud con motivo; aprobación del jefe; doble control secuencial "
+         "jefe → GG para «restringido»; versión aprobada y expiración; "
+         "solicitudes de acceso a documentos; notificaciones y auditoría.",
+         "/documentos/mis-solicitudes/, "
+         "/<tipo>/<uuid>/solicitar-descarga/"],
+        ["Distribución y copias controladas",
+         "Reparto formal y revocable (ISO 9001:7.5.3).",
+         "Distribuir a usuarios; método sistema/email/impreso; historial por "
+         "documento; revocación con motivo y correo; registro de envío/error; "
+         "notificaciones.",
+         "/<tipo>/<uuid>/distribuir/, "
+         "/<tipo>/<uuid>/historial-distribucion/"],
+        ["Vigencia, retención y ciclo de vida",
+         "Mantener vigente lo que debe y retirar lo obsoleto.",
+         "Renovar vencimiento; establecer/quitar vigencia; panel y conteos; "
+         "alertas; retención/destrucción; revisiones pendientes; comandos de "
+         "verificación; ciclo de vida.",
+         "Panel de vigencia; /documentos/configuracion/ciclo-vida/; comandos "
+         "verificar_*"],
+        ["Asignaciones y transferencia de propiedad",
+         "Mover la responsabilidad sin perder trazabilidad.",
+         "Asignar a usuarios del departamento; gestionar asignaciones; "
+         "transferir propiedad individual; transferencia masiva (admin); "
+         "reasignación automática de pendientes al cambiar de jefe.",
+         "/documentos/asignaciones/, "
+         "/documentos/configuracion/transferencia-masiva/"],
+        ["Auditoría e integridad",
+         "Evidencia inmutable de lo ocurrido.",
+         "Registro en MongoDB con HMAC y cadena de hashes; buffer ante "
+         "caídas; login/logout y acciones de negocio; consulta y detalle; "
+         "reportes PDF y almacenados; verificación de integridad; "
+         "fail-closed.",
+         "/documentos/configuracion/auditoria/, reporte PDF"],
+        ["Panel administrativo y configuración",
+         "Gobierno del sistema sin tocar código.",
+         "Dashboard; tipos de documento (CRUD y reactivación); períodos "
+         "(CRUD); departamentos y subáreas (CRUD); roles y permisos; ciclo de "
+         "vida; auditoría; transferencia masiva; gestión de usuarios.",
+         "/documentos/configuracion/, /usuarios/"],
+        ["Formularios dinámicos y exportaciones",
+         "Formatos SGC configurables y llenables.",
+         "Constructor de secciones/campos; preview; publicación y versionado "
+         "de formatos; formulario dinámico; FOR-001/FOR-005; exportación "
+         "XLSX/PDF de solicitudes.",
+         "/documentos/configuracion/formatos/, /documentos/nuevo/<tipo>/"],
+        ["Búsqueda, IA y conversión a PDF",
+         "Encontrar y preparar documentos.",
+         "Búsqueda global con permisos; sugerencias; resumen con IA "
+         "(Gemini); conversión a PDF con QA/adaptativo; diagnóstico y "
+         "reparación.",
+         "/documentos/buscar/, /<tipo>/<uuid>/resumen-ia/, "
+         "/<tipo>/<uuid>/estado-conversion/"],
+        ["Servicios internos y tareas programadas",
+         "Sostener la operación sin bloquear la interfaz.",
+         "API JSON interna; Celery (conversión PDF, planillas y auditoría); "
+         "comandos de limpieza, población y verificación; buffer de auditoría "
+         "y reintentos.",
+         "apps/documentos/api.py, apps/documentos/tasks.py, "
+         "apps/auditoria/tasks.py, management/commands/"],
+    ], anchos=[3.0, 3.8, 6.2, 3.4], tam=8.5, repetir_encabezado=True)
 
     h2(doc, "3.2 Roles cubiertos")
     p(doc, "La V1.0 cubre a trabajadores, coordinadores, jefes de departamento "
@@ -424,9 +503,8 @@ def fase2(doc):
         ["F2.5", "Pruebas, control de calidad y documentación de la fase.",
          "1–2 semanas"],
     ], anchos=[2.0, 11.0, 3.0])
-    nota(doc, "Base técnica: 6–8 semanas. La ventana contractual de 3 meses "
-              "incorpora la holgura para pruebas, ajustes, aceptación y la "
-              "documentación de la fase.")
+    nota(doc, "Base técnica: 6–8 semanas. La estimación incorpora holgura "
+              "para pruebas, ajustes, aceptación y documentación de la fase.")
 
     h2(doc, "4.2 Reglas de negocio principales")
     bullets(doc, [
@@ -469,22 +547,27 @@ def fase2(doc):
 
 
 def fase3(doc):
-    h1(doc, "5. Fase 3 — Cumplimiento ISO base (Pendiente)")
-    p(doc, "Objetivo: reforzar el cumplimiento ISO con controles base que "
-           "reutilizan la infraestructura ya construida (períodos, vigencia, "
-           "ciclo de vida, auditoría y reportes).", align="justify")
+    h1(doc, "5. Fase 3 — Cumplimiento ISO completo (Pendiente)")
+    p(doc, "Objetivo: completar los controles ISO del sistema sobre la "
+           "infraestructura ya construida (períodos, vigencia, ciclo de vida, "
+           "auditoría y reportes): retención y disposición final, informes de "
+           "auditoría, firma electrónica y control de copias impresas.",
+      align="justify")
 
     h2(doc, "5.1 Alcance")
     tabla(doc, ["Sub-fase", "Entregable", "Esfuerzo base"], [
         ["F3.1", "Política de retención por tipo de documento (configuración).",
          "0,5 semana"],
         ["F3.2", "Retención y disposición final programada (tarea automática y "
-                 "estados).", "1,5–2 semanas"],
+                 "estados).", "1,5 semanas"],
         ["F3.3", "Informes de auditoría consolidados y exportables.",
-         "0,5–1 semana"],
+         "0,5 semana"],
+        ["F3.4", "Firma electrónica y sellado de tiempo (integración con "
+                 "proveedor).", "1–1,5 semanas"],
+        ["F3.5", "Control de copias impresas.", "0,5 semana"],
     ], anchos=[2.0, 11.0, 3.0])
-    nota(doc, "Base ISO: 2,5–3,5 semanas. Sumada a la Fase 2, el contrato de "
-              "tres meses queda con 1,5–4,5 semanas de holgura.")
+    nota(doc, "Base ISO: 4–4,5 semanas. Sumada a la Fase 2, la etapa "
+              "inmediata queda con ≈0,5–2,5 semanas de holgura.")
 
     h2(doc, "5.2 Criterios de aceptación")
     bullets(doc, [
@@ -493,15 +576,20 @@ def fase3(doc):
         "trazable.",
         "Los informes de auditoría se exportan con los filtros y el rango "
         "solicitados.",
+        "Los documentos firmados quedan sellados de tiempo y verificables "
+        "mediante el proveedor de firma.",
+        "Las copias impresas quedan registradas, numeradas y controladas.",
     ])
 
     h2(doc, "5.3 Fuera de alcance")
-    p(doc, "No incluye firma electrónica, sellado de tiempo, gestión de no "
-           "conformidades ni control de copias impresas. Esos controles quedan "
-           "en la Fase 5 (futura).", align="justify")
-    nota(doc, "El cumplimiento operativo real se valida al desplegar en "
-              "producción (Fase 4). Esta fase implementa los controles en el "
-              "software.")
+    p(doc, "La gestión de no conformidades no forma parte del alcance de "
+           "POLIDOC; la Policlínica la gestiona mediante su proceso propio.",
+      align="justify")
+    nota(doc, "La contratación del proveedor de firma y su validación legal "
+              "son externas y deben estar resueltas al inicio de la fase "
+              "(semana 1). El cumplimiento operativo real se valida al "
+              "desplegar en producción (Fase 4); esta fase implementa los "
+              "controles en el software.")
 
 
 def fase4(doc):
@@ -524,22 +612,7 @@ def fase4(doc):
 
 
 def fase5(doc):
-    h1(doc, "7. Fase 5 — Cumplimiento ISO completo (Futura)")
-    p(doc, "Objetivo: completar los controles ISO que requieren integración "
-           "externa o módulos adicionales.", align="justify")
-    h2(doc, "7.1 Alcance")
-    bullets(doc, [
-        "Firma electrónica y sellado de tiempo.",
-        "Gestión de no conformidades.",
-        "Control de copias impresas.",
-    ])
-    p(doc, "Estimación: 6–9,5 semanas. La firma electrónica depende de la "
-           "definición de proveedor, certificados y validación legal.",
-      align="justify")
-
-
-def fase6(doc):
-    h1(doc, "8. Fase 6 — Experiencia y alcance (Futura)")
+    h1(doc, "7. Fase 5 — Experiencia y alcance (Futura)")
     bullets(doc, [
         "Notificaciones por correo y push.",
         "Búsqueda de texto completo y reconocimiento óptico de caracteres.",
@@ -550,8 +623,8 @@ def fase6(doc):
     p(doc, "Estimación: 6–8 semanas.", align="justify")
 
 
-def fase7(doc):
-    h1(doc, "9. Fase 7 — Integraciones e IA (Futura)")
+def fase6(doc):
+    h1(doc, "8. Fase 6 — Integraciones e IA (Futura)")
     bullets(doc, [
         "API pública para integraciones con otros sistemas.",
         "Inicio de sesión único (SSO).",
@@ -563,42 +636,71 @@ def fase7(doc):
 
 
 def cronograma(doc):
-    h1(doc, "10. Cronograma y estimaciones")
+    h1(doc, "9. Cronograma y estimaciones")
     p(doc, "Las estimaciones asumen un desarrollador a tiempo completo y "
            "desarrollo asistido por IA, con control de calidad parcial. Se "
            "expresan como rangos.", align="justify")
 
-    h2(doc, "10.1 Resumen de fases")
-    tabla(doc, ["Fase", "Contenido", "Estado", "Estimación", "Contrato"], [
+    h2(doc, "9.1 Resumen de fases")
+    tabla(doc, ["Fase", "Contenido", "Estado", "Estimación", "Horizonte"], [
         ["1. V1.0", "Gestión documental completa", "Elaborada", "—",
          "Base existente"],
         ["2. Plantillas", "Catálogo, alta, modificación y vínculo",
-         "Pendiente", "Base 6–8 sem", "Sí"],
-        ["3. ISO base", "Retención, política por tipo e informes",
-         "Pendiente", "Base 2,5–3,5 sem", "Sí"],
+         "Pendiente", "Base 6–8 sem", "Inmediata"],
+        ["3. ISO completo", "Retención, informes, firma electrónica y copias "
+                            "impresas", "Pendiente", "Base 4–4,5 sem",
+         "Inmediata"],
         ["4. Producción", "LDAP, PostgreSQL, respaldos, migración y "
-                          "despliegue", "Propuesta", "8–12 sem", "No"],
-        ["5. ISO completo", "Firma, no conformidades y copias impresas",
-         "Futura", "6–9,5 sem", "No"],
-        ["6. Experiencia", "Notificaciones, búsqueda, paneles y PWA",
-         "Futura", "6–8 sem", "No"],
-        ["7. Integraciones", "API, SSO, IA y multi-sede", "Futura",
-         "6–10 sem", "No"],
+                          "despliegue", "Propuesta", "8–12 sem", "Posterior"],
+        ["5. Experiencia", "Notificaciones, búsqueda, paneles y PWA",
+         "Futura", "6–8 sem", "Futura"],
+        ["6. Integraciones", "API, SSO, IA y multi-sede", "Futura",
+         "6–10 sem", "Futura"],
     ], anchos=[3.0, 5.2, 2.2, 2.8, 2.4], tam=8.5)
 
-    h2(doc, "10.2 Contrato de tres meses")
-    p(doc, "El contrato cubre la Fase 2 y la Fase 3 (base). La suma de esfuerzo "
-           "técnico es de 8,5 a 11,5 semanas; el tiempo restante hasta los tres "
-           "meses se reserva para pruebas, aceptación, ajustes e imprevistos.",
+    h3(doc, "9.1.1 Desglose de la V1.0")
+    tabla(doc, ["Bloque", "Entregable", "Evidencia"], [
+        ["Núcleo documental", "15 tipos ISO, códigos automáticos, versionado, "
+                              "vigencia y clasificación de seguridad.",
+         "25 modelos de datos"],
+        ["Aprobaciones", "Cadenas de 1 y 2 pasos, bandeja, planillas FOR-005, "
+                         "delegación de jefatura y escalado a 48 horas.",
+         "Servicios y pruebas"],
+        ["Descargas y distribución", "Solicitudes de descarga, doble control "
+                                     "restringido, copias controladas y "
+                                     "revocación.",
+         "Flujo secuencial documentado"],
+        ["Seguridad y auditoría", "LDAP y cuenta local, roles, auditoría en "
+                                  "MongoDB con HMAC y cadena de hashes.",
+         "Reportes e integridad"],
+        ["Formatos SGC", "FOR-001 y FOR-005, constructor de formularios "
+                         "dinámicos.", "Catálogo de formatos"],
+        ["Búsqueda e IA", "Búsqueda de documentos, resumen con IA y conversión "
+                          "a PDF con control de calidad.", "Servicios"],
+        ["Panel administrativo", "Tipos, departamentos, períodos, formatos y "
+                                 "ciclo de vida desde un panel único.",
+         "Vistas de configuración"],
+        ["Calidad y documentación", "Más de 1.100 pruebas automatizadas, "
+                                    "manual de 14 capítulos y 18 diagramas "
+                                    "UML.", "Suite y documentación"],
+    ], anchos=[3.6, 8.4, 4.0], tam=8.5)
+    p(doc, "En dos meses de pasantía se construyeron los ocho bloques "
+           "anteriores, documentados y con pruebas automatizadas; la V1.0 es "
+           "una base operativa, no un prototipo.", align="justify")
+
+    h2(doc, "9.2 Esfuerzo de la etapa inmediata")
+    p(doc, "La etapa inmediata cubre la Fase 2 y la Fase 3. La suma de "
+           "esfuerzo técnico es de 10 a 12,5 semanas; el tiempo restante se "
+           "reserva para pruebas, aceptación, ajustes e imprevistos.",
       align="justify")
     tabla(doc, ["Bloque", "Esfuerzo base"], [
         ["Fase 2 — Plantillas", "6–8 semanas"],
-        ["Fase 3 — ISO base", "2,5–3,5 semanas"],
-        ["Total técnico", "8,5–11,5 semanas"],
-        ["Holgura dentro del contrato", "1,5–4,5 semanas"],
+        ["Fase 3 — ISO completo", "4–4,5 semanas"],
+        ["Total técnico", "10–12,5 semanas"],
+        ["Holgura para pruebas y aceptación", "≈0,5–2,5 semanas"],
     ], anchos=[9.0, 5.0])
 
-    h2(doc, "10.3 Desglose de la Fase 2")
+    h2(doc, "9.3 Desglose de la Fase 2")
     tabla(doc, ["Sub-fase", "Entregable", "Esfuerzo"], [
         ["F2.0", "Modelo y migración 0055", "1 semana"],
         ["F2.1", "Catálogo y listados con filtro", "1 semana"],
@@ -609,18 +711,20 @@ def cronograma(doc):
         ["Total", "Base técnica", "6–8 semanas"],
     ], anchos=[2.0, 9.5, 4.5])
 
-    h2(doc, "10.4 Desglose de la Fase 3")
+    h2(doc, "9.4 Desglose de la Fase 3")
     tabla(doc, ["Sub-fase", "Entregable", "Esfuerzo"], [
         ["F3.1", "Política de retención por tipo", "0,5 semana"],
-        ["F3.2", "Retención y disposición programada", "1,5–2 semanas"],
-        ["F3.3", "Informes de auditoría consolidados", "0,5–1 semana"],
-        ["Total", "Base ISO", "2,5–3,5 semanas"],
+        ["F3.2", "Retención y disposición programada", "1,5 semanas"],
+        ["F3.3", "Informes de auditoría consolidados", "0,5 semana"],
+        ["F3.4", "Firma electrónica y sellado (integración)", "1–1,5 semanas"],
+        ["F3.5", "Control de copias impresas", "0,5 semana"],
+        ["Total", "ISO completo", "4–4,5 semanas"],
     ], anchos=[2.0, 9.5, 4.5])
 
 
 def riesgos(doc):
-    h1(doc, "11. Dependencias y riesgos")
-    h2(doc, "11.1 Matriz de riesgos")
+    h1(doc, "10. Dependencias y riesgos")
+    h2(doc, "10.1 Matriz de riesgos")
     tabla(doc, ["Ámbito", "Riesgo", "Mitigación"], [
         ["Fase 2", "Reclasificar formularios ya llenos como plantillas.",
          "Comando con simulación previa; sin cambios automáticos en la "
@@ -629,29 +733,31 @@ def riesgos(doc):
          "Actualizar títulos, badges y pruebas en la misma entrega."],
         ["Fase 3", "Retención y disposición mal configuradas.",
          "Valores por defecto conservadores y validación en pruebas."],
+        ["Fase 3", "Firma electrónica sin proveedor definido.",
+         "Definir proveedor y alcance jurídico en la semana 1; si no, se "
+         "entrega la base y la firma se reprograma."],
         ["Fase 4", "Calidad de los datos históricos.",
          "Inventario, limpieza y migración por etapas con validación."],
         ["Fase 4", "Dependencia del Active Directory y la red.",
          "Pruebas con cuentas reales y plan de contingencia de acceso."],
-        ["Fase 5", "Firma electrónica y validez legal.",
-         "Definir proveedor y alcance jurídico antes de estimar en firme."],
         ["Transversal", "Adopción por parte de los usuarios.",
          "Capacitación por rol y manual de usuario actualizado."],
     ], anchos=[2.6, 6.4, 7.0], tam=8.5)
 
-    h2(doc, "11.2 Dependencias entre fases")
+    h2(doc, "10.2 Dependencias entre fases")
     bullets(doc, [
         "La Fase 2 y la Fase 3 reutilizan los modelos y flujos de la V1.0.",
+        "La firma electrónica de la Fase 3 depende de decisiones de proveedor "
+        "y validación legal.",
         "La Fase 4 requiere que la Fase 2 y la Fase 3 estén cerradas y "
         "probadas.",
-        "La Fase 5 depende de decisiones de proveedor y validación legal.",
-        "Las Fases 6 y 7 son evolutivos posteriores a la puesta en producción.",
+        "Las Fases 5 y 6 son evolutivos posteriores a la puesta en producción.",
     ])
 
 
 def anexos(doc):
-    h1(doc, "12. Anexos")
-    h2(doc, "12.1 Glosario")
+    h1(doc, "11. Anexos")
+    h2(doc, "11.1 Glosario")
     tabla(doc, ["Término", "Definición"], [
         ["Documento", "Registro controlado con código, tipo, departamento, "
                       "versión, clasificación y estado."],
@@ -659,8 +765,8 @@ def anexos(doc):
                       "crear documentos llenos."],
         ["Planilla de cambios", "Formulario que documenta una modificación y "
                                 "su aprobación."],
-        ["Formato", "Plantilla institucional del flujo: FOR-001 para "
-                    "creación/eliminación y FOR-005 para modificación."],
+        ["Formulario", "Plantilla institucional del flujo: FOR-001 para "
+                       "creación/eliminación y FOR-005 para modificación."],
         ["Vigencia", "Período durante el cual el documento es válido."],
         ["Retención", "Período durante el cual el documento debe conservarse "
                       "antes de su disposición final."],
@@ -670,7 +776,7 @@ def anexos(doc):
                       "documentos."],
     ], anchos=[4.0, 12.0], tam=8.5)
 
-    h2(doc, "12.2 Mapeo de conceptos")
+    h2(doc, "11.2 Mapeo de conceptos")
     tabla(doc, ["Concepto", "Entidad", "Aprobación"], [
         ["Plantilla (en blanco)", "Documento con marca de plantilla",
          "Condicional según el rol"],
@@ -680,7 +786,7 @@ def anexos(doc):
          "Aprobación de planilla"],
     ], anchos=[5.5, 5.5, 5.0], tam=9)
 
-    h2(doc, "12.3 Trazabilidad")
+    h2(doc, "11.3 Trazabilidad")
     p(doc, "Cada fase se valida contra criterios de aceptación y pruebas "
            "automatizadas. El detalle técnico de la Fase 2 vive en "
            "PLAN_PLANTILLAS.txt; la fuente técnica general sigue siendo "
@@ -707,7 +813,6 @@ def main():
     fase4(doc)
     fase5(doc)
     fase6(doc)
-    fase7(doc)
     cronograma(doc)
     riesgos(doc)
     anexos(doc)

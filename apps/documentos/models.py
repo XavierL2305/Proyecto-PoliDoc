@@ -950,6 +950,23 @@ class AprobacionPlanilla(models.Model):
         aprobador = self.aprobador.username if self.aprobador_id else 'sin asignar'
         return f"{rol} {aprobador} - Planilla {self.planilla.codigo}"
 
+    def es_paso_unico(self):
+        """True cuando este paso es el único de la cadena (flujo de jefes).
+
+        Mismo criterio que ``SolicitudAprobacionDocumento.es_paso_unico``: si
+        no hay paso de evaluación vivo (pendiente, en espera o aprobada),
+        el autorizador (GG) evalúa y autoriza, y la planilla debe quedar
+        firmada en ambos bloques.
+        """
+        if self.rol_aprobador != 'autorizador':
+            return False
+        return not AprobacionPlanilla.objects.filter(
+            planilla_id=self.planilla_id,
+            rol_aprobador='evaluador',
+        ).exclude(estado__in=('rechazada', 'cancelada')).exclude(
+            pk=self.pk,
+        ).exists()
+
 
 class DocumentoAsociadoPlanilla(models.Model):
     planilla = models.ForeignKey(
@@ -1121,6 +1138,28 @@ class SolicitudAprobacionDocumento(models.Model):
     def __str__(self):
         return f"Aprobación {self.documento.codigo} - {self.get_estado_display()}"
 
+    def es_paso_unico(self):
+        """True cuando este paso es el único de la cadena (flujo de jefes).
+
+        El flujo de jefes crea UN solo paso (autorizador/GG, ``es_final``).
+        En ese caso el mismo aprobador evalúa y autoriza, de modo que la
+        planilla debe quedar firmada en los DOS bloques (Evaluado/Autorizado
+        por). En la cadena de dos pasos esto es False y cada rol firma lo suyo.
+
+        Solo cuenta un evaluador que no murió en la cadena: si una cadena
+        anterior fue rechazada/cancelada, sus filas no invalidan la regla de
+        la cadena vigente.
+        """
+        if self.rol_aprobador != 'autorizador' or self.documento_id is None:
+            return False
+        return not SolicitudAprobacionDocumento.objects.filter(
+            documento_id=self.documento_id,
+            accion_solicitud=self.accion_solicitud,
+            rol_aprobador='evaluador',
+        ).exclude(estado__in=('rechazada', 'cancelada')).exclude(
+            pk=self.pk,
+        ).exists()
+
     def aprobar(self, observaciones=''):
         from django.utils import timezone as tz
         self.estado = 'aprobada'
@@ -1128,10 +1167,11 @@ class SolicitudAprobacionDocumento(models.Model):
         self.fecha_respuesta = tz.now()
         self.save(update_fields=['estado', 'observaciones', 'fecha_respuesta'])
         valores = {}
-        if self.rol_aprobador == 'evaluador':
-            valores.update(_valores_evaluacion(self.aprobador))
+        # En un solo paso, el autorizador también firma la evaluación.
+        if self.rol_aprobador == 'evaluador' or self.es_paso_unico():
+            valores.update(_valores_evaluacion(self.aprobador, self.fecha_respuesta))
         if self.es_final:
-            valores.update(_valores_autorizacion(self.aprobador))
+            valores.update(_valores_autorizacion(self.aprobador, self.fecha_respuesta))
             valores['resolucion'] = 'Aceptado'
         # Solo la planilla de la operación que corresponde a ESTA acción se
         # autocompleta: reactivar/renovar no tienen planilla y no deben tocar
@@ -1155,10 +1195,13 @@ class SolicitudAprobacionDocumento(models.Model):
         self.motivo_rechazo = motivo
         self.fecha_respuesta = tz.now()
         self.save(update_fields=['estado', 'motivo_rechazo', 'fecha_respuesta'])
+        valores = {}
+        # En un solo paso, el autorizador que rechaza también firma la
+        # evaluación; en dos pasos solo firma el rol que rechazó.
+        if self.rol_aprobador == 'evaluador' or self.es_paso_unico():
+            valores.update(_valores_evaluacion(self.aprobador, self.fecha_respuesta))
         if self.rol_aprobador == 'autorizador':
-            valores = _valores_autorizacion(self.aprobador)
-        else:
-            valores = _valores_evaluacion(self.aprobador)
+            valores.update(_valores_autorizacion(self.aprobador, self.fecha_respuesta))
         valores['resolucion'] = 'Rechazado'
         operacion = OPERACION_POR_ACCION.get(self.accion_solicitud)
         if operacion:
@@ -1368,21 +1411,41 @@ def _cargo_usuario(usuario):
     return f"{rol} — {depto}" if depto else rol
 
 
-def _valores_evaluacion(usuario):
-    """Diccionario con los campos de evaluación para autorrellenar."""
+def _fecha_respuesta_iso(fecha):
+    """Normaliza la fecha real de una respuesta a ISO (AAAA-MM-DD).
+
+    Las firmas de evaluación/autorización deben reflejar cuándo se respondió
+    (``fecha_respuesta``/``fecha_aprobacion``), no el momento en que se
+    rellena la planilla: la regeneración posterior no debe mover la fecha.
+    """
+    if not fecha:
+        fecha = timezone.now()
+    return timezone.localtime(fecha).date().isoformat()
+
+
+def _valores_evaluacion(usuario, fecha=None):
+    """Diccionario con los campos de evaluación para autorrellenar.
+
+    ``fecha`` es la fecha real de la respuesta (aprobación o rechazo); si se
+    omite, se usa la fecha actual.
+    """
     return {
         'evaluado_por_nombre': usuario.get_full_name() or usuario.username,
         'evaluado_por_cargo': _cargo_usuario(usuario),
-        'evaluado_por_fecha': timezone.now().date().isoformat(),
+        'evaluado_por_fecha': _fecha_respuesta_iso(fecha),
     }
 
 
-def _valores_autorizacion(usuario):
-    """Diccionario con los campos de autorización para autorrellenar."""
+def _valores_autorizacion(usuario, fecha=None):
+    """Diccionario con los campos de autorización para autorrellenar.
+
+    ``fecha`` es la fecha real de la respuesta (aprobación o rechazo); si se
+    omite, se usa la fecha actual.
+    """
     return {
         'autorizado_por_nombre': usuario.get_full_name() or usuario.username,
         'autorizado_por_cargo': _cargo_usuario(usuario),
-        'autorizado_por_fecha': timezone.now().date().isoformat(),
+        'autorizado_por_fecha': _fecha_respuesta_iso(fecha),
     }
 
 
@@ -1455,17 +1518,19 @@ def mapear_valores_auto(formato, valores):
     return resultado
 
 
-def autocompletar_respuestas(documento, valores, operacion=None):
-    """Actualiza las respuestas del SolicitudCambio con valores de sistema.
+def autocompletar_respuestas_solicitud(sol, valores):
+    """Actualiza las respuestas de una ``SolicitudCambio`` concreta.
 
-    Con ``operacion`` se limita a la planilla de esa operación: la
-    aprobación de una reactivación/renovación no debe escribir en la última
-    SolicitudCambio del documento, que puede pertenecer a otra operación.
+    A diferencia de :func:`autocompletar_respuestas` (que elige la última
+    solicitud del documento por operación), apunta a ESTA solicitud: es el
+    camino de las planillas FOR-005, donde cada ``PlanillaCambios`` enlaza su
+    propia ``SolicitudCambio`` y no debe tocar otras planillas concurrentes
+    del mismo documento.
+
+    Tras escribir, descarta el XLSX/PDF cacheado de la solicitud para que la
+    siguiente descarga lo regenere con los valores nuevos (p. ej. las firmas
+    de evaluación/autorización).
     """
-    solicitudes = SolicitudCambio.objects.filter(documento=documento)
-    if operacion:
-        solicitudes = solicitudes.filter(operacion=operacion)
-    sol = solicitudes.order_by('-id').first()
     if not sol or not sol.formato:
         return
     valores_auto = valores_auto_solicitud(sol)
@@ -1477,6 +1542,24 @@ def autocompletar_respuestas(documento, valores, operacion=None):
     respuestas.update(nuevos)
     sol.respuestas = respuestas
     sol.save(update_fields=['respuestas'])
+    from .services.planillas import invalidar_planilla_solicitud
+    invalidar_planilla_solicitud(sol)
+
+
+def autocompletar_respuestas(documento, valores, operacion=None):
+    """Actualiza las respuestas del SolicitudCambio con valores de sistema.
+
+    Con ``operacion`` se limita a la planilla de esa operación: la
+    aprobación de una reactivación/renovación no debe escribir en la última
+    SolicitudCambio del documento, que puede pertenecer a otra operación.
+    """
+    solicitudes = SolicitudCambio.objects.filter(documento=documento)
+    if operacion:
+        solicitudes = solicitudes.filter(operacion=operacion)
+    sol = solicitudes.order_by('-id').first()
+    if not sol:
+        return
+    autocompletar_respuestas_solicitud(sol, valores)
 
 
 def respuestas_planilla_actual(sol):

@@ -29,7 +29,7 @@ from .forms import (
 from .icons import ICONOS_DISPONIBLES
 from .jefatura import es_jefe_efectivo
 from .services.aprobaciones import (
-    avisar_paso_sin_asignar, promover_autorizador,
+    avisar_paso_sin_asignar, autocompletar_planilla, promover_autorizador,
     notificar_aprobador as _notificar_aprobador,
 )
 from .services.planillas import aplicar_planilla_al_documento, invalidar_planillas_documento
@@ -1233,6 +1233,23 @@ def obtener_siguiente_secuencia(request):
     return JsonResponse({'secuencia': secuencia})
 
 
+def _normalizar_version(valor):
+    """Normaliza un número de versión para compararlo ('1.0' ≡ '1')."""
+    try:
+        return str(int(float(str(valor).strip())))
+    except (TypeError, ValueError):
+        return str(valor or '').strip()
+
+
+def _version_vigente(versiones, documento):
+    """Devuelve la ``VersionDocumento`` que corresponde a ``version_actual``."""
+    objetivo = _normalizar_version(documento.version_actual)
+    return next(
+        (v for v in versiones if _normalizar_version(v.numero_version) == objetivo),
+        None,
+    )
+
+
 @login_required(login_url='/login/')
 def detalle_documento(request, tipo, documento_id):
     documento = get_documento(tipo, documento_id)
@@ -1247,7 +1264,13 @@ def detalle_documento(request, tipo, documento_id):
 
     _reconciliar_resumen_ia(documento)
 
-    versiones = VersionDocumento.objects.filter(documento=documento, activa=True)
+    versiones = list(VersionDocumento.objects.filter(documento=documento, activa=True))
+    version_vigente = _version_vigente(versiones, documento)
+    # La versión vigente siempre primero; el resto, de la más reciente a la
+    # más antigua (orden estable: se ordena por fecha y luego por vigencia).
+    versiones.sort(key=lambda v: v.fecha_creacion, reverse=True)
+    if version_vigente:
+        versiones.sort(key=lambda v: v.pk != version_vigente.pk)
     from .permissions import descarga_autorizada, puede_descargar
     tiene_descarga_aprobada = descarga_autorizada(documento, request.user)
 
@@ -1435,10 +1458,11 @@ def detalle_documento(request, tipo, documento_id):
         'tipo': tipo,
         'codigos_relacionados': codigos_relacionados,
         'versiones': versiones,
+        'version_vigente_id': version_vigente.pk if version_vigente else None,
         'puede_editar': puede_editar_documento(request.user, documento),
         'puede_eliminar': puede_eliminar_documento(request.user, documento),
         'puede_eliminar_versiones': es_admin or es_propietario,
-        'versiones_eliminables': versiones.count() >= 2,
+        'versiones_eliminables': len(versiones) >= 2,
         'puede_descargar': puede_descargar(request.user, documento) or tiene_descarga_aprobada,
         'puede_inhabilitar': puede_inhab,
         'puede_inhabilitar_directo': rol_inhab == 'directo',
@@ -2096,7 +2120,8 @@ def historial_versiones(request, tipo, documento_id):
     if not puede_ver_documento(request.user, documento):
         messages.error(request, 'No tienes permisos para ver este documento.')
         return redirect('documentos:mis_documentos')
-    versiones = VersionDocumento.objects.filter(documento=documento, activa=True)
+    versiones = list(VersionDocumento.objects.filter(documento=documento, activa=True))
+    version_vigente = _version_vigente(versiones, documento)
     solicitudes_pendientes = SolicitudAprobacionDocumento.objects.filter(
         documento=documento, accion_solicitud='eliminar_version', estado='pendiente'
     ).values_list('version_a_eliminar_id', flat=True)
@@ -2107,9 +2132,10 @@ def historial_versiones(request, tipo, documento_id):
     puede_eliminar_versiones = perfil.es_administrador or documento.propietario == request.user
     return render(request, 'documentos/historial_versiones.html', {
         'documento': documento, 'tipo': tipo, 'versiones': versiones,
+        'version_vigente_id': version_vigente.pk if version_vigente else None,
         'solicitudes_pendientes_ids': list(solicitudes_pendientes),
         'puede_eliminar_versiones': puede_eliminar_versiones,
-        'versiones_eliminables': versiones.count() >= 2,
+        'versiones_eliminables': len(versiones) >= 2,
     })
 
 
@@ -3370,6 +3396,8 @@ def aprobar_planilla(request, planilla_uuid):
             aprobacion.observaciones = observaciones
             aprobacion.fecha_aprobacion = timezone.now()
             aprobacion.save()
+            # Firmas de evaluación/autorización en la planilla (FOR-005).
+            autocompletar_planilla(planilla, aprobacion, aprobada=True)
             if es_final:
                 planilla.estado = 'aprobado'
                 planilla.fecha_aprobacion = timezone.now()
@@ -3404,6 +3432,8 @@ def aprobar_planilla(request, planilla_uuid):
             aprobacion.observaciones = observaciones
             aprobacion.fecha_aprobacion = timezone.now()
             aprobacion.save()
+            # Quien rechaza también firma la planilla (FOR-005).
+            autocompletar_planilla(planilla, aprobacion, aprobada=False)
             hermano = AprobacionPlanilla.objects.filter(
                 planilla=planilla,
             ).exclude(id=aprobacion.id).exclude(estado__in=('aprobada', 'rechazada', 'cancelada')).first()

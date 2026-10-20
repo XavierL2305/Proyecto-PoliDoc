@@ -21,6 +21,7 @@ import logging
 import re
 
 from django.db import transaction
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -232,13 +233,31 @@ def _limpiar_planillas(solicitud):
             logger.warning('No se pudo borrar %s de %s: %s', campo, solicitud_codigo(solicitud), exc)
 
 
+def invalidar_planilla_solicitud(solicitud):
+    """Descarta el XLSX/PDF cacheados de UNA ``SolicitudCambio`` concreta.
+
+    Se usa tras autocompletar la planilla (firmas de evaluación/autorización
+    o resolución) para que la siguiente descarga la regenere con los valores
+    nuevos. Devuelve el número de solicitudes afectadas (0 o 1).
+    """
+    if not solicitud or not (solicitud.planilla_xlsx or solicitud.planilla_pdf):
+        return 0
+    _limpiar_planillas(solicitud)
+    logger.info(
+        'Planilla de %s invalidada tras autocompletado',
+        solicitud_codigo(solicitud),
+    )
+    return 1
+
+
 def invalidar_planillas_documento(documento):
-    """Descarta las planillas SGC-FOR-001 guardadas de un documento.
+    """Descarta las planillas guardadas (FOR-001 y FOR-005) de un documento.
 
     Los campos auto de la planilla (vigencia, versión, título, operación…)
     se recalculan al mostrar/exportar, pero los archivos persistidos son una
     instantánea: se limpian aquí para que la siguiente descarga o la tarea de
-    barrido los regeneren con los valores actuales.
+    barrido los regeneren con los valores actuales. Cubre todas las
+    operaciones (creación, modificación FOR-005 y eliminación).
 
     Devuelve el número de solicitudes afectadas.
     """
@@ -247,9 +266,7 @@ def invalidar_planillas_documento(documento):
     if not documento:
         return 0
     afectadas = 0
-    solicitudes = SolicitudCambio.objects.filter(
-        documento=documento, operacion__in=OPERACIONES_CON_PLANILLA,
-    )
+    solicitudes = SolicitudCambio.objects.filter(documento=documento)
     for solicitud in solicitudes:
         if not solicitud.planilla_xlsx and not solicitud.planilla_pdf:
             continue
@@ -270,6 +287,29 @@ def _nombre_archivo(solicitud, extension):
     return f'{base}_{solicitud.operacion}.{extension}'
 
 
+def agregar_linea_historial(documento, linea):
+    """Añade una línea al ``historial_cambios`` sin pegar líneas."""
+    linea = (linea or '').strip()
+    if not linea:
+        return
+    previas = (documento.historial_cambios or '').strip()
+    documento.historial_cambios = f'{previas}\n{linea}' if previas else linea
+
+
+def linea_historial_planilla(planilla, nueva_version, usuario=None):
+    """Línea del historial para una versión creada por una planilla."""
+    fecha = planilla.fecha_aprobacion or timezone.now()
+    autor = planilla.responsable.get_full_name() or planilla.responsable.username
+    aprobador = ''
+    if usuario:
+        nombre = usuario.get_full_name() or usuario.username
+        aprobador = f', aprobada por {nombre}'
+    return (
+        f"v{nueva_version} - {fecha.strftime('%Y-%m-%d %H:%M')} - "
+        f"modificacion por {autor} (Planilla {planilla.codigo}{aprobador})"
+    )
+
+
 def aplicar_planilla_al_documento(planilla, usuario=None):
     """Vuelca una ``PlanillaCambios`` aprobada sobre su documento.
 
@@ -286,7 +326,10 @@ def aplicar_planilla_al_documento(planilla, usuario=None):
 
     La **entrada en vigor no se reinicia**: aplicar una modificación cambia
     versión/título/etc. pero no debe mover ``fecha_vigencia`` del documento.
-    Sí invalida las planillas guardadas, cuyos campos auto quedan viejos.
+    Registra la nueva versión en ``historial_cambios`` y, si la planilla
+    reemplaza el archivo, descarta el ``archivo_pdf`` obsoleto para que se
+    regenere desde el nuevo. Sí invalida las planillas guardadas, cuyos campos
+    auto quedan viejos.
     """
     from ..models import Documento, ReferenciaDocumento, VersionDocumento
 
@@ -296,12 +339,18 @@ def aplicar_planilla_al_documento(planilla, usuario=None):
 
     clasificacion_anterior = documento.clasificacion
 
+    # PDF de vista previa del archivo anterior: si la planilla reemplaza el
+    # archivo hay que descartarlo para que se regenere desde el nuevo.
+    pdf_anterior = documento.archivo_pdf
+    reemplaza_archivo = bool(planilla.archivo_propuesto)
+
     if planilla.nombre_propuesto:
         documento.nombre = planilla.nombre_propuesto
     if planilla.descripcion_propuesta is not None:
         documento.descripcion = planilla.descripcion_propuesta
-    if planilla.archivo_propuesto:
+    if reemplaza_archivo:
         documento.archivo = planilla.archivo_propuesto
+        documento.archivo_pdf = ''
     if planilla.participantes_propuestos:
         documento.participantes = planilla.participantes_propuestos
 
@@ -312,7 +361,20 @@ def aplicar_planilla_al_documento(planilla, usuario=None):
     documento.version_actual = nueva_version
     documento.estado = 'activo'
     documento.afecta_todos = planilla.afecta_todos
+    agregar_linea_historial(
+        documento, linea_historial_planilla(planilla, nueva_version, usuario),
+    )
     documento.save()
+
+    if (reemplaza_archivo and pdf_anterior
+            and pdf_anterior.name != documento.archivo.name):
+        try:
+            pdf_anterior.delete(save=False)
+        except Exception as exc:  # noqa: BLE001 - un PDF huérfano no debe romper
+            logger.warning(
+                'No se pudo borrar el PDF obsoleto de %s: %s',
+                documento.codigo, exc,
+            )
 
     documento.responsables.set(planilla.responsables_propuestos.all())
     documento.departamentos_afectados.set(planilla.departamentos_afectados.all())
@@ -345,7 +407,10 @@ def aplicar_planilla_al_documento(planilla, usuario=None):
         numero_version=nueva_version,
         archivo=planilla.archivo_propuesto if planilla.archivo_propuesto else documento.archivo,
         cambios=f'Planilla de Cambios {planilla.codigo}: {planilla.justificacion}',
-        creado_por=usuario or planilla.responsable,
+        # La versión la crea quien elaboró el cambio (responsable de la
+        # planilla), no quien lo aprueba: el aprobador queda en la cadena de
+        # aprobación y en la auditoría.
+        creado_por=planilla.responsable,
     )
 
     cambios = {}

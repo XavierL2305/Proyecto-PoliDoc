@@ -17,6 +17,53 @@ from django.utils import timezone
 logger = logging.getLogger(__name__)
 
 
+def valores_autorrelleno_planilla(aprobacion, aprobada=True):
+    """Valores de evaluación/autorización/resolución de una respuesta.
+
+    Reglas (compartidas con ``SolicitudAprobacionDocumento``):
+
+    - **Un solo paso** (jefe → GG): el mismo aprobador firma Evaluado y
+      Autorizado.
+    - **Dos pasos**: el evaluador firma solo Evaluado; el autorizador firma
+      Autorizado y, si es final, fija la Resolución.
+    - **Rechazo**: firma el rol que actuó (en un solo paso, ambos) y la
+      Resolución queda ``Rechazado``.
+
+    Usa la fecha real de la respuesta (``fecha_aprobacion``).
+    """
+    from ..models import _valores_autorizacion, _valores_evaluacion
+
+    valores = {}
+    if aprobacion.rol_aprobador == 'evaluador' or aprobacion.es_paso_unico():
+        valores.update(_valores_evaluacion(
+            aprobacion.aprobador, aprobacion.fecha_aprobacion,
+        ))
+    if aprobacion.rol_aprobador == 'autorizador':
+        valores.update(_valores_autorizacion(
+            aprobacion.aprobador, aprobacion.fecha_aprobacion,
+        ))
+    if not aprobada:
+        valores['resolucion'] = 'Rechazado'
+    elif aprobacion.es_final:
+        valores['resolucion'] = 'Aceptado'
+    return valores
+
+
+def autocompletar_planilla(planilla, aprobacion, aprobada=True):
+    """Vuelca las firmas de evaluación/autorización en la planilla FOR-005.
+
+    Escribe en la ``SolicitudCambio`` enlazada a la planilla (motor dinámico)
+    y descarta el XLSX/PDF cacheado para que la siguiente descarga se
+    regenere firmado. Silencioso si la planilla no tiene solicitud enlazada.
+    """
+    from ..models import autocompletar_respuestas_solicitud
+
+    if not planilla.solicitud_cambio_id:
+        return
+    valores = valores_autorrelleno_planilla(aprobacion, aprobada=aprobada)
+    autocompletar_respuestas_solicitud(planilla.solicitud_cambio, valores)
+
+
 def notificar_aprobador(aprobador, solicitante, documento, es_evaluador=False, planilla=None):
     """Crea la notificación in-app de un paso pendiente de aprobación."""
     from autenticacion.models import Notificacion
