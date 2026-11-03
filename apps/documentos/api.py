@@ -11,11 +11,12 @@ from .permissions import (
     puede_transferir, documentos_usuario,
     puede_ver_documento, q_documentos_visibles
 )
-from .services.aprobaciones import autocompletar_planilla
-from .services.planillas import aplicar_planilla_al_documento
+from .services.aprobaciones import (
+    notificar_planilla_resuelta, resolver_aprobacion_planilla,
+    tomar_paso_esperando,
+)
 from .cache_utils import tipos_activos
 from .jefatura import aprobadores_que_repr, es_delegado_vigente
-from auditoria.services import registrar_aprobacion_planilla, registrar_rechazo_planilla
 
 
 @login_required(login_url='/login/')
@@ -630,7 +631,8 @@ def aprobar_creacion_documento(request, tipo, documento_id):
     if request.method != 'POST':
         return JsonResponse({'success': False, 'mensaje': 'Método no permitido'}, status=405)
     user = request.user
-    if not (user.perfil.es_jefe or es_delegado_vigente(user)):
+    es_admin = user.perfil.es_administrador
+    if not (user.perfil.es_jefe or es_delegado_vigente(user) or es_admin):
         return JsonResponse({'success': False, 'mensaje': 'No tienes permisos'}, status=403)
     try:
         doc = Documento.objects.get(uuid=documento_id, tipo=tipo)
@@ -640,6 +642,18 @@ def aprobar_creacion_documento(request, tipo, documento_id):
         documento=doc, estado='pendiente',
         aprobador_id__in=aprobadores_que_repr(user),
     ).order_by('-fecha_solicitud').first()
+    if not solicitud and es_admin and doc.es_plantilla:
+        # Plantilla sin jefe de departamento: el admin la toma de 'esperando'.
+        solicitud = (
+            SolicitudAprobacionDocumento.objects.select_for_update()
+            .filter(
+                documento=doc, estado='esperando', aprobador__isnull=True,
+            )
+            .order_by('-fecha_solicitud')
+            .first()
+        )
+        if solicitud:
+            tomar_paso_esperando(solicitud, user)
     if not solicitud:
         return JsonResponse({'success': False, 'mensaje': 'Solicitud no encontrada'}, status=404)
     data = json.loads(request.body) if request.body else {}
@@ -689,7 +703,8 @@ def rechazar_creacion_documento(request, tipo, documento_id):
     if request.method != 'POST':
         return JsonResponse({'success': False, 'mensaje': 'Método no permitido'}, status=405)
     user = request.user
-    if not (user.perfil.es_jefe or es_delegado_vigente(user)):
+    es_admin = user.perfil.es_administrador
+    if not (user.perfil.es_jefe or es_delegado_vigente(user) or es_admin):
         return JsonResponse({'success': False, 'mensaje': 'No tienes permisos'}, status=403)
     try:
         doc = Documento.objects.get(uuid=documento_id, tipo=tipo)
@@ -699,6 +714,17 @@ def rechazar_creacion_documento(request, tipo, documento_id):
         documento=doc, estado='pendiente',
         aprobador_id__in=aprobadores_que_repr(user),
     ).order_by('-fecha_solicitud').first()
+    if not solicitud and es_admin and doc.es_plantilla:
+        solicitud = (
+            SolicitudAprobacionDocumento.objects.select_for_update()
+            .filter(
+                documento=doc, estado='esperando', aprobador__isnull=True,
+            )
+            .order_by('-fecha_solicitud')
+            .first()
+        )
+        if solicitud:
+            tomar_paso_esperando(solicitud, user)
     if not solicitud:
         return JsonResponse({'success': False, 'mensaje': 'Solicitud no encontrada'}, status=404)
     data = json.loads(request.body) if request.body else {}
@@ -776,7 +802,8 @@ def aprobar_planilla(request, planilla_uuid):
     if request.method != 'POST':
         return JsonResponse({'success': False, 'mensaje': 'Método no permitido'}, status=405)
     user = request.user
-    if not (user.perfil.es_jefe or es_delegado_vigente(user)):
+    es_admin = user.perfil.es_administrador
+    if not (user.perfil.es_jefe or es_delegado_vigente(user) or es_admin):
         return JsonResponse({'success': False, 'mensaje': 'No tienes permisos'}, status=403)
     try:
         planilla = PlanillaCambios.objects.get(uuid=planilla_uuid)
@@ -785,41 +812,42 @@ def aprobar_planilla(request, planilla_uuid):
             estado='pendiente',
         )
     except (PlanillaCambios.DoesNotExist, AprobacionPlanilla.DoesNotExist):
+        aprobacion = None
+    if aprobacion is None and es_admin:
+        # Planilla de plantilla sin jefe: el admin la toma de 'esperando'.
+        try:
+            planilla = PlanillaCambios.objects.get(uuid=planilla_uuid)
+        except PlanillaCambios.DoesNotExist:
+            return JsonResponse({'success': False, 'mensaje': 'Planilla no encontrada'}, status=404)
+        doc_plantilla = planilla.documento
+        if doc_plantilla and doc_plantilla.es_plantilla:
+            aprobacion = (
+                AprobacionPlanilla.objects.select_for_update()
+                .filter(
+                    planilla=planilla, aprobador__isnull=True,
+                    estado='esperando',
+                )
+                .first()
+            )
+            if aprobacion:
+                tomar_paso_esperando(aprobacion, user)
+    if aprobacion is None:
         return JsonResponse({'success': False, 'mensaje': 'Planilla no encontrada'}, status=404)
     data = json.loads(request.body) if request.body else {}
     observaciones = data.get('observaciones', '')
-    es_final = aprobacion.es_final
-    aprobacion.estado = 'aprobada'
-    aprobacion.observaciones = observaciones
-    aprobacion.fecha_aprobacion = timezone.now()
-    aprobacion.save()
-    # Firmas de evaluación/autorización en la planilla (FOR-005).
-    autocompletar_planilla(planilla, aprobacion, aprobada=True)
-    if es_final:
-        planilla.estado = 'aprobado'
-        planilla.fecha_aprobacion = timezone.now()
-        planilla.save(update_fields=['estado', 'fecha_aprobacion'])
-        if planilla.solicitud_cambio:
-            planilla.solicitud_cambio.estado = 'aprobado'
-            planilla.solicitud_cambio.save(update_fields=['estado'])
-        doc, cambios = aplicar_planilla_al_documento(planilla, usuario=user)
-        if doc:
-            registrar_aprobacion_planilla(
-                usuario=user, planilla=planilla, documento=doc,
-                cambios=cambios, observaciones=observaciones,
-            )
-        from autenticacion.models import Notificacion
-        Notificacion.objects.create(
-            usuario=planilla.responsable, titulo='Planilla de Cambios aprobada',
-            mensaje=f'Tu planilla {planilla.codigo} ha sido aprobada. Los cambios se han aplicado al documento.',
-            tipo='aprobacion_documento', url_accion=f'/documentos/planilla-cambios/{planilla.uuid}/',
-            departamento=planilla.documento.departamento,
-            documento=planilla.documento
-        )
-        return JsonResponse({'success': True, 'mensaje': 'Planilla aprobada y cambios aplicados correctamente'})
-    from .services.aprobaciones import promover_autorizador
-    promover_autorizador(planilla, aprobacion, user)
-    return JsonResponse({'success': True, 'mensaje': 'Evaluación registrada, pendiente de autorización'})
+    resultado = resolver_aprobacion_planilla(
+        aprobacion, user, aprobada=True, observaciones=observaciones,
+    )
+    if resultado['es_final']:
+        notificar_planilla_resuelta(planilla, True, observaciones)
+        return JsonResponse({
+            'success': True,
+            'mensaje': 'Planilla aprobada y cambios aplicados correctamente',
+        })
+    return JsonResponse({
+        'success': True,
+        'mensaje': 'Evaluación registrada, pendiente de autorización',
+    })
 
 
 @login_required(login_url='/login/')
@@ -828,7 +856,8 @@ def rechazar_planilla(request, planilla_uuid):
     if request.method != 'POST':
         return JsonResponse({'success': False, 'mensaje': 'Método no permitido'}, status=405)
     user = request.user
-    if not (user.perfil.es_jefe or es_delegado_vigente(user)):
+    es_admin = user.perfil.es_administrador
+    if not (user.perfil.es_jefe or es_delegado_vigente(user) or es_admin):
         return JsonResponse({'success': False, 'mensaje': 'No tienes permisos'}, status=403)
     try:
         planilla = PlanillaCambios.objects.get(uuid=planilla_uuid)
@@ -837,44 +866,37 @@ def rechazar_planilla(request, planilla_uuid):
             estado='pendiente',
         )
     except (PlanillaCambios.DoesNotExist, AprobacionPlanilla.DoesNotExist):
+        aprobacion = None
+    if aprobacion is None and es_admin:
+        try:
+            planilla = PlanillaCambios.objects.get(uuid=planilla_uuid)
+        except PlanillaCambios.DoesNotExist:
+            return JsonResponse({'success': False, 'mensaje': 'Planilla no encontrada'}, status=404)
+        doc_plantilla = planilla.documento
+        if doc_plantilla and doc_plantilla.es_plantilla:
+            aprobacion = (
+                AprobacionPlanilla.objects.select_for_update()
+                .filter(
+                    planilla=planilla, aprobador__isnull=True,
+                    estado='esperando',
+                )
+                .first()
+            )
+            if aprobacion:
+                tomar_paso_esperando(aprobacion, user)
+    if aprobacion is None:
         return JsonResponse({'success': False, 'mensaje': 'Planilla no encontrada'}, status=404)
     data = json.loads(request.body) if request.body else {}
     motivo = data.get('motivo', '')
     if not motivo:
         return JsonResponse({'success': False, 'mensaje': 'El motivo de rechazo es requerido'}, status=400)
-    aprobacion.estado = 'rechazada'
-    aprobacion.observaciones = motivo
-    aprobacion.fecha_aprobacion = timezone.now()
-    aprobacion.save()
-    # Quien rechaza también firma la planilla (FOR-005).
-    autocompletar_planilla(planilla, aprobacion, aprobada=False)
-    hermano = AprobacionPlanilla.objects.filter(
-        planilla=planilla,
-    ).exclude(id=aprobacion.id).exclude(estado__in=('aprobada', 'rechazada', 'cancelada')).first()
-    if hermano:
-        hermano.estado = 'cancelada'
-        hermano.save(update_fields=['estado'])
-    planilla.estado = 'rechazado'
-    planilla.save(update_fields=['estado'])
-    if planilla.solicitud_cambio:
-        planilla.solicitud_cambio.estado = 'rechazado'
-        planilla.solicitud_cambio.save(update_fields=['estado'])
-    doc = planilla.documento
-    if doc:
-        doc.estado = 'activo'
-        doc.save(update_fields=['estado'])
-    registrar_rechazo_planilla(
-        usuario=user, planilla=planilla, documento=doc, observaciones=motivo,
+    resolver_aprobacion_planilla(
+        aprobacion, user, aprobada=False, observaciones=motivo,
     )
-    from autenticacion.models import Notificacion
-    Notificacion.objects.create(
-        usuario=planilla.responsable, titulo='Planilla de Cambios rechazada',
-        mensaje=f'Tu planilla {planilla.codigo} ha sido rechazada. Motivo: {motivo}',
-        tipo='rechazo_documento', url_accion=f'/documentos/planilla-cambios/{planilla.uuid}/',
-        departamento=planilla.documento.departamento,
-        documento=planilla.documento
-    )
-    return JsonResponse({'success': True, 'mensaje': 'Planilla rechazada correctamente'})
+    notificar_planilla_resuelta(planilla, False, motivo)
+    return JsonResponse({
+        'success': True, 'mensaje': 'Planilla rechazada correctamente',
+    })
 
 
 # =============================================================================

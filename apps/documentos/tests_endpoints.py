@@ -1963,19 +1963,30 @@ class SolicitudDuplicadaTest(BaseDocumentosTest):
 
 
 class FormulariosDescargaTest(BaseDocumentosTest):
-    """Tests de la vista /documentos/: descarga en la vista de lista."""
+    """Tests de la vista /documentos/ (ahora catálogo de PLANTILLAS)."""
 
     def setUp(self):
         super().setUp()
         self.client = Client()
+        # El catálogo lista plantillas (es_plantilla=True), no documentos
+        # normales. Reclasificamos los fixtures usados por estas pruebas.
+        from documentos.models import Documento
+        Documento.objects.filter(pk__in=[
+            self.doc_th.pk, self.doc_publico.pk,
+            self.doc_borrador.pk, self.doc_obsoleto.pk,
+        ]).update(es_plantilla=True)
+        for doc in (self.doc_th, self.doc_publico, self.doc_borrador, self.doc_obsoleto):
+            doc.refresh_from_db()
 
     def test_mismo_depto_ve_solicitar(self):
-        """Usuario del mismo depto del doc sin aprobación ve 'Solicitar' (no 'Descargar')."""
+        """Plantilla confidencial propia, visible pero no descargable directo → 'Solicitar'."""
         from documentos.models import Documento
         doc = Documento.objects.create(
-            tipo=self.tipo_formulario, nombre='Formulario Interno',
-            codigo='TI-FOR-100', estado='activo', propietario=self.user_jefe_ti,
-            departamento=self.depto_ti, version_actual='1.0',
+            tipo=self.tipo_formulario, nombre='Plantilla Interna',
+            codigo='TI-FOR-100', estado='activo', es_plantilla=True,
+            propietario=self.user_trabajador,
+            departamento=self.depto_ti, clasificacion='confidencial',
+            version_actual='1.0',
         )
         self.client.login(username='trab01', password='testpass123')
         resp = self.client.get('/documentos/')
@@ -1991,9 +2002,11 @@ class FormulariosDescargaTest(BaseDocumentosTest):
         from django.utils import timezone
         from documentos.models import Documento, SolicitudDescarga
         doc = Documento.objects.create(
-            tipo=self.tipo_formulario, nombre='Formulario Interno TI',
-            codigo='TI-FOR-300', estado='activo', propietario=self.user_jefe_ti,
-            departamento=self.depto_ti, version_actual='1.0',
+            tipo=self.tipo_formulario, nombre='Plantilla Confidencial TI',
+            codigo='TI-FOR-300', estado='activo', es_plantilla=True,
+            propietario=self.user_trabajador,
+            departamento=self.depto_ti, clasificacion='confidencial',
+            version_actual='1.0',
         )
         SolicitudDescarga.objects.create(
             documento=doc, solicitado_por=self.user_trabajador,
@@ -2011,12 +2024,12 @@ class FormulariosDescargaTest(BaseDocumentosTest):
     def test_solicitud_pendiente_ve_badge(self):
         """Con solicitud pendiente, la lista muestra badge en vez de 'Solicitar'."""
         from documentos.models import Documento, SolicitudDescarga
-        # Doc interno de TH propiedad del jefe de TH; trab02 (TH, no propietario)
-        # no puede descargar directo y tiene una solicitud pendiente.
         doc = Documento.objects.create(
-            tipo=self.tipo_formulario, nombre='Formulario TH Interno',
-            codigo='TH-FOR-200', estado='activo', propietario=self.user_jefe_th,
-            departamento=self.depto_th, version_actual='1.0',
+            tipo=self.tipo_formulario, nombre='Plantilla TH Confidencial',
+            codigo='TH-FOR-200', estado='activo', es_plantilla=True,
+            propietario=self.user_trabajador_otro,
+            departamento=self.depto_th, clasificacion='confidencial',
+            version_actual='1.0',
         )
         SolicitudDescarga.objects.create(
             documento=doc, solicitado_por=self.user_trabajador_otro,
@@ -2031,14 +2044,14 @@ class FormulariosDescargaTest(BaseDocumentosTest):
         )
 
     def test_doc_publico_ve_descargar(self):
-        """Documento público siempre muestra 'Descargar' sin solicitud."""
+        """Plantilla pública siempre muestra 'Descargar' sin solicitud."""
         self.client.login(username='trab01', password='testpass123')
         resp = self.client.get('/documentos/')
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, 'Descargar')
 
     def test_propietario_de_otro_depto_descarga_directo(self):
-        """El propietario de un interno descarga directo, aunque no sea de su depto."""
+        """El propietario de una plantilla interna descarga directo."""
         self.doc_th.propietario = self.user_jefe_ti
         self.doc_th.save(update_fields=['propietario'])
         self.client.login(username='jefe_ti', password='testpass123')
@@ -2049,45 +2062,45 @@ class FormulariosDescargaTest(BaseDocumentosTest):
         )
 
     def test_jefe_ve_descargar_en_deptos_que_puede_ver(self):
-        """Jefe ve 'Descargar' para docs de su depto o que es propietario."""
+        """Jefe ve 'Descargar' para plantillas de su depto o que es propietario."""
         self.client.login(username='jefe_ti', password='testpass123')
         resp = self.client.get('/documentos/')
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, 'Descargar')
 
-    def test_catalogo_muestra_for_de_otro_depto(self):
-        """Un FOR interno de otro depto se lista en el catálogo para solicitar."""
+    def test_catalogo_muestra_plantilla_publica_de_otro_depto(self):
+        """Una plantilla pública de otro depto se lista y es descargable."""
+        from documentos.models import Documento
+        doc = Documento.objects.create(
+            tipo=self.tipo_formulario, nombre='Plantilla Pública TH',
+            codigo='TH-FOR-100', estado='activo', es_plantilla=True,
+            propietario=self.user_jefe_th, departamento=self.depto_th,
+            clasificacion='publico', version_actual='1.0',
+        )
         self.client.login(username='trab01', password='testpass123')
         resp = self.client.get('/documentos/')
         self.assertEqual(resp.status_code, 200)
         self.assertContains(
-            resp, f'/documentos/formulario/{self.doc_th.uuid}/solicitar-descarga/',
-        )
-        self.assertNotContains(
-            resp, f'/documentos/formulario/{self.doc_th.uuid}/descargar/',
+            resp, f'/documentos/formulario/{doc.uuid}/descargar/',
         )
 
-    def test_catalogo_muestra_for_restringido_de_otro_depto(self):
-        """Un FOR restringido también se lista: expone metadatos y Solicitar."""
+    def test_catalogo_oculta_plantilla_restringida_de_otro_depto(self):
+        """Una plantilla restringida de otro depto NO se lista (visibilidad heredada)."""
         from documentos.models import Documento
         doc = Documento.objects.create(
-            tipo=self.tipo_formulario, nombre='Formulario Restringido',
-            codigo='TH-FOR-900', estado='activo', propietario=self.user_jefe_th,
+            tipo=self.tipo_formulario, nombre='Plantilla Restringida',
+            codigo='TH-FOR-900', estado='activo', es_plantilla=True,
+            propietario=self.user_jefe_th,
             departamento=self.depto_th, clasificacion='restringido',
             version_actual='1.0',
         )
         self.client.login(username='trab01', password='testpass123')
         resp = self.client.get('/documentos/')
         self.assertEqual(resp.status_code, 200)
-        self.assertContains(
-            resp, f'/documentos/formulario/{doc.uuid}/solicitar-descarga/',
-        )
-        self.assertNotContains(
-            resp, f'/documentos/formulario/{doc.uuid}/descargar/',
-        )
+        self.assertNotContains(resp, doc.nombre)
 
     def test_catalogo_solo_muestra_activos(self):
-        """Borradores y documentos obsoletos no aparecen en el catálogo."""
+        """Borradores y plantillas obsoletas no aparecen en el catálogo."""
         self.client.login(username='trab01', password='testpass123')
         resp = self.client.get('/documentos/')
         self.assertEqual(resp.status_code, 200)

@@ -120,6 +120,58 @@ def puede_descargar(usuario, documento):
     return False
 
 
+def documentos_descargables(usuario, documentos):
+    """Set de UUIDs descargables directamente, en lote.
+
+    Réplica batch de :func:`puede_descargar` para listados: resuelve jefatura,
+    distribuciones y solicitudes aprobadas con consultas fijas, sin una query
+    por documento. No incluye solicitudes pendientes (eso lo decide la vista).
+    """
+    from django.db.models import F
+    from django.utils import timezone
+
+    from .jefatura import departamentos_jefados
+    from .models import DistribucionDocumento, SolicitudDescarga
+
+    documentos = list(documentos)
+    if not documentos or not hasattr(usuario, 'perfil'):
+        return set()
+    if usuario.perfil.es_administrador:
+        return {doc.uuid for doc in documentos}
+
+    ids = [doc.id for doc in documentos]
+    deptos_jefe = departamentos_jefados(usuario)
+    con_distribucion = set(
+        DistribucionDocumento.objects.filter(
+            usuario=usuario, revocado=False, documento_id__in=ids,
+        ).values_list('documento_id', flat=True)
+    )
+    con_autorizacion = set(
+        SolicitudDescarga.objects.filter(
+            solicitado_por=usuario, estado='aprobada',
+            fecha_expiracion__gt=timezone.now(),
+            documento_id__in=ids,
+            version_aprobada=F('documento__version_actual'),
+        ).values_list('documento_id', flat=True)
+    )
+
+    descargables = set()
+    for doc in documentos:
+        if doc.clasificacion == 'publico':
+            descargables.add(doc.uuid)
+        elif (doc.clasificacion == 'interno'
+              and doc.departamento_id in deptos_jefe):
+            descargables.add(doc.uuid)
+        elif (doc.clasificacion == 'interno'
+              and doc.propietario_id == usuario.id):
+            descargables.add(doc.uuid)
+        elif doc.id in con_distribucion:
+            descargables.add(doc.uuid)
+        elif doc.id in con_autorizacion:
+            descargables.add(doc.uuid)
+    return descargables
+
+
 def puede_inhabilitar(usuario, documento):
     """¿Puede iniciar (o aplicar) inhabilitar/reactivar este documento?
 

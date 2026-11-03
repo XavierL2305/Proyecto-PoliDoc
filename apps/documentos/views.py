@@ -7,7 +7,9 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
 from django.contrib import messages
+from django.core.exceptions import ValidationError
 from django.http import FileResponse, Http404, JsonResponse
+from django.urls import reverse
 from django.utils import timezone
 from django.db.models import Q, Count
 from django.db import transaction
@@ -22,19 +24,19 @@ from .models import (
     DelegacionJefatura,
 )
 from .forms import (
-    DocumentoForm, SolicitudDescargaForm, PlanillaCambiosForm,
+    DocumentoForm, PlantillaForm, SolicitudDescargaForm, PlanillaCambiosForm,
     AsignacionDocumentoForm, FiltroDocumentoForm, DistribucionDocumentoForm,
     validar_respuestas, validar_respuestas_guardadas,
 )
 from .icons import ICONOS_DISPONIBLES
 from .jefatura import es_jefe_efectivo
 from .services.aprobaciones import (
-    avisar_paso_sin_asignar, autocompletar_planilla, promover_autorizador,
+    avisar_paso_sin_asignar, notificar_planilla_resuelta,
+    resolver_aprobacion_planilla, tomar_paso_esperando,
     notificar_aprobador as _notificar_aprobador,
 )
-from .services.planillas import aplicar_planilla_al_documento, invalidar_planillas_documento
+from .services.planillas import invalidar_planillas_documento
 from .services.vigencia import calcular_conteos_vigencia
-from auditoria.services import registrar_aprobacion_planilla, registrar_rechazo_planilla
 from .cache_utils import tipos_activos, periodos_activos, departamentos_activos
 from . import ai
 
@@ -46,7 +48,7 @@ def get_documento(tipo, documento_id):
     try:
         return Documento.objects.select_related(
             'tipo', 'departamento', 'propietario',
-            'periodo_vigencia', 'periodo_retencion',
+            'periodo_vigencia', 'periodo_retencion', 'plantilla_origen',
         ).get(uuid=documento_id, tipo=tipo)
     except Documento.DoesNotExist:
         raise Http404("Documento no encontrado")
@@ -124,6 +126,12 @@ def crear_cadena_aprobacion_documento(documento, usuario, departamento, accion, 
       autorizador = jefe de GG). El evaluador nunca es final; solo el
       autorizador activa el documento.
 
+    Con ``plantilla=True`` (creación de Plantillas) el flujo es SIMPLIFICADO:
+    UN solo paso con el jefe/delegado del departamento (sin Gerencia
+    General). Si el solicitante ES jefe/delegado, se autoaprueba y el
+    documento queda activo; si no, queda pendiente del jefe. Sin jefe en el
+    departamento → 'esperando' + aviso a los administradores.
+
     Retorna la solicitud del primer paso (autorizador si es un solo paso,
     evaluador si es la cadena de dos).
     """
@@ -134,7 +142,12 @@ def crear_cadena_aprobacion_documento(documento, usuario, departamento, accion, 
         propietario=documento.propietario,
         departamento_origen=departamento,
     )
+    es_plantilla = kwargs.pop('plantilla', False)
     documentos_kwargs.update(kwargs)
+
+    if es_plantilla and accion == 'creacion':
+        return _crear_solicitud_plantilla(documento, usuario, departamento,
+                                          documentos_kwargs)
 
     if _es_aprobacion_unica(usuario):
         autorizador = determinar_autorizador()
@@ -163,14 +176,82 @@ def crear_cadena_aprobacion_documento(documento, usuario, departamento, accion, 
     return sol_eval
 
 
+def _aprobador_plantilla(usuario, departamento):
+    """Decide quién aprueba una plantilla (flujo simplificado, sin GG).
+
+    Retorna ``(aprobador, es_directo)``:
+
+    - Quien ejerce jefatura/delegación en el departamento → ``(usuario, True)``.
+    - Jefe natural distinto → ``(jefe, False)`` (queda pendiente).
+    - Sin jefe → ``(None, False)`` (queda ``'esperando'`` + aviso a admins).
+    """
+    if es_jefe_efectivo(usuario, departamento):
+        return usuario, True
+    jefe_depto = getattr(departamento, 'jefe', None)
+    if jefe_depto and jefe_depto != usuario:
+        return jefe_depto, False
+    return None, False
+
+
+def _crear_solicitud_plantilla(documento, usuario, departamento, documentos_kwargs):
+    """Flujo simplificado de aprobación de PLANTILLAS (creación).
+
+    Regla: UN solo paso con el jefe/delegado del departamento del que subió
+    la plantilla. Sin Gerencia General.
+
+    - Creador jefe/delegado del depto → auto-aprobación (evidencia ISO:
+      fila SolicitudAprobacionDocumento aprobada) y el documento queda
+      activo.
+    - Creador no jefe → pendiente del jefe natural del depto.
+    - Sin jefe en el depto → 'esperando' + aviso a los administradores.
+    """
+    aprobador, directo = _aprobador_plantilla(usuario, departamento)
+    if directo:
+        sol = SolicitudAprobacionDocumento.objects.create(
+            aprobador=aprobador, rol_aprobador='autorizador', es_final=True,
+            estado='pendiente', **documentos_kwargs,
+        )
+        sol.aprobar(
+            observaciones='Aprobación directa: quien subió la plantilla '
+                          'ejerce jefatura en el departamento.'
+        )
+        return sol
+
+    if aprobador:
+        sol = SolicitudAprobacionDocumento.objects.create(
+            aprobador=aprobador, rol_aprobador='autorizador', es_final=True,
+            estado='pendiente', **documentos_kwargs,
+        )
+        _notificar_aprobador(aprobador, usuario, documento, es_evaluador=False)
+        return sol
+
+    sol = SolicitudAprobacionDocumento.objects.create(
+        aprobador=None, rol_aprobador='autorizador', es_final=True,
+        estado='esperando', **documentos_kwargs,
+    )
+    avisar_paso_sin_asignar(documento, 'aprobación de plantillas')
+    return sol
+
+
 def crear_cadena_aprobacion_planilla(planilla, usuario, documento, **kwargs):
     """Crea la solicitud de aprobación para una planilla de cambios.
 
     Mismo criterio que documentos: UN solo paso (GG) si el responsable es
     jefe; cadena de DOS pasos si no lo es. Retorna la aprobación del primer
     paso.
+
+    Para PLANTILLAS el flujo es SIMPLIFICADO (sin Gerencia General): UN solo
+    paso con el jefe/delegado del departamento del documento. Si el
+    responsable ES jefe/delegado, se autoaprueba y los cambios se aplican de
+    inmediato; si no, queda pendiente del jefe; sin jefe → 'esperando' +
+    aviso a los administradores.
     """
     departamento = getattr(documento, 'departamento', None)
+
+    if getattr(documento, 'es_plantilla', False):
+        return _crear_aprobacion_planilla_plantilla(
+            planilla, usuario, documento, departamento, kwargs,
+        )
 
     if _es_aprobacion_unica(usuario):
         autorizador = determinar_autorizador()
@@ -206,6 +287,60 @@ def crear_cadena_aprobacion_planilla(planilla, usuario, documento, **kwargs):
     else:
         avisar_paso_sin_asignar(planilla, 'evaluación')
     return ap_eval
+
+
+def _crear_aprobacion_planilla_plantilla(planilla, usuario, documento,
+                                         departamento, kwargs):
+    """Aprobación simplificada de planillas sobre PLANTILLAS (FOR-005).
+
+    UN solo paso con el jefe/delegado del departamento. Sin Gerencia
+    General. Si el responsable es jefe/delegado → auto-aprobación y los
+    cambios se aplican de inmediato (evidencia: fila AprobacionPlanilla
+    aprobada + auditoría ISO).
+    """
+    aprobador, directo = _aprobador_plantilla(usuario, departamento)
+    if directo:
+        from .services.aprobaciones import (
+            notificar_planilla_resuelta, resolver_aprobacion_planilla,
+        )
+
+        ap = AprobacionPlanilla.objects.create(
+            planilla=planilla, aprobador=aprobador,
+            rol_aprobador='autorizador', es_final=True,
+            estado='pendiente', **kwargs,
+        )
+        resolver_aprobacion_planilla(
+            ap, usuario, aprobada=True,
+            observaciones=(
+                'Aprobación directa: quien propuso el cambio ejerce jefatura '
+                'en el departamento de la plantilla.'
+            ),
+        )
+        if planilla.responsable_id != usuario.id:
+            notificar_planilla_resuelta(
+                planilla, True,
+                observaciones=ap.observaciones,
+            )
+        return ap
+
+    if aprobador:
+        ap = AprobacionPlanilla.objects.create(
+            planilla=planilla, aprobador=aprobador,
+            rol_aprobador='autorizador', es_final=True,
+            estado='pendiente', **kwargs,
+        )
+        _notificar_aprobador(
+            aprobador, usuario, documento, es_evaluador=False, planilla=planilla,
+        )
+        return ap
+
+    ap = AprobacionPlanilla.objects.create(
+        planilla=planilla, aprobador=None,
+        rol_aprobador='autorizador', es_final=True,
+        estado='esperando', **kwargs,
+    )
+    avisar_paso_sin_asignar(planilla, 'aprobación de plantillas')
+    return ap
 
 
 def puede_editar_documento(user, documento):
@@ -441,15 +576,16 @@ def _procesar_asociados_planilla(planilla, request, permitido, documento, usuari
 def formularios(request):
     user = request.user
     dept = user.perfil.departamento
-    # Catálogo de formularios (tipo FOR): se listan TODOS los activos con
-    # independencia de su clasificación. La tarjeta solo expone metadatos y el
-    # botón corresponde (Descargar / Solicitar): el contenido sigue protegido
-    # por `puede_ver_documento(..., requerir_aprobada=True)` en el visor.
-    docs = Documento.objects.filter(
-        tipo='formulario', estado='activo',
-    ).select_related('departamento', 'propietario')
+    # Catálogo de PLANTILLAS (documentos en blanco es_plantilla=True).
+    # Se listan las activas visibles para el usuario (mismo criterio de
+    # clasificación/permisos que el resto de Documento).
+    from .permissions import documentos_descargables, q_documentos_visibles
 
-    from .permissions import descarga_autorizada, puede_descargar
+    docs = Documento.objects.filter(
+        es_plantilla=True, estado='activo',
+    ).filter(
+        q_documentos_visibles(user)
+    ).select_related('departamento', 'propietario', 'tipo')
 
     solicitudes = SolicitudDescarga.objects.filter(
         solicitado_por=user
@@ -457,11 +593,7 @@ def formularios(request):
     docs_pendientes = {uuid for uuid, e in solicitudes if e == 'pendiente'}
 
     docs = list(docs)
-    docs_aprobadas = {doc.uuid for doc in docs if descarga_autorizada(doc, user)}
-    docs_descargables = {
-        doc.uuid for doc in docs
-        if puede_descargar(user, doc) or doc.uuid in docs_aprobadas
-    }
+    docs_descargables = documentos_descargables(user, docs)
 
     if user.perfil.es_administrador:
         from collections import OrderedDict
@@ -494,6 +626,7 @@ def formularios(request):
         'grupos': grupos,
         'docs_descargables': docs_descargables,
         'docs_pendientes': docs_pendientes,
+        'puede_subir': True,
         'hoy': date.today(),
         'dias7': date.today() + timedelta(days=7),
     })
@@ -507,6 +640,7 @@ def mis_documentos(request):
     buscar = request.GET.get('buscar', '').strip()
     estado_filter = request.GET.get('estado', '')
     clasificacion_filter = request.GET.get('clasificacion', '')
+    registro_filter = request.GET.get('registro', 'todos')  # todos|documentos|plantillas
 
     from .permissions import q_documentos_visibles
 
@@ -540,6 +674,10 @@ def mis_documentos(request):
                 | Q(documentos_relacionados__in=target_ids)
                 | Q(referencias_salientes__codigo_destino__icontains=buscar)
             ).distinct()
+        if registro_filter == 'documentos':
+            docs = docs.filter(es_plantilla=False)
+        elif registro_filter == 'plantillas':
+            docs = docs.filter(es_plantilla=True)
         if estado_filter:
             docs = docs.filter(estado=estado_filter)
         if clasificacion_filter:
@@ -575,6 +713,7 @@ def mis_documentos(request):
         'buscar': buscar,
         'estado_filter': estado_filter,
         'clasificacion_filter': clasificacion_filter,
+        'registro_filter': registro_filter,
         'clasificacion_choices': Documento.CLASIFICACION_CHOICES,
         'hoy': date.today(),
         'dias7': date.today() + timedelta(days=7),
@@ -611,11 +750,21 @@ def bandeja_aprobaciones(request):
     filtro_tipo = request.GET.get('tipo_accion', '')
     dept = perfil.departamento
     aprobadores = aprobadores_que_repr(request.user)
-    solicitudes = SolicitudAprobacionDocumento.objects.filter(
+    solicitudes_qs = (
         Q(aprobador_id__in=aprobadores) |
         Q(departamento_origen=dept, rol_aprobador='evaluador')
+    )
+    if perfil.es_administrador:
+        # Plantillas sin jefe de departamento: quedan 'esperando' y los
+        # administradores deben poder tomarlas para aprobarlas/rechazarlas.
+        solicitudes_qs |= Q(estado='esperando', aprobador__isnull=True)
+    solicitudes = SolicitudAprobacionDocumento.objects.filter(
+        solicitudes_qs
     ).select_related('solicitante', 'departamento_origen', 'propietario', 'documento').distinct()
-    if filtro_estado:
+    estados_pendientes = ('pendiente', 'esperando')
+    if filtro_estado == 'pendiente':
+        solicitudes = solicitudes.filter(estado__in=estados_pendientes)
+    elif filtro_estado:
         solicitudes = solicitudes.filter(estado=filtro_estado)
     if filtro_tipo:
         solicitudes = solicitudes.filter(accion_solicitud=filtro_tipo)
@@ -624,25 +773,36 @@ def bandeja_aprobaciones(request):
     page = request.GET.get('page', 1)
     solicitudes_page = paginator.get_page(page)
     total_pendientes = SolicitudAprobacionDocumento.objects.filter(
-        Q(aprobador_id__in=aprobadores, estado='pendiente') |
-        Q(departamento_origen=dept, rol_aprobador='evaluador', estado='pendiente')
-    ).distinct().count()
+        solicitudes_qs,
+    ).filter(estado__in=estados_pendientes).distinct().count()
     descargas = AprobacionDescarga.objects.filter(
         aprobador_id__in=aprobadores, solicitud__estado='pendiente',
     ).select_related('solicitud', 'solicitud__documento', 'solicitud__solicitado_por')
-    if filtro_estado:
+    if filtro_estado == 'pendiente':
+        descargas = descargas.filter(estado__in=estados_pendientes)
+    elif filtro_estado:
         descargas = descargas.filter(estado=filtro_estado)
     total_pendientes_descarga = AprobacionDescarga.objects.filter(
-        aprobador_id__in=aprobadores, estado='pendiente',
+        aprobador_id__in=aprobadores, estado__in=estados_pendientes,
         solicitud__estado='pendiente',
     ).count()
+    planillas_qs = Q(aprobador_id__in=aprobadores)
+    pendientes_qs = Q(
+        aprobador_id__in=aprobadores, estado__in=estados_pendientes,
+    )
+    if perfil.es_administrador:
+        # Planillas de plantillas sin jefe: 'esperando' y tomables por admin.
+        planillas_qs |= Q(estado='esperando', aprobador__isnull=True)
+        pendientes_qs |= Q(estado='esperando', aprobador__isnull=True)
     planillas = AprobacionPlanilla.objects.filter(
-        aprobador_id__in=aprobadores,
+        planillas_qs,
     ).select_related('planilla', 'planilla__documento', 'planilla__responsable')
-    if filtro_estado:
+    if filtro_estado == 'pendiente':
+        planillas = planillas.filter(estado__in=estados_pendientes)
+    elif filtro_estado:
         planillas = planillas.filter(estado=filtro_estado)
     total_pendientes_planilla = AprobacionPlanilla.objects.filter(
-        aprobador_id__in=aprobadores, estado='pendiente',
+        pendientes_qs,
     ).count()
     return render(request, 'documentos/bandeja_aprobaciones.html', {
         'solicitudes': solicitudes_page,
@@ -690,7 +850,7 @@ def mis_solicitudes(request):
 
 
 def _grupos_documentos(departamentos, clasificacion='', vigencia='', usuario=None,
-                       solo_departamento=False):
+                       solo_departamento=False, registro=''):
     """Agrupa documentos por departamento (propio | afectado) y por tipo, con
     consultas fijas (sin N+1). Reutilizado por jefe y admin.
 
@@ -702,6 +862,7 @@ def _grupos_documentos(departamentos, clasificacion='', vigencia='', usuario=Non
       jefes/delegados: solo documentos propiedad del departamento (sin
       públicos ajenos, sin afectados de otros departamentos y sin la sección
       "Todos los departamentos"). El admin no lo usa (vista de supervisión).
+    `registro`: filtro opcional 'documentos'|'plantillas' (vacío = todos).
     """
     from .permissions import q_documentos_visibles
 
@@ -718,6 +879,10 @@ def _grupos_documentos(departamentos, clasificacion='', vigencia='', usuario=Non
         )
     if clasificacion:
         docs = docs.filter(clasificacion=clasificacion)
+    if registro == 'documentos':
+        docs = docs.filter(es_plantilla=False)
+    elif registro == 'plantillas':
+        docs = docs.filter(es_plantilla=True)
     if vigencia:
         hoy = date.today()
         if vigencia == 'vencido':
@@ -802,6 +967,7 @@ def documentos_departamento(request):
     departamento = perfil.departamento
     clasificacion_filter = request.GET.get('clasificacion', '')
     vigencia_filter = request.GET.get('vigencia', '')
+    registro_filter = request.GET.get('registro', 'todos')  # todos|documentos|plantillas
     if es_admin:
         departamentos = departamentos_activos()
         solicitudes_pendientes = SolicitudDescarga.objects.filter(estado='pendiente')
@@ -818,10 +984,12 @@ def documentos_departamento(request):
     generales, grupos = _grupos_documentos(
         departamentos, clasificacion_filter, vigencia_filter, usuario=request.user,
         solo_departamento=not es_admin,
+        registro='' if registro_filter == 'todos' else registro_filter,
     )
     conteos_vigencia = calcular_conteos_vigencia(
         departamentos, clasificacion_filter, request.user,
         solo_departamento=not es_admin,
+        registro='' if registro_filter == 'todos' else registro_filter,
     )
     return render(request, 'documentos/documentos_departamento.html', {
         'generales': generales,
@@ -831,6 +999,7 @@ def documentos_departamento(request):
         'clasificacion_filter': clasificacion_filter,
         'clasificacion_choices': Documento.CLASIFICACION_CHOICES,
         'vigencia_filter': vigencia_filter,
+        'registro_filter': registro_filter,
         'conteos_vigencia': conteos_vigencia,
         'solicitudes_pendientes': solicitudes_pendientes,
         'hoy': date.today(),
@@ -841,6 +1010,7 @@ def documentos_departamento(request):
 @login_required(login_url='/login/')
 def seleccionar_tipo(request):
     """Página/catálogo para seleccionar tipo de documento a crear"""
+    es_plantilla = request.GET.get('plantilla', '') in ('1', 'true', 'True')
     es_jefe = _es_jefe(request.user)
     tipos_disponibles = []
     for tipo in tipos_activos():
@@ -855,7 +1025,82 @@ def seleccionar_tipo(request):
         })
     return render(request, 'documentos/seleccionar_tipo.html', {
         'tipos': tipos_disponibles,
+        'es_plantilla': es_plantilla,
     })
+
+
+def _contexto_preview_plantilla(request, tipo, plantilla):
+    """Contexto de la preview AJAX de una plantilla (modal del formulario)."""
+    from .permissions import (
+        descarga_autorizada, puede_descargar, puede_ver_documento,
+    )
+    from .services.documentos_pdf import (
+        FORMATOS_CONVERTIBLES, archivo_existe, encolar_conversion,
+        pdf_disponible,
+    )
+
+    puede_ver = puede_ver_documento(
+        request.user, plantilla, requerir_aprobada=True,
+    )
+    tiene_archivo = (
+        bool(plantilla.archivo) and archivo_existe(plantilla.archivo)
+    )
+    pdf_listo = False
+    convirtiendo = False
+    if puede_ver:
+        pdf_listo = pdf_disponible(plantilla)
+        if (tiene_archivo and plantilla.tipo_archivo in FORMATOS_CONVERTIBLES
+                and not pdf_listo):
+            pdf_listo = encolar_conversion(plantilla)
+            convirtiendo = not pdf_listo
+
+    return {
+        'tipo': tipo,
+        'plantilla_preview': plantilla,
+        'plantilla_puede_ver': puede_ver,
+        'plantilla_pdf_listo': pdf_listo,
+        'plantilla_convirtiendo': convirtiendo,
+        'plantilla_tiene_archivo': tiene_archivo,
+        'plantilla_pdf_visible': (
+            pdf_listo
+            or (plantilla.tipo_archivo == 'pdf' and tiene_archivo)
+        ),
+        'plantilla_descargable': (
+            puede_descargar(request.user, plantilla)
+            or descarga_autorizada(plantilla, request.user)
+        ),
+        'plantilla_pendiente': SolicitudDescarga.objects.filter(
+            documento=plantilla, solicitado_por=request.user,
+            estado='pendiente',
+        ).exists(),
+    }
+
+
+@login_required(login_url='/login/')
+def preview_plantilla(request, tipo, documento_id):
+    """Partial HTML con la vista previa de una plantilla (para el modal)."""
+    tipo_obj = TipoDocumento.objects.filter(key=tipo, activo=True).first()
+    if not tipo_obj or (tipo_obj.solo_jefes and not _es_jefe(request.user)):
+        raise Http404
+
+    from .permissions import q_documentos_visibles
+
+    plantilla = (
+        Documento.objects.filter(
+            tipo=tipo_obj, es_plantilla=True, estado='activo',
+            uuid=documento_id,
+        )
+        .filter(q_documentos_visibles(request.user))
+        .select_related('departamento')
+        .first()
+    )
+    if plantilla is None:
+        raise Http404
+
+    return render(
+        request, 'documentos/_plantilla_preview.html',
+        _contexto_preview_plantilla(request, tipo, plantilla),
+    )
 
 
 @login_required(login_url='/login/')
@@ -880,6 +1125,47 @@ def crear_documento(request, tipo):
 
     sin_prefijo_depto = Documento.es_sin_prefijo_depto(tipo)
 
+    from .permissions import documentos_descargables, q_documentos_visibles
+
+    plantillas_disponibles = Documento.objects.filter(
+        tipo=tipo_obj, es_plantilla=True, estado='activo',
+    ).filter(
+        q_documentos_visibles(request.user)
+    ).select_related('departamento', 'propietario').order_by('codigo')
+    plantillas_list = list(plantillas_disponibles)
+    plantillas_pendientes = set(
+        SolicitudDescarga.objects.filter(
+            solicitado_por=request.user, estado='pendiente',
+            documento__in=plantillas_list,
+        ).values_list('documento__uuid', flat=True)
+    )
+    plantillas_descargables = documentos_descargables(
+        request.user, plantillas_list,
+    )
+    plantillas_meta = [
+        {
+            'id': str(p.uuid),
+            'codigo': p.codigo,
+            'nombre': p.nombre,
+            'descripcion': p.descripcion or '',
+            'clasificacion': p.clasificacion,
+            'descarga_url': (
+                reverse('documentos:descargar_archivo', args=[tipo, p.uuid])
+                if p.uuid in plantillas_descargables else ''
+            ),
+            'solicitud_url': (
+                reverse('documentos:solicitar_descarga', args=[tipo, p.uuid])
+                if p.uuid not in plantillas_descargables
+                and p.uuid not in plantillas_pendientes else ''
+            ),
+            'pendiente': p.uuid in plantillas_pendientes,
+            'preview_url': reverse(
+                'documentos:preview_plantilla', args=[tipo, p.uuid],
+            ),
+        }
+        for p in plantillas_list
+    ]
+
     formato_dinamico = Formato.objects.filter(
         activo=True, aplica_creacion=True
     ).order_by('codigo').first()
@@ -888,10 +1174,20 @@ def crear_documento(request, tipo):
 
     if request.method == 'POST':
         accion = request.POST.get('accion', 'enviar')
+        if not plantillas_list:
+            messages.error(
+                request,
+                f'No hay plantillas activas de {tipo_nombre} disponibles para tu '
+                f'perfil. Debes subir una plantilla antes de crear un documento '
+                f'de este tipo.',
+            )
         form = DocumentoForm(
             request.POST, request.FILES,
             departamento_id=perfil.departamento.id,
-            tipo_documento=tipo
+            tipo_documento=tipo,
+            con_plantilla=True,
+            usuario=request.user,
+            plantillas_queryset=plantillas_disponibles,
         )
         if form.is_valid():
             secuencia = request.POST.get('secuencia', '001')
@@ -917,6 +1213,12 @@ def crear_documento(request, tipo):
                     doc.departamento = perfil.departamento
                     doc.estado = 'borrador'
                     doc.codigo = codigo
+                    doc.plantilla_origen = form.cleaned_data.get('plantilla_origen')
+                    try:
+                        doc.clean()
+                    except ValidationError as exc:
+                        messages.error(request, ' '.join(exc.messages))
+                        return redirect('documentos:crear_documento', tipo=tipo)
                     doc.save()
                     form.save_m2m()
                     VersionDocumento.objects.create(
@@ -984,7 +1286,10 @@ def crear_documento(request, tipo):
     else:
         form = DocumentoForm(
             departamento_id=perfil.departamento.id,
-            tipo_documento=tipo
+            tipo_documento=tipo,
+            con_plantilla=True,
+            usuario=request.user,
+            plantillas_queryset=plantillas_disponibles,
         )
 
     codigo_preview = Documento.generar_codigo_secuencial(perfil.departamento, tipo)
@@ -995,6 +1300,8 @@ def crear_documento(request, tipo):
         'tipo': tipo,
         'auto_departamento_id': perfil.departamento.id,
         'auto_departamento_nombre': str(perfil.departamento),
+        'plantillas_meta': plantillas_meta,
+        'hay_plantillas': bool(plantillas_list),
         'tipo_documento_codigo': tipo_codigo,
         'codigo_preview': codigo_preview,
         'sin_prefijo_depto': sin_prefijo_depto,
@@ -1002,6 +1309,127 @@ def crear_documento(request, tipo):
         'selector_relacionados': _selector_relacionados(),
         'formato_dinamico': formato_dinamico,
         'respuestas_formato': respuestas_formato,
+    })
+
+
+def _codigo_plantilla_disponible(departamento, tipo, intentos=5):
+    """Siguiente código PLT libre, con reintentos ante colisiones.
+
+    `generar_codigo_secuencial` + `exists()` no es atómico frente a altas
+    concurrentes; se reintenta unas pocas veces antes de rendirse. El campo
+    `codigo` sigue siendo UNIQUE como última barrera de integridad.
+    """
+    for _ in range(intentos):
+        codigo = Documento.generar_codigo_secuencial(
+            departamento, tipo, es_plantilla=True,
+        )
+        if not Documento.objects.filter(codigo=codigo).exists():
+            return codigo
+    return None
+
+
+@login_required(login_url='/login/')
+def crear_plantilla(request, tipo):
+    """Alta de una PLANTILLA (documento en blanco es_plantilla=True).
+
+    Flujo simplificado de aprobación (ver ``_crear_solicitud_plantilla``):
+    jefe/delegado → auto-aprobado; sin jefe → pendiente del jefe del
+    departamento; sin jefe en el depto → 'esperando' + aviso a admins.
+    NO genera SolicitudCambio (SGC-FOR-001) ni usa el motor dinámico.
+    """
+    tipo_obj = TipoDocumento.objects.filter(key=tipo, activo=True).first()
+    if not tipo_obj:
+        messages.error(request, 'Tipo de documento no válido.')
+        return redirect('documentos:catalogo')
+
+    perfil = request.user.perfil
+    if not perfil.departamento:
+        messages.error(
+            request, 'No tienes un departamento asignado. Contacta al administrador.'
+        )
+        return redirect('documentos:catalogo')
+
+    if tipo_obj.solo_jefes and not _es_jefe(request.user):
+        messages.error(
+            request,
+            'Solo los jefes de departamento pueden subir plantillas de este tipo.',
+        )
+        return redirect('documentos:catalogo')
+
+    sin_prefijo_depto = Documento.es_sin_prefijo_depto(tipo)
+
+    if request.method == 'POST':
+        form = PlantillaForm(request.POST, request.FILES)
+        if form.is_valid():
+            with transaction.atomic():
+                codigo = _codigo_plantilla_disponible(perfil.departamento, tipo)
+                if codigo is None:
+                    messages.error(
+                        request,
+                        'No se pudo asignar un código único para la plantilla. '
+                        'Intenta de nuevo.',
+                    )
+                    return redirect('documentos:catalogo')
+
+                doc = form.save(commit=False)
+                doc.tipo = tipo_obj
+                doc.propietario = request.user
+                doc.departamento = perfil.departamento
+                doc.es_plantilla = True
+                doc.estado = 'borrador'
+                doc.codigo = codigo
+                doc.save()
+                VersionDocumento.objects.create(
+                    documento=doc, numero_version='1',
+                    archivo=doc.archivo or None,
+                    cambios='Versión inicial', creado_por=request.user,
+                )
+                sol = crear_cadena_aprobacion_documento(
+                    documento=doc, usuario=request.user,
+                    departamento=perfil.departamento, accion='creacion',
+                    plantilla=True,
+                )
+                if sol.estado != 'aprobada':
+                    doc.estado = 'en_revision'
+                    doc.save(update_fields=['estado'])
+
+            if sol.estado == 'aprobada':
+                messages.success(
+                    request,
+                    f'Plantilla "{doc.nombre}" aprobada y publicada en el catálogo.',
+                )
+            elif sol.estado == 'esperando':
+                messages.warning(
+                    request,
+                    f'Plantilla "{doc.nombre}" creada, pero no hay jefe de '
+                    f'departamento asignado. Quedará en espera de aprobación.',
+                )
+                messages.info(
+                    request,
+                    'Los administradores fueron avisados para asignar un aprobador.',
+                )
+            else:
+                messages.success(
+                    request,
+                    f'Plantilla "{doc.nombre}" enviada al jefe de departamento '
+                    f'para aprobación.',
+                )
+            return redirect('documentos:detalle', tipo=tipo, documento_id=doc.uuid)
+    else:
+        form = PlantillaForm()
+
+    codigo_preview = Documento.generar_codigo_secuencial(
+        perfil.departamento, tipo, es_plantilla=True,
+    )
+    return render(request, 'documentos/crear_plantilla.html', {
+        'form': form,
+        'titulo': f'Subir Plantilla — {tipo_obj.nombre}',
+        'tipo': tipo,
+        'tipo_nombre': tipo_obj.nombre,
+        'tipo_codigo': tipo_obj.codigo,
+        'codigo_preview': codigo_preview,
+        'sin_prefijo_depto': sin_prefijo_depto,
+        'auto_departamento_nombre': str(perfil.departamento),
     })
 
 
@@ -1211,6 +1639,7 @@ def obtener_siguiente_secuencia(request):
     """API para obtener la siguiente secuencia disponible"""
     departamento_id = request.GET.get('departamento_id')
     tipo_codigo = request.GET.get('tipo_codigo')
+    es_plantilla = request.GET.get('plantilla', '') in ('1', 'true', 'True')
     
     if not departamento_id or not tipo_codigo:
         return JsonResponse({'error': 'Parámetros faltantes'}, status=400)
@@ -1227,7 +1656,9 @@ def obtener_siguiente_secuencia(request):
     if not tipo:
         return JsonResponse({'error': 'Tipo de documento no válido'}, status=400)
     
-    consecutivo = Documento.generar_codigo_secuencial(departamento, tipo)
+    consecutivo = Documento.generar_codigo_secuencial(
+        departamento, tipo, es_plantilla=es_plantilla,
+    )
     secuencia = consecutivo.split('-')[-1]
     
     return JsonResponse({'secuencia': secuencia})
@@ -3200,10 +3631,20 @@ def crear_planilla(request):
                     planilla.save(update_fields=['estado'])
                     documento.estado = 'en_revision'
                     documento.save(update_fields=['estado'])
-                    crear_cadena_aprobacion_planilla(
+                    ap = crear_cadena_aprobacion_planilla(
                         planilla=planilla, usuario=request.user, documento=documento,
                     )
-                    messages.success(request, f'Planilla {planilla.codigo} enviada a revisión.')
+                    if ap.estado == 'aprobada':
+                        messages.success(
+                            request,
+                            f'Planilla {planilla.codigo} aprobada y cambios '
+                            f'aplicados (flujo simplificado de plantillas).',
+                        )
+                    else:
+                        messages.success(
+                            request,
+                            f'Planilla {planilla.codigo} enviada a revisión.',
+                        )
                     return redirect('documentos:detalle_planilla', planilla_uuid=planilla.uuid)
                 else:
                     messages.success(request, f'Planilla {planilla.codigo} creada correctamente.')
@@ -3374,7 +3815,8 @@ def aprobar_planilla(request, planilla_uuid):
     perfil = request.user.perfil
     from .jefatura import aprobadores_que_repr, es_delegado_vigente
 
-    if not (perfil.es_jefe or es_delegado_vigente(request.user)):
+    if not (perfil.es_jefe or es_delegado_vigente(request.user)
+            or perfil.es_administrador):
         messages.error(request, 'No tienes permisos para aprobar planillas.')
         return redirect('documentos:mis_documentos')
     if request.method == 'POST':
@@ -3387,82 +3829,45 @@ def aprobar_planilla(request, planilla_uuid):
             planilla=planilla, aprobador_id__in=aprobadores_que_repr(request.user),
             estado='pendiente',
         ).first()
+        if not aprobacion and perfil.es_administrador:
+            # Planilla de plantilla sin jefe: el admin la toma de 'esperando'.
+            doc_plantilla = planilla.documento
+            if doc_plantilla and doc_plantilla.es_plantilla:
+                aprobacion = (
+                    AprobacionPlanilla.objects.select_for_update()
+                    .filter(
+                        planilla=planilla, aprobador__isnull=True,
+                        estado='esperando',
+                    )
+                    .first()
+                )
+                if aprobacion:
+                    tomar_paso_esperando(aprobacion, request.user)
         if not aprobacion:
             messages.error(request, 'No tienes una aprobación pendiente para esta planilla.')
             return redirect('documentos:detalle_planilla', planilla_uuid=planilla.uuid)
         if accion == 'aprobar':
-            es_final = aprobacion.es_final
-            aprobacion.estado = 'aprobada'
-            aprobacion.observaciones = observaciones
-            aprobacion.fecha_aprobacion = timezone.now()
-            aprobacion.save()
-            # Firmas de evaluación/autorización en la planilla (FOR-005).
-            autocompletar_planilla(planilla, aprobacion, aprobada=True)
-            if es_final:
-                planilla.estado = 'aprobado'
-                planilla.fecha_aprobacion = timezone.now()
-                planilla.save(update_fields=['estado', 'fecha_aprobacion'])
-                if planilla.solicitud_cambio:
-                    planilla.solicitud_cambio.estado = 'aprobado'
-                    planilla.solicitud_cambio.save(update_fields=['estado'])
-                doc, cambios = aplicar_planilla_al_documento(
-                    planilla, usuario=request.user,
-                )
-                if doc:
-                    registrar_aprobacion_planilla(
-                        usuario=request.user, planilla=planilla, documento=doc,
-                        cambios=cambios, observaciones=observaciones,
-                    )
-                from autenticacion.models import Notificacion
-                Notificacion.objects.create(
-                    usuario=planilla.responsable,
-                    titulo='Planilla de Cambios aprobada',
-                    mensaje=f'Tu planilla {planilla.codigo} ha sido aprobada. Los cambios se han aplicado al documento.',
-                    tipo='aprobacion_documento',
-                    url_accion=f'/documentos/planilla-cambios/{planilla.uuid}/',
-                    departamento=planilla.documento.departamento,
-                    documento=planilla.documento
-                )
-                messages.success(request, 'Planilla aprobada y cambios aplicados al documento.')
-            else:
-                promover_autorizador(planilla, aprobacion, request.user)
-                messages.success(request, 'Evaluación registrada. Pendiente de autorización final.')
-        else:
-            aprobacion.estado = 'rechazada'
-            aprobacion.observaciones = observaciones
-            aprobacion.fecha_aprobacion = timezone.now()
-            aprobacion.save()
-            # Quien rechaza también firma la planilla (FOR-005).
-            autocompletar_planilla(planilla, aprobacion, aprobada=False)
-            hermano = AprobacionPlanilla.objects.filter(
-                planilla=planilla,
-            ).exclude(id=aprobacion.id).exclude(estado__in=('aprobada', 'rechazada', 'cancelada')).first()
-            if hermano:
-                hermano.estado = 'cancelada'
-                hermano.save(update_fields=['estado'])
-            planilla.estado = 'rechazado'
-            planilla.save(update_fields=['estado'])
-            if planilla.solicitud_cambio:
-                planilla.solicitud_cambio.estado = 'rechazado'
-                planilla.solicitud_cambio.save(update_fields=['estado'])
-            doc = planilla.documento
-            if doc:
-                doc.estado = 'activo'
-                doc.save(update_fields=['estado'])
-            registrar_rechazo_planilla(
-                usuario=request.user, planilla=planilla, documento=doc,
+            resultado = resolver_aprobacion_planilla(
+                aprobacion, request.user, aprobada=True,
                 observaciones=observaciones,
             )
-            from autenticacion.models import Notificacion
-            Notificacion.objects.create(
-                usuario=planilla.responsable,
-                titulo='Planilla de Cambios rechazada',
-                mensaje=f'Tu planilla {planilla.codigo} ha sido rechazada. Motivo: {observaciones}',
-                tipo='rechazo_documento',
-                url_accion=f'/documentos/planilla-cambios/{planilla.uuid}/',
-                departamento=planilla.documento.departamento,
-                documento=planilla.documento
+            if resultado['es_final']:
+                notificar_planilla_resuelta(planilla, True, observaciones)
+                messages.success(
+                    request,
+                    'Planilla aprobada y cambios aplicados al documento.',
+                )
+            else:
+                messages.success(
+                    request,
+                    'Evaluación registrada. Pendiente de autorización final.',
+                )
+        else:
+            resolver_aprobacion_planilla(
+                aprobacion, request.user, aprobada=False,
+                observaciones=observaciones,
             )
+            notificar_planilla_resuelta(planilla, False, observaciones)
             messages.warning(request, 'Planilla rechazada.')
         from autenticacion.models import Notificacion
         Notificacion.objects.filter(
@@ -3525,9 +3930,16 @@ def enviar_planilla(request, planilla_uuid):
         documento.estado = 'en_revision'
         documento.save(update_fields=['estado'])
 
-        crear_cadena_aprobacion_planilla(
+        ap = crear_cadena_aprobacion_planilla(
             planilla=planilla, usuario=request.user, documento=documento,
         )
+        if ap.estado == 'aprobada':
+            messages.success(
+                request,
+                f'Planilla {planilla.codigo} aprobada y cambios aplicados '
+                f'(flujo simplificado de plantillas).',
+            )
+            return redirect('documentos:detalle_planilla', planilla_uuid=planilla.uuid)
 
     messages.success(request, f'Planilla {planilla.codigo} enviada a revisión.')
     return redirect('documentos:detalle_planilla', planilla_uuid=planilla.uuid)

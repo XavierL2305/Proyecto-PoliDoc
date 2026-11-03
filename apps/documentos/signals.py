@@ -62,7 +62,8 @@ def documento_creado_o_editado(sender, instance, created, **kwargs):
                 recurso_id=instance.id,
                 codigo=instance.codigo,
                 nombre=instance.nombre,
-                estado_posterior=instance.estado
+                estado_posterior=instance.estado,
+                es_plantilla=instance.es_plantilla,
             )
             logger.debug(f"Signal creación: {instance.tipo_id} #{instance.id}")
         else:

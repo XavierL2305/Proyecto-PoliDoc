@@ -58,6 +58,11 @@ urlpatterns = [
     # Crear documentos (nueva vista genérica)
     path('seleccionar-tipo/', views.seleccionar_tipo, name='seleccionar_tipo'),
     path('nuevo/<str:tipo>/', views.crear_documento, name='crear_documento'),
+    path('nuevo/<str:tipo>/plantilla/<uuid:documento_id>/preview/',
+         views.preview_plantilla, name='preview_plantilla'),
+
+    # Crear plantillas (flujo simplificado; DEBE ir antes del genérico <str:tipo>/<uuid:/>)
+    path('plantillas/nueva/<str:tipo>/', views.crear_plantilla, name='crear_plantilla'),
 
     # Planilla de cambios (DEBE ir antes del genérico <str:tipo>/<uuid:/> para evitar conflicto)
     path('planilla-cambios/nueva/', views.crear_planilla, name='crear_planilla'),

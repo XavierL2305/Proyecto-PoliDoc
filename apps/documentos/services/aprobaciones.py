@@ -12,6 +12,7 @@ superficies ejecuten exactamente el mismo código.
 
 import logging
 
+from django.db import transaction
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -64,10 +65,174 @@ def autocompletar_planilla(planilla, aprobacion, aprobada=True):
     autocompletar_respuestas_solicitud(planilla.solicitud_cambio, valores)
 
 
+def tomar_paso_esperando(aprobacion, usuario):
+    """Asigna al admin un paso en ``esperando`` y registra la traza ISO.
+
+    El llamador debe haber bloqueado la fila con ``select_for_update()`` para
+    evitar que dos administradores tomen la misma aprobación.
+
+    La traza se guarda en el outbox SQL dentro de la MISMA transacción: solo
+    existe si la toma se confirma (no hay trazas de tomas revertidas) y un
+    worker la reenvía a Mongo después, sin bloquear la operación.
+    """
+    from uuid import uuid4
+
+    from auditoria.services import encolar_evento_auditoria
+
+    planilla = getattr(aprobacion, 'planilla', None)
+    documento = (
+        getattr(aprobacion, 'documento', None)
+        or getattr(planilla, 'documento', None)
+    )
+    payload = {
+        'usuario_id': getattr(usuario, 'id', None),
+        'accion_tipo': 'toma_aprobacion',
+        'accion_categoria': 'documento',
+        'recurso_tipo': getattr(documento, 'tipo_id', None),
+        'recurso_id': getattr(documento, 'id', None),
+        'recurso_codigo': getattr(documento, 'codigo', None),
+        'recurso_nombre': getattr(documento, 'nombre', None),
+        'estado_anterior': 'esperando',
+        'estado_posterior': 'pendiente',
+        'detalles': {
+            'flujo': 'aprobacion',
+            'planilla_codigo': getattr(planilla, 'codigo', None),
+            'aprobacion_id': aprobacion.id,
+        },
+        'resultado_exitoso': True,
+        'resultado_mensaje': 'Administrador tomó el paso en espera',
+        'correlation_id': str(uuid4()),
+    }
+
+    with transaction.atomic():
+        aprobacion.aprobador = usuario
+        aprobacion.estado = 'pendiente'
+        aprobacion.save(update_fields=['aprobador', 'estado'])
+        encolar_evento_auditoria(payload)
+    return aprobacion
+
+
+def resolver_aprobacion_planilla(aprobacion, usuario, *, aprobada,
+                                  observaciones=''):
+    """Resuelve una ``AprobacionPlanilla`` (aprobar o rechazar) y sus efectos.
+
+    Único punto para vista, API y auto-aprobación de plantillas: fija el
+    estado/firmas, aplica los cambios al documento cuando corresponde y
+    registra la auditoría ISO. No crea notificaciones in-app; eso queda en
+    ``notificar_planilla_resuelta`` para que cada superficie decida a quién
+    avisar.
+
+    Devuelve ``{'planilla', 'documento', 'cambios', 'es_final'}``.
+    """
+    from ..models import AprobacionPlanilla
+    from auditoria.services import (
+        registrar_aprobacion_planilla, registrar_rechazo_planilla,
+    )
+    from .planillas import aplicar_planilla_al_documento
+
+    planilla = aprobacion.planilla
+    if aprobada:
+        es_final = aprobacion.es_final
+        aprobacion.estado = 'aprobada'
+        aprobacion.observaciones = observaciones
+        aprobacion.fecha_aprobacion = timezone.now()
+        aprobacion.save(update_fields=[
+            'estado', 'observaciones', 'fecha_aprobacion',
+        ])
+        autocompletar_planilla(planilla, aprobacion, aprobada=True)
+        if not es_final:
+            promover_autorizador(planilla, aprobacion, usuario)
+            return {
+                'planilla': planilla, 'documento': None,
+                'cambios': {}, 'es_final': False,
+            }
+
+        planilla.estado = 'aprobado'
+        planilla.fecha_aprobacion = timezone.now()
+        planilla.save(update_fields=['estado', 'fecha_aprobacion'])
+        if planilla.solicitud_cambio:
+            planilla.solicitud_cambio.estado = 'aprobado'
+            planilla.solicitud_cambio.save(update_fields=['estado'])
+        doc, cambios = aplicar_planilla_al_documento(planilla, usuario=usuario)
+        if doc:
+            registrar_aprobacion_planilla(
+                usuario=usuario, planilla=planilla, documento=doc,
+                cambios=cambios, observaciones=observaciones,
+            )
+        return {
+            'planilla': planilla, 'documento': doc,
+            'cambios': cambios, 'es_final': True,
+        }
+
+    aprobacion.estado = 'rechazada'
+    aprobacion.observaciones = observaciones
+    aprobacion.fecha_aprobacion = timezone.now()
+    aprobacion.save(update_fields=[
+        'estado', 'observaciones', 'fecha_aprobacion',
+    ])
+    autocompletar_planilla(planilla, aprobacion, aprobada=False)
+    hermano = AprobacionPlanilla.objects.filter(
+        planilla=planilla,
+    ).exclude(id=aprobacion.id).exclude(
+        estado__in=('aprobada', 'rechazada', 'cancelada'),
+    ).first()
+    if hermano:
+        hermano.estado = 'cancelada'
+        hermano.save(update_fields=['estado'])
+    planilla.estado = 'rechazado'
+    planilla.save(update_fields=['estado'])
+    if planilla.solicitud_cambio:
+        planilla.solicitud_cambio.estado = 'rechazado'
+        planilla.solicitud_cambio.save(update_fields=['estado'])
+    doc = planilla.documento
+    if doc:
+        doc.estado = 'activo'
+        doc.save(update_fields=['estado'])
+    registrar_rechazo_planilla(
+        usuario=usuario, planilla=planilla, documento=doc,
+        observaciones=observaciones,
+    )
+    return {
+        'planilla': planilla, 'documento': doc,
+        'cambios': {}, 'es_final': True,
+    }
+
+
+def notificar_planilla_resuelta(planilla, aprobada, observaciones=''):
+    """Notifica al responsable que su planilla fue aprobada o rechazada."""
+    from autenticacion.models import Notificacion
+
+    if aprobada:
+        titulo = 'Planilla de Cambios aprobada'
+        mensaje = (
+            f'Tu planilla {planilla.codigo} ha sido aprobada. '
+            'Los cambios se han aplicado al documento.'
+        )
+        tipo = 'aprobacion_documento'
+    else:
+        titulo = 'Planilla de Cambios rechazada'
+        mensaje = (
+            f'Tu planilla {planilla.codigo} ha sido rechazada. '
+            f'Motivo: {observaciones}'
+        )
+        tipo = 'rechazo_documento'
+    documento = getattr(planilla, 'documento', None)
+    Notificacion.objects.create(
+        usuario=planilla.responsable,
+        titulo=titulo,
+        mensaje=mensaje,
+        tipo=tipo,
+        url_accion=f'/documentos/planilla-cambios/{planilla.uuid}/',
+        departamento=getattr(documento, 'departamento', None),
+        documento=documento,
+    )
+
+
 def notificar_aprobador(aprobador, solicitante, documento, es_evaluador=False, planilla=None):
     """Crea la notificación in-app de un paso pendiente de aprobación."""
     from autenticacion.models import Notificacion
 
+    es_plantilla = bool(getattr(documento, 'es_plantilla', False))
     if planilla:
         titulo = (
             'Edición de documento pendiente de evaluación' if es_evaluador
@@ -79,6 +244,13 @@ def notificar_aprobador(aprobador, solicitante, documento, es_evaluador=False, p
             f'{"evaluación" if es_evaluador else "autorización"}.'
         )
         url = f'/documentos/planilla-cambios/{planilla.uuid}/aprobar/'
+    elif es_plantilla:
+        titulo = 'Plantilla pendiente de aprobación'
+        msg = (
+            f'{solicitante.get_full_name() or solicitante.username} ha subido la plantilla '
+            f'"{documento.nombre}" ({documento.codigo}) y requiere tu aprobación.'
+        )
+        url = f'/documentos/{documento.tipo_id}/{documento.uuid}/'
     else:
         titulo = (
             'Documento pendiente de evaluación' if es_evaluador
@@ -135,15 +307,17 @@ def promover_autorizador(planilla, aprobacion_evaluada, solicitante):
     return activada
 
 
-def avisar_paso_sin_asignar(planilla, rol_label):
+def avisar_paso_sin_asignar(obj, rol_label):
     """Red de seguridad: un paso sin aprobador queda mudo para todos.
 
-    Si no hay jefe en el departamento (o no hay jefe de GG para el rol de
-    autorizador), la cadena se crea en ``esperando`` y nadie recibe
-    notificación. Aquí se avisa a los administradores para que asignen.
-    Retorna el número de notificaciones enviadas.
+    Acepta una ``PlanillaCambios`` o un ``Documento``. Si no hay jefe en el
+    departamento (o no hay jefe de GG para el rol de autorizador), la cadena
+    se crea en ``esperando`` y nadie recibe notificación. Aquí se avisa a los
+    administradores para que asignen. Retorna el número de notificaciones
+    enviadas.
     """
     from autenticacion.models import PerfilUsuario, Notificacion
+    from ..models import PlanillaCambios
 
     admins = [
         perfil.usuario for perfil in PerfilUsuario.objects.filter(
@@ -152,23 +326,48 @@ def avisar_paso_sin_asignar(planilla, rol_label):
     ]
     if not admins:
         return 0
-    documento = planilla.documento
+    es_planilla = isinstance(obj, PlanillaCambios)
+    if es_planilla:
+        planilla = obj
+        documento = planilla.documento
+        codigo = planilla.codigo
+        titulo = 'Planilla de Cambios sin aprobador asignado'
+        mensaje = (
+            f'La planilla {codigo} quedó en espera del paso de '
+            f'{rol_label} porque no hay usuario asignado a ese rol. '
+            f'Asigna un jefe y reenvía la planilla.'
+        )
+        url = f'/documentos/planilla-cambios/{planilla.uuid}/'
+        tipo = 'planilla_pendiente'
+    else:
+        documento = obj
+        codigo = documento.codigo
+        es_plantilla = bool(getattr(documento, 'es_plantilla', False))
+        etiqueta = 'La plantilla' if es_plantilla else 'El documento'
+        titulo = (
+            'Plantilla sin aprobador asignado' if es_plantilla
+            else 'Documento sin aprobador asignado'
+        )
+        mensaje = (
+            f'{etiqueta} {codigo} quedó en espera del paso de '
+            f'{rol_label} porque no hay jefe de departamento asignado. '
+            f'Asigna un jefe para que pueda ser aprobada.'
+        )
+        url = f'/documentos/{documento.tipo_id}/{documento.uuid}/'
+        tipo = 'solicitud_aprobacion'
     for admin in admins:
         Notificacion.objects.create(
             usuario=admin,
-            titulo='Planilla de Cambios sin aprobador asignado',
-            mensaje=(
-                f'La planilla {planilla.codigo} quedó en espera del paso de '
-                f'{rol_label} porque no hay usuario asignado a ese rol. '
-                f'Asigna un jefe y reenvía la planilla.'
-            ),
-            tipo='planilla_pendiente',
-            url_accion=f'/documentos/planilla-cambios/{planilla.uuid}/',
+            titulo=titulo,
+            mensaje=mensaje,
+            tipo=tipo,
+            url_accion=url,
             departamento=getattr(documento, 'departamento', None),
             documento=documento,
         )
     logger.warning(
-        "Planilla %s quedó sin aprobador para el rol '%s' (%s avisados)",
-        planilla.codigo, rol_label, len(admins),
+        "%s %s quedó sin aprobador para el rol '%s' (%s avisados)",
+        'Planilla' if es_planilla else 'Documento',
+        codigo, rol_label, len(admins),
     )
     return len(admins)
