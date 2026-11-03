@@ -40,7 +40,7 @@
         <i class="fa-solid fa-chart-pie"></i><span>Inicio</span>
       </a>
       <a href="{% url 'documentos:catalogo' %}" class="sidebar-item {% if request.resolver_match.url_name == 'catalogo' %}active{% endif %}">
-        <i class="fa-solid fa-file-circle-check"></i><span>Formularios</span>
+        <i class="fa-solid fa-file-circle-check"></i><span>Plantillas</span>
       </a>
       <a href="{% url 'documentos:mis_documentos' %}" class="sidebar-item {% if request.resolver_match.url_name == 'mis_documentos' %}active{% endif %}">
         <i class="fa-solid fa-file-lines"></i><span>Mis Documentos</span>

@@ -63,7 +63,7 @@
       </div>
       {% endif %}
 
-      {% include 'documentos/_vigencia_panel.html' with conteos_vigencia=conteos_vigencia vigencia_filter=vigencia_filter clasificacion_filter=clasificacion_filter %}
+      {% include 'documentos/_vigencia_panel.html' with conteos_vigencia=conteos_vigencia vigencia_filter=vigencia_filter clasificacion_filter=clasificacion_filter registro_filter=registro_filter %}
 
       <form method="get" class="dept-filter">
         <select name="clasificacion" class="form-input" onchange="this.form.submit()" aria-label="Clasificación">
@@ -71,6 +71,11 @@
           {% for valor, etiqueta in clasificacion_choices %}
           <option value="{{ valor }}" {% if clasificacion_filter == valor %}selected{% endif %}>{{ etiqueta }}</option>
           {% endfor %}
+        </select>
+        <select name="registro" class="form-input" onchange="this.form.submit()" aria-label="Tipo de registro">
+          <option value="todos" {% if registro_filter == 'todos' or not registro_filter %}selected{% endif %}>Todos</option>
+          <option value="documentos" {% if registro_filter == 'documentos' %}selected{% endif %}>Documentos</option>
+          <option value="plantillas" {% if registro_filter == 'plantillas' %}selected{% endif %}>Plantillas</option>
         </select>
         <select name="vigencia" class="form-input" onchange="this.form.submit()" aria-label="Vigencia">
           <option value="">Todas las vigencias</option>
@@ -80,7 +85,7 @@
           <option value="sin_vigencia" {% if vigencia_filter == 'sin_vigencia' %}selected{% endif %}>Sin vigencia</option>
         </select>
         <button type="submit" class="btn btn--primary btn--sm"><i class="fa-solid fa-filter"></i> Filtrar</button>
-        {% if clasificacion_filter or vigencia_filter %}
+        {% if clasificacion_filter or vigencia_filter or registro_filter and registro_filter != 'todos' %}
         <a href="?" class="btn btn--ghost btn--sm"><i class="fa-solid fa-xmark"></i> Quitar filtros</a>
         {% endif %}
       </form>

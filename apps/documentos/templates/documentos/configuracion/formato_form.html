@@ -4,6 +4,7 @@
 {% block title %}{{ accion }} Formato - Configuración{% endblock %}
 
 {% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/components/file-upload.css' %}">
 <style>
   .page-content { display: flex; justify-content: center; align-items: flex-start; }
   .form-card {
@@ -30,18 +31,6 @@
   .form-label { display: block; font-size: 0.875rem; font-weight: 500; color: var(--color-text); margin-bottom: 0.5rem; }
   .checkbox-row { display: flex; gap: 1.5rem; flex-wrap: wrap; }
   .checkbox-item { display: flex; align-items: center; gap: 0.5rem; }
-  .file-upload-wrapper { position: relative; }
-  .file-upload-wrapper input[type="file"] { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; z-index: -1; }
-  .file-upload-label {
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    padding: 1.5rem; border: 2px dashed var(--color-border); border-radius: var(--radius);
-    background: var(--color-bg); cursor: pointer; transition: all var(--transition);
-  }
-  .file-upload-label:hover { border-color: var(--color-primary); background: var(--color-primary-light); }
-  .file-upload-label i { font-size: 1.5rem; color: var(--color-muted); margin-bottom: 0.5rem; }
-  .file-upload-label span { font-size: 0.875rem; color: var(--color-muted); }
-  .file-upload-label.has-file { border-color: var(--color-success); background: var(--color-success-light); }
-  .file-upload-label.has-file i { color: var(--color-success); }
   @media (max-width: 768px) { .form-row { grid-template-columns: 1fr; } }
 </style>
 {% endblock %}
@@ -92,16 +81,7 @@
       </div>
       <div class="form-group form-group-full">
         <label class="form-label">Plantilla Excel (.xlsx)</label>
-        <div class="file-upload-wrapper">
-          {{ form.plantilla_xlsx }}
-          <label for="{{ form.plantilla_xlsx.id_for_label }}" class="file-upload-label" id="label-{{ form.plantilla_xlsx.id_for_label }}">
-            <i class="fa-solid fa-cloud-arrow-up"></i>
-            <span id="filename-{{ form.plantilla_xlsx.id_for_label }}">
-              {% if formato and formato.plantilla_xlsx %}Plantilla actual: {{ formato.plantilla_xlsx.name }}{% else %}Seleccione un archivo{% endif %}
-            </span>
-            <small style="font-size:0.75rem;color:var(--color-muted);">Solo .xlsx</small>
-          </label>
-        </div>
+        {% include 'documentos/_file_upload_field.html' with field=form.plantilla_xlsx hint='Solo .xlsx' prefijo_actual='Plantilla actual:' %}
       </div>
       <div class="form-group form-group-full">
         <label class="form-label">Aplica para:</label>
@@ -122,23 +102,8 @@
   </form>
 </div>
 
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-  document.querySelectorAll('input[type="file"]').forEach(function(input) {
-    var label = document.getElementById('label-' + input.id);
-    var filename = document.getElementById('filename-' + input.id);
-    if (label && filename) {
-      input.addEventListener('change', function() {
-        if (input.files && input.files.length > 0) {
-          filename.textContent = input.files[0].name;
-          label.classList.add('has-file');
-        } else {
-          filename.textContent = 'Seleccione un archivo';
-          label.classList.remove('has-file');
-        }
-      });
-    }
-  });
-});
-</script>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/file-upload.js' %}" defer></script>
 {% endblock %}

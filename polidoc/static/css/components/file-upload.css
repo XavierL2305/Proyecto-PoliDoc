@@ -1,0 +1,59 @@
+/* Componente compartido de subida de archivo.
+   Usado por formularios de documento, planilla, plantilla y formatos SGC. */
+.file-upload-wrapper { position: relative; cursor: pointer; }
+.file-upload-wrapper input[type="file"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+  z-index: -1;
+}
+.file-upload-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  border: 2px dashed var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  cursor: pointer;
+  transition: all var(--transition);
+  font-family: 'Inter', sans-serif;
+}
+.file-upload-label:hover {
+  border-color: var(--color-primary);
+  background: var(--color-primary-light);
+}
+.file-upload-label i {
+  font-size: 1.5rem;
+  color: var(--color-muted);
+  margin-bottom: 0.5rem;
+}
+.file-upload-label span {
+  font-size: 0.875rem;
+  color: var(--color-muted);
+}
+.file-upload-label.has-file {
+  border-color: var(--color-success);
+  background: var(--color-success-light);
+}
+.file-upload-label.has-file i {
+  color: var(--color-success);
+}
+.file-upload-label.has-file span {
+  color: var(--color-success-dark);
+  font-weight: 500;
+}
+.file-upload-label.drag-over {
+  border-color: var(--color-primary);
+  background: var(--color-primary-light);
+  box-shadow: 0 0 0 3px rgba(0, 90, 156, 0.15);
+}
+.file-upload-hint {
+  font-size: 0.75rem;
+  color: var(--color-muted);
+  margin-top: 0.5rem;
+  text-align: center;
+}

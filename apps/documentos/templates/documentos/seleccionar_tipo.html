@@ -1,7 +1,7 @@
 {% extends 'base_app.html' %}
 {% load static %}
 
-{% block title %}Seleccionar Tipo de Documento - POLIDOC{% endblock %}
+{% block title %}{% if es_plantilla %}Seleccionar Tipo de Plantilla{% else %}Seleccionar Tipo de Documento{% endif %} - POLIDOC{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -81,16 +81,20 @@
 
 {% block app_content %}
 <div class="page-header">
-  <h1>Seleccionar Tipo de Documento</h1>
+  <h1>{% if es_plantilla %}Seleccionar Tipo de Plantilla{% else %}Seleccionar Tipo de Documento{% endif %}</h1>
 </div>
 
 <p style="color: var(--color-muted); margin-bottom: 1.5rem;">
+  {% if es_plantilla %}
+  Selecciona el tipo de plantilla que deseas subir. La plantilla se aprobará con un flujo simplificado (jefe de departamento) y quedará disponible en el catálogo.
+  {% else %}
   Selecciona el tipo de documento que deseas crear. Los documentos serán generados con un código único automático.
+  {% endif %}
 </p>
 
 <div class="tipo-grid">
   {% for tipo in tipos %}
-  <a href="{% url 'documentos:crear_documento' tipo=tipo.key %}" class="tipo-card">
+  <a href="{% if es_plantilla %}{% url 'documentos:crear_plantilla' tipo=tipo.key %}{% else %}{% url 'documentos:crear_documento' tipo=tipo.key %}{% endif %}" class="tipo-card">
     <div class="tipo-card__icon" style="background: var(--color-{{ tipo.color }}-light); color: var(--color-{{ tipo.color }});">
       <i class="fa-solid fa-{{ tipo.icono }}"></i>
     </div>

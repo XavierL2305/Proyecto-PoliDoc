@@ -432,6 +432,16 @@
                 <span class="detail-label">Código</span>
                 <span class="detail-value">{{ documento.codigo }}</span>
               </div>
+              {% if documento.plantilla_origen %}
+              <div class="detail-row">
+                <span class="detail-label">Plantilla de origen</span>
+                <span class="detail-value">
+                  <a href="{% url 'documentos:detalle' tipo=documento.plantilla_origen.tipo_id documento_id=documento.plantilla_origen.uuid %}">
+                    {{ documento.plantilla_origen.codigo }} — {{ documento.plantilla_origen.nombre }}
+                  </a>
+                </span>
+              </div>
+              {% endif %}
               <div class="detail-row">
                 <span class="detail-label">Estado</span>
                 <span class="badge badge--{{ documento.estado }}">{{ documento.get_estado_display }}</span>
@@ -1134,6 +1144,7 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="{% static 'js/conversion-progress.js' %}" defer></script>
 <script>
 function aprobarDocumentoDirecto(tipo, docId) {
   if (!confirm('¿Estás seguro de aprobar este documento?')) return;
@@ -1424,35 +1435,5 @@ window.addEventListener('pagehide', function() {
 });
 {% endif %}
 
-// === Conversión de documento: barra de progreso + polling ===
-document.addEventListener('DOMContentLoaded', function () {
-  var el = document.getElementById('conv-progress');
-  if (!el || !window.createProgressLoader) return;
-  var url = el.getAttribute('data-url');
-  var loader = createProgressLoader(el, [
-    { pct: 10, text: 'Preparando documento…' },
-    { pct: 40, text: 'Transformando documento…' },
-    { pct: 70, text: 'Convirtiendo a PDF…' },
-    { pct: 90, text: 'Refinando detalles…' },
-  ]);
-  loader.start();
-  var intentos = 0, max = 40;
-  function poll() {
-    fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (data.listo) {
-          loader.finish('Documento listo');
-          setTimeout(function () { window.location.reload(); }, 600);
-        } else if (++intentos < max) {
-          setTimeout(poll, 3000);
-        } else {
-          loader.fail('Está tardando más de lo esperado. Recarga la página en un momento.');
-        }
-      })
-      .catch(function() { loader.fail('No se pudo consultar el estado de la conversión.'); });
-  }
-  setTimeout(poll, 2000);
-});
 </script>
 {% endblock %}

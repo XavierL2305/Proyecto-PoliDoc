@@ -1,0 +1,58 @@
+<div class="plantilla-preview" id="plantilla-preview">
+  <div class="plantilla-preview__head">
+    <div>
+      <h3 class="plantilla-preview__title">
+        <i class="fa-regular fa-file-lines" style="margin-right:0.4rem;"></i>
+        Vista previa: {{ plantilla_preview.nombre }}
+      </h3>
+      <div class="plantilla-preview__meta">
+        <span class="badge badge--primary">{{ plantilla_preview.codigo }}</span>
+        <span class="badge badge--secondary">{{ plantilla_preview.get_clasificacion_display }}</span>
+        <span>v{{ plantilla_preview.version_actual }}</span>
+        {% if plantilla_preview.departamento %}
+        <span>{{ plantilla_preview.departamento.codigo }}</span>
+        {% endif %}
+      </div>
+    </div>
+    <div class="plantilla-preview__actions">
+      {% if plantilla_descargable %}
+      <a href="{% url 'documentos:descargar_archivo' tipo=tipo documento_id=plantilla_preview.uuid %}" class="btn btn--primary btn--sm">
+        <i class="fa-solid fa-download"></i> Descargar plantilla
+      </a>
+      {% elif plantilla_pendiente %}
+      <span class="badge badge--warning" style="font-size:0.75rem;">
+        <i class="fa-solid fa-clock"></i> Solicitud pendiente
+      </span>
+      {% else %}
+      <a href="{% url 'documentos:solicitar_descarga' tipo=tipo documento_id=plantilla_preview.uuid %}" class="btn btn--secondary btn--sm">
+        <i class="fa-solid fa-download"></i> Solicitar descarga
+      </a>
+      {% endif %}
+    </div>
+  </div>
+  {% if not plantilla_puede_ver %}
+  <div class="plantilla-preview__empty">
+    <i class="fa-solid fa-lock"></i>
+    <p style="margin:0;">No tienes permiso para ver el contenido de esta plantilla.</p>
+    <p style="margin:0.5rem 0 0;font-size:0.8125rem;">Puedes solicitar la descarga para que un aprobador te autorice.</p>
+  </div>
+  {% elif plantilla_convirtiendo %}
+  <div id="conv-progress" class="progress-loader" style="padding: 2rem;"
+       data-url="{% url 'documentos:estado_conversion' tipo=tipo documento_id=plantilla_preview.uuid %}"></div>
+  {% elif plantilla_pdf_visible %}
+  <iframe class="plantilla-preview__frame"
+          src="{% url 'documentos:ver_archivo' tipo=tipo documento_id=plantilla_preview.uuid %}"
+          title="Vista previa de {{ plantilla_preview.nombre }}"></iframe>
+  {% elif plantilla_tiene_archivo %}
+  <div class="plantilla-preview__empty">
+    <i class="fa-solid fa-file"></i>
+    <p style="margin:0;">La vista previa no está disponible para este formato.</p>
+    <p style="margin:0.5rem 0 0;font-size:0.8125rem;">Descarga la plantilla para editarla en tu equipo.</p>
+  </div>
+  {% else %}
+  <div class="plantilla-preview__empty">
+    <i class="fa-solid fa-file-circle-xmark"></i>
+    <p style="margin:0;">Esta plantilla no tiene un archivo disponible.</p>
+  </div>
+  {% endif %}
+</div>

@@ -4,6 +4,7 @@
 {% block title %}{{ titulo }} - POLIDOC{% endblock %}
 
 {% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/components/file-upload.css' %}">
 <style>
   .page-header { margin-bottom: 2rem; }
   .page-header h1 { font-size: 1.5rem; font-weight: 700; color: var(--color-text); margin-bottom: 0.25rem; }
@@ -37,64 +38,6 @@
   .depto-info i { font-size: 1rem; }
   select[multiple] { min-height: 120px; width: 100%; }
   
-  /* File input styling */
-  .file-upload-wrapper { position: relative; cursor: pointer; }
-  .file-upload-wrapper input[type="file"] {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    opacity: 0;
-    overflow: hidden;
-    z-index: -1;
-  }
-  .file-upload-label {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 1.5rem;
-    border: 2px dashed var(--color-border);
-    border-radius: var(--radius);
-    background: var(--color-bg);
-    cursor: pointer;
-    transition: all var(--transition);
-    font-family: 'Inter', sans-serif;
-  }
-  .file-upload-label:hover {
-    border-color: var(--color-primary);
-    background: var(--color-primary-light);
-  }
-  .file-upload-label i {
-    font-size: 1.5rem;
-    color: var(--color-muted);
-    margin-bottom: 0.5rem;
-  }
-  .file-upload-label span {
-    font-size: 0.875rem;
-    color: var(--color-muted);
-  }
-  .file-upload-label.has-file {
-    border-color: var(--color-success);
-    background: var(--color-success-light);
-  }
-  .file-upload-label.has-file i {
-    color: var(--color-success);
-  }
-  .file-upload-label.has-file span {
-    color: var(--color-success-dark);
-    font-weight: 500;
-  }
-  .file-upload-label.drag-over {
-    border-color: var(--color-primary);
-    background: var(--color-primary-light);
-    box-shadow: 0 0 0 3px rgba(0, 90, 156, 0.15);
-  }
-  .file-upload-hint {
-    font-size: 0.75rem;
-    color: var(--color-muted);
-    margin-top: 0.5rem;
-    text-align: center;
-  }
   .code-builder {
     display: flex;
     align-items: center;
@@ -151,7 +94,25 @@
     color: var(--color-muted);
     font-weight: 300;
   }
-  @media (max-width: 768px) { .page-content { padding: 1rem; } .form-row { grid-template-columns: 1fr; } }
+  .plantilla-picker { display: flex; align-items: stretch; gap: 0.5rem; }
+  .plantilla-picker select { flex: 1; min-width: 0; }
+  .plantilla-picker .btn { white-space: nowrap; }
+  .btn.is-disabled { opacity: 0.55; pointer-events: none; }
+  .plantilla-preview { overflow: hidden; }
+  .plantilla-preview__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--color-border); }
+  .plantilla-preview__title { font-size: 1rem; font-weight: 600; color: var(--color-text); margin: 0 0 0.25rem; }
+  .plantilla-preview__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; font-size: 0.75rem; color: var(--color-muted); }
+  .plantilla-preview__actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+  .plantilla-preview__frame { width: 100%; height: 70vh; min-height: 420px; border: 0; display: block; background: #525659; }
+  .plantilla-preview__empty { padding: 2.5rem 1.5rem; text-align: center; color: var(--color-muted); }
+  .plantilla-preview__empty i { font-size: 2.5rem; margin-bottom: 0.75rem; color: var(--color-muted); }
+  .plantilla-preview__loading { padding: 3rem 2rem; text-align: center; color: var(--color-muted); }
+  .plantilla-preview__loading i { font-size: 2rem; margin-bottom: 0.75rem; display: block; }
+  .modal-preview { max-width: min(1000px, 96vw); }
+  .modal-preview .modal-body { padding: 0; }
+  .modal-preview .plantilla-preview { border: 0; border-radius: 0; }
+  .modal-preview .plantilla-preview__frame { height: 65vh; }
+  @media (max-width: 768px) { .page-content { padding: 1rem; } .form-row { grid-template-columns: 1fr; } .plantilla-picker { flex-direction: column; } .plantilla-preview__head { flex-direction: column; } }
 </style>
 {% endblock %}
 
@@ -159,6 +120,17 @@
       <div class="page-header">
         <h1>{{ titulo }}</h1>
       </div>
+
+      {% if hay_plantillas is False %}
+      <div class="alert alert--warning" style="margin-bottom:1rem;">
+        <span class="alert-icon"><i class="fa-solid fa-triangle-exclamation"></i></span>
+        <div class="alert-content">
+          No hay <strong>plantillas activas</strong> de este tipo disponibles para tu
+          perfil. Debes subir una plantilla en el catálogo antes de poder crear
+          un documento de este tipo.
+        </div>
+      </div>
+      {% endif %}
 
       <form method="post" enctype="multipart/form-data" id="proceso-form">
         {% csrf_token %}
@@ -211,20 +183,30 @@
           <div class="form-card-body">
             <div class="form-row">
               {% for field in form %}
-                {% if field.name != 'procedimientos' and field.name != 'departamentos_afectados' and field.name != 'documentos_relacionados' and field.name != 'responsables' and field.name != 'participantes' and field.name != 'afecta_todos' %}
+                {% if field.name == 'plantilla_origen' %}
+              <div class="form-group form-group-full">
+                <label class="form-label">{{ field.label }}{% if field.help_text %}<span class="form-label-help" data-tooltip="{{ field.help_text }}" data-tooltip-position="right" tabindex="0" aria-label="{{ field.help_text }}"><i class="fa-solid fa-circle-info" aria-hidden="true"></i></span>{% endif %}</label>
+                <div class="plantilla-picker">
+                  {{ field }}
+                  <button type="button" id="btn-ver-plantilla" class="btn btn--secondary is-disabled" disabled>
+                    <i class="fa-regular fa-eye"></i> Ver
+                  </button>
+                  <a id="btn-descargar-plantilla" class="btn btn--primary" href="#" style="display:none;">
+                    <i class="fa-solid fa-download"></i> Descargar plantilla
+                  </a>
+                </div>
+                <p style="margin:0.4rem 0 0;font-size:0.75rem;color:var(--color-muted);">
+                  “Ver” abre la vista previa en un modal, sin salir del formulario.
+                </p>
+                {% if field.errors %}
+                <span class="form-error">{{ field.errors.0 }}</span>
+                {% endif %}
+              </div>
+                {% elif field.name != 'procedimientos' and field.name != 'departamentos_afectados' and field.name != 'documentos_relacionados' and field.name != 'responsables' and field.name != 'participantes' and field.name != 'afecta_todos' %}
               <div class="form-group {% if field.field.widget.input_type == 'textarea' or field.field.widget.input_type == 'file' %}form-group-full{% endif %}">
                 <label class="form-label">{{ field.label }}{% if field.help_text %}<span class="form-label-help" data-tooltip="{{ field.help_text }}" data-tooltip-position="right" tabindex="0" aria-label="{{ field.help_text }}"><i class="fa-solid fa-circle-info" aria-hidden="true"></i></span>{% endif %}</label>
                 {% if field.field.widget.input_type == 'file' %}
-                <div class="file-upload-wrapper">
-                  {{ field }}
-                  <label for="{{ field.id_for_label }}" class="file-upload-label" id="label-{{ field.id_for_label }}">
-                    <i class="fa-solid fa-cloud-arrow-up"></i>
-                    <span id="filename-{{ field.id_for_label }}">
-                      {% if field.value %}Archivo actual: {{ field.value }}{% else %}Seleccione un archivo{% endif %}
-                    </span>
-                    <small class="file-upload-hint">PDF, DOC, DOCX, XLS, XLSX — Máximo 10MB</small>
-                  </label>
-                </div>
+                {% include 'documentos/_file_upload_field.html' with field=field %}
                 {% else %}
                 {{ field }}
                 {% endif %}
@@ -373,6 +355,19 @@
           </div>
         </div>
       </form>
+
+      <div class="modal-overlay" id="modal-plantilla-preview" role="dialog" aria-modal="true" aria-labelledby="plantilla-preview-modal-title">
+        <div class="modal modal--lg modal-preview" tabindex="-1">
+          <div class="modal-header">
+            <h3 id="plantilla-preview-modal-title">Vista previa de plantilla</h3>
+            <button type="button" class="modal-close" id="cerrar-plantilla-preview" aria-label="Cerrar">&times;</button>
+          </div>
+          <div class="modal-body" id="plantilla-preview-content"></div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn--ghost" id="cerrar-plantilla-preview-footer">Cerrar</button>
+          </div>
+        </div>
+      </div>
 
       <script src="{% static 'js/documentos-selector.js' %}"></script>
       <script>
@@ -625,77 +620,7 @@
       </script>
 
       <script>
-        // File input styling
         document.addEventListener('DOMContentLoaded', function() {
-          document.querySelectorAll('input[type="file"]').forEach(function(input) {
-            var label = document.getElementById('label-' + input.id);
-            var filename = document.getElementById('filename-' + input.id);
-            
-            if (label && filename) {
-              input.addEventListener('change', function() {
-                if (input.files && input.files.length > 0) {
-                  filename.textContent = input.files[0].name;
-                  label.classList.add('has-file');
-                } else {
-                  filename.textContent = 'Seleccione un archivo';
-                  label.classList.remove('has-file');
-                }
-              });
-              
-              // Check initial state
-              if (input.files && input.files.length > 0) {
-                filename.textContent = input.files[0].name;
-                label.classList.add('has-file');
-              }
-            }
-          });
-
-          // === Drag and Drop para file uploads ===
-          document.querySelectorAll('.file-upload-wrapper').forEach(function(wrapper) {
-            var dropLabel = wrapper.querySelector('.file-upload-label');
-            var fileInput = wrapper.querySelector('input[type="file"]');
-            if (!dropLabel || !fileInput) return;
-
-            // Prevenir comportamiento default en toda la ventana
-            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(function(evt) {
-              window.addEventListener(evt, function(e) {
-                e.preventDefault();
-                e.stopPropagation();
-              });
-            });
-
-            // Contador para evitar flicker al entrar/salir de elementos hijos
-            var dragCounter = 0;
-
-            dropLabel.addEventListener('dragenter', function(e) {
-              e.preventDefault();
-              dragCounter++;
-              dropLabel.classList.add('drag-over');
-            });
-
-            dropLabel.addEventListener('dragleave', function(e) {
-              e.preventDefault();
-              dragCounter--;
-              if (dragCounter === 0) {
-                dropLabel.classList.remove('drag-over');
-              }
-            });
-
-            dropLabel.addEventListener('drop', function(e) {
-              e.preventDefault();
-              dragCounter = 0;
-              dropLabel.classList.remove('drag-over');
-              
-              var files = e.dataTransfer.files;
-              if (files.length > 0) {
-                // Asignar archivos al input
-                fileInput.files = files;
-                // Disparar evento change para actualizar la UI
-                fileInput.dispatchEvent(new Event('change'));
-              }
-            });
-          });
-
           // === Auto-completar secuencia con AJAX ===
           const secuenciaInput = document.querySelector('.code-builder__input');
           if (secuenciaInput) {
@@ -731,4 +656,196 @@
           }
         });
       </script>
+{% if plantillas_meta %}
+{{ plantillas_meta|json_script:"plantillas-meta" }}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var sel = document.getElementById('id_plantilla_origen');
+  var metaEl = document.getElementById('plantillas-meta');
+  if (!sel || !metaEl) return;
+  var verBtn = document.getElementById('btn-ver-plantilla');
+  var dlBtn = document.getElementById('btn-descargar-plantilla');
+  var previewModal = document.getElementById('modal-plantilla-preview');
+  var previewContent = document.getElementById('plantilla-preview-content');
+  var previewClose = document.getElementById('cerrar-plantilla-preview');
+  var previewCloseFooter = document.getElementById('cerrar-plantilla-preview-footer');
+  var previewRequest = 0;
+  var previouslyFocused = null;
+  var previousBodyOverflow = '';
+  var mapa = {};
+  JSON.parse(metaEl.textContent).forEach(function (p) { mapa[p.id] = p; });
+
+  function actualizarAcciones() {
+    var p = mapa[sel.value];
+    if (verBtn) {
+      verBtn.disabled = !p;
+      verBtn.classList.toggle('is-disabled', !p);
+    }
+    if (!dlBtn) return;
+    dlBtn.style.display = 'none';
+    if (!p) return;
+    dlBtn.style.display = '';
+    if (p.descarga_url) {
+      dlBtn.href = p.descarga_url;
+      dlBtn.className = 'btn btn--primary';
+      dlBtn.innerHTML = '<i class="fa-solid fa-download"></i> Descargar plantilla';
+    } else if (p.pendiente) {
+      dlBtn.removeAttribute('href');
+      dlBtn.className = 'btn btn--secondary is-disabled';
+      dlBtn.innerHTML = '<i class="fa-solid fa-clock"></i> Solicitud pendiente';
+    } else if (p.solicitud_url) {
+      dlBtn.href = p.solicitud_url;
+      dlBtn.className = 'btn btn--secondary';
+      dlBtn.innerHTML = '<i class="fa-solid fa-download"></i> Solicitar descarga';
+    } else {
+      dlBtn.style.display = 'none';
+    }
+  }
+
+  function alternarFondoInerte(activo) {
+    var main = document.querySelector('.page-content');
+    if (main) {
+      Array.prototype.forEach.call(main.children, function (child) {
+        if (child === previewModal) return;
+        if (activo) {
+          child.setAttribute('inert', '');
+        } else {
+          child.removeAttribute('inert');
+        }
+      });
+    }
+    var externos = document.querySelectorAll(
+      '.sidebar, .navbar, .app-messages'
+    );
+    Array.prototype.forEach.call(externos, function (el) {
+      if (activo) {
+        el.setAttribute('inert', '');
+      } else {
+        el.removeAttribute('inert');
+      }
+    });
+  }
+
+  function recargarPreviewSiAbierto() {
+    if (previewModal && previewModal.classList.contains('active')) {
+      abrirPreview();
+    }
+  }
+
+  function abrirPreview() {
+    var p = mapa[sel.value];
+    if (!p || !previewModal || !previewContent) return;
+    var requestId = ++previewRequest;
+    previouslyFocused = document.activeElement;
+    previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    previewContent.setAttribute('aria-busy', 'true');
+    previewContent.innerHTML =
+      '<div class="plantilla-preview__loading" role="status">' +
+        '<i class="fa-solid fa-circle-notch fa-spin"></i>' +
+        '<p style="margin:0;">Cargando vista previa…</p>' +
+      '</div>';
+    previewModal.classList.add('active');
+    alternarFondoInerte(true);
+    if (previewClose) previewClose.focus();
+
+    fetch(p.preview_url, {
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      cache: 'no-store',
+    })
+      .then(function (r) {
+        if (!r.ok) throw new Error();
+        return r.text();
+      })
+      .then(function (html) {
+        if (requestId !== previewRequest ||
+            !previewModal.classList.contains('active')) return;
+        previewContent.innerHTML = html;
+        previewContent.setAttribute('aria-busy', 'false');
+        var conv = previewContent.querySelector('#conv-progress');
+        if (conv && window.initConversionProgress) {
+          window.initConversionProgress(conv, { onReady: recargarPreviewSiAbierto });
+        }
+      })
+      .catch(function () {
+        if (requestId !== previewRequest) return;
+        previewContent.setAttribute('aria-busy', 'false');
+        previewContent.innerHTML =
+          '<div class="plantilla-preview__empty" role="alert">' +
+            '<i class="fa-solid fa-triangle-exclamation"></i>' +
+            '<p style="margin:0;">No se pudo cargar la vista previa.</p>' +
+          '</div>';
+      });
+  }
+
+  function cerrarPreview() {
+    if (!previewModal) return;
+    previewRequest++;
+    previewModal.classList.remove('active');
+    alternarFondoInerte(false);
+    document.body.style.overflow = previousBodyOverflow;
+    if (previewContent) {
+      previewContent.innerHTML = '';
+      previewContent.removeAttribute('aria-busy');
+    }
+    var destino = previouslyFocused || verBtn;
+    if (destino && typeof destino.focus === 'function') destino.focus();
+  }
+
+  function mantenerFocoEnModal(event) {
+    if (event.key !== 'Tab' || !previewModal ||
+        !previewModal.classList.contains('active')) return;
+    var focusables = previewModal.querySelectorAll(
+      'a[href], button:not([disabled]), iframe, input:not([disabled]), ' +
+      'select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    );
+    if (!focusables.length) return;
+    var primero = focusables[0];
+    var ultimo = focusables[focusables.length - 1];
+    if (event.shiftKey && document.activeElement === primero) {
+      event.preventDefault();
+      ultimo.focus();
+    } else if (!event.shiftKey && document.activeElement === ultimo) {
+      event.preventDefault();
+      primero.focus();
+    }
+  }
+
+  if (verBtn) verBtn.addEventListener('click', abrirPreview);
+  if (previewClose) previewClose.addEventListener('click', cerrarPreview);
+  if (previewCloseFooter) previewCloseFooter.addEventListener('click', cerrarPreview);
+  if (previewModal) {
+    previewModal.addEventListener('click', function (event) {
+      if (event.target === previewModal) cerrarPreview();
+    });
+  }
+  document.addEventListener('keydown', function (event) {
+    if (!previewModal || !previewModal.classList.contains('active')) return;
+    if (event.key === 'Escape') {
+      cerrarPreview();
+    } else {
+      mantenerFocoEnModal(event);
+    }
+  });
+
+  sel.addEventListener('change', function () {
+    var p = mapa[this.value];
+    if (p) {
+      var desc = document.getElementById('id_descripcion');
+      if (desc && !desc.value.trim()) desc.value = p.descripcion || '';
+      var clas = document.getElementById('id_clasificacion');
+      if (clas && p.clasificacion) clas.value = p.clasificacion;
+    }
+    actualizarAcciones();
+  });
+
+  actualizarAcciones();
+});
+</script>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/file-upload.js' %}" defer></script>
+<script src="{% static 'js/conversion-progress.js' %}" defer></script>
 {% endblock %}

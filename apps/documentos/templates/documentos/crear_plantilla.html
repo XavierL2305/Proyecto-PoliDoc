@@ -1,0 +1,173 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}{{ titulo }} - POLIDOC{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/components/file-upload.css' %}">
+<style>
+  .page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+  .page-header h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--color-text);
+    margin: 0;
+  }
+  .code-preview {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.875rem;
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+    border-radius: var(--radius);
+    font-family: monospace;
+    font-size: 0.875rem;
+    font-weight: 600;
+    margin-bottom: 1.25rem;
+  }
+  .form-card {
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    margin-bottom: 1.25rem;
+  }
+  .form-card-header {
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .form-card-header h3 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--color-text);
+  }
+  .form-card-body { padding: 1.5rem; }
+  .form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.25rem;
+  }
+  .form-group-full { grid-column: 1 / -1; }
+  .form-label {
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--color-text);
+    margin-bottom: 0.375rem;
+  }
+  .form-label-help {
+    color: var(--color-muted);
+    margin-left: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 400;
+  }
+  .form-hint {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--color-muted);
+    margin-top: 0.25rem;
+  }
+  .form-error {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--color-danger);
+    margin-top: 0.25rem;
+  }
+  .form-actions {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .alert-info-plantilla {
+    display: flex;
+    gap: 0.75rem;
+    padding: 1rem 1.25rem;
+    background: var(--color-info-light);
+    color: var(--color-info-dark);
+    border-radius: var(--radius);
+    margin-bottom: 1.5rem;
+    font-size: 0.875rem;
+  }
+  @media (max-width: 639px) {
+    .form-row { grid-template-columns: 1fr; }
+  }
+</style>
+{% endblock %}
+
+{% block app_content %}
+<div class="page-header">
+  <div>
+    <h1>{{ titulo }}</h1>
+  </div>
+  <a href="{% url 'documentos:catalogo' %}" class="btn btn--ghost btn--sm">
+    <i class="fa-solid fa-arrow-left"></i> Volver al catálogo
+  </a>
+</div>
+
+<div class="alert-info-plantilla">
+  <i class="fa-solid fa-circle-info"></i>
+  <div>
+    Una <strong>plantilla</strong> es un documento en blanco que otros usuarios
+    descargan, llenan y convierten en un documento nuevo.
+    Se aprueba con un flujo simplificado: <strong>jefe de departamento</strong>
+    (sin Gerencia General). Si tú ejerces jefatura, se aprueba automáticamente.
+  </div>
+</div>
+
+<div class="code-preview">
+  <i class="fa-solid fa-barcode"></i>
+  Código: {{ codigo_preview }}
+</div>
+
+<form method="post" enctype="multipart/form-data">
+  {% csrf_token %}
+
+  <div class="form-card">
+    <div class="form-card-header">
+      <h3>Información de la plantilla</h3>
+    </div>
+    <div class="form-card-body">
+      <div class="form-row">
+        {% for field in form %}
+        <div class="form-group {% if field.name == 'descripcion' or field.name == 'archivo' %}form-group-full{% endif %}">
+          <label class="form-label" for="{{ field.id_for_label }}">
+            {{ field.label }}
+            {% if field.help_text %}
+            <span class="form-label-help">{{ field.help_text }}</span>
+            {% endif %}
+          </label>
+          {% if field.name == 'archivo' %}
+          {% include 'documentos/_file_upload_field.html' with field=field %}
+          {% else %}
+          {{ field }}
+          {% endif %}
+          {% if field.errors %}
+          <span class="form-error">{{ field.errors.0 }}</span>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn--primary">
+      <i class="fa-solid fa-upload"></i> Enviar plantilla a aprobación
+    </button>
+    <a href="{% url 'documentos:catalogo' %}" class="btn btn--ghost">Cancelar</a>
+  </div>
+</form>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/file-upload.js' %}" defer></script>
+{% endblock %}

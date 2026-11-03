@@ -1,7 +1,7 @@
 {% extends 'base_app.html' %}
 {% load static %}
 
-{% block title %}Formularios Descargables - POLIDOC{% endblock %}
+{% block title %}Plantillas - POLIDOC{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -80,10 +80,6 @@
     font-size: 1rem;
     flex-shrink: 0;
   }
-  .plantilla-icon--formulario {
-    background: var(--color-primary-light);
-    color: var(--color-primary);
-  }
   .plantilla-title {
     font-size: 0.9375rem;
     font-weight: 600;
@@ -143,13 +139,23 @@
 {% block app_content %}
 <div class="page-header">
   <div>
-    <h1>Formularios Descargables</h1>
+    <h1>Plantillas</h1>
+    <p style="color: var(--color-muted); font-size: 0.875rem; margin: 0.25rem 0 0;">
+      Documentos en blanco para descargar, llenar y convertir en un documento nuevo.
+    </p>
   </div>
-  {% if user.perfil.ejerce_jefatura or user.perfil.es_administrador %}
-  <a href="{% url 'documentos:bandeja_aprobaciones' %}" class="btn btn--primary btn--sm">
-    <i class="fa-solid fa-stamp"></i> Bandeja de Aprobaciones
-  </a>
-  {% endif %}
+  <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+    {% if puede_subir %}
+    <a href="{% url 'documentos:seleccionar_tipo' %}?plantilla=1" class="btn btn--secondary btn--sm">
+      <i class="fa-solid fa-upload"></i> Subir plantilla
+    </a>
+    {% endif %}
+    {% if user.perfil.ejerce_jefatura or user.perfil.es_administrador %}
+    <a href="{% url 'documentos:bandeja_aprobaciones' %}" class="btn btn--primary btn--sm">
+      <i class="fa-solid fa-stamp"></i> Bandeja de Aprobaciones
+    </a>
+    {% endif %}
+  </div>
 </div>
 
 {% if grupos %}
@@ -179,8 +185,10 @@
              data-codigo="{{ doc.codigo|lower }}">
           <div class="card-body">
             <div class="plantilla-header">
-              <div class="plantilla-icon plantilla-icon--formulario">
-                <i class="fa-solid fa-file-circle-check"></i>
+              <div class="plantilla-icon"
+                   title="{{ doc.tipo.nombre }}"
+                   style="background: var(--color-{{ doc.tipo.color|default:'primary' }}-light); color: var(--color-{{ doc.tipo.color|default:'primary' }});">
+                <i class="fa-solid fa-{{ doc.tipo.icono|default:'file' }}"></i>
               </div>
               <div>
                 <h3 class="plantilla-title">{{ doc.nombre }}</h3>
@@ -189,7 +197,7 @@
             </div>
             <div class="plantilla-footer">
               <div class="plantilla-meta">
-                <span class="badge badge--primary">Formulario</span>
+                <span class="badge badge--primary">Plantilla</span>
                 {% if doc.departamento %}
                 <span class="badge badge--secondary">{{ doc.departamento.codigo }}</span>
                 {% endif %}
@@ -234,7 +242,7 @@
 {% else %}
 <div class="catalog-empty">
   <i class="fa-solid fa-folder-open"></i>
-  <p>No hay formularios disponibles para tu perfil.</p>
+  <p>No hay plantillas disponibles para tu perfil.</p>
 </div>
 {% endif %}
 {% endblock %}

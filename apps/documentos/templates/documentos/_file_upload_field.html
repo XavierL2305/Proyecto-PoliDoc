@@ -1,0 +1,14 @@
+{% comment %}
+Componente compartido de subida de archivo. Requiere `field` (BoundField).
+Opcionales: `hint` (ayuda) y `prefijo_actual` (etiqueta del archivo actual).
+{% endcomment %}
+<div class="file-upload-wrapper">
+  {{ field }}
+  <label for="{{ field.id_for_label }}" class="file-upload-label" id="label-{{ field.id_for_label }}">
+    <i class="fa-solid fa-cloud-arrow-up"></i>
+    <span id="filename-{{ field.id_for_label }}">
+      {% if field.value %}{{ prefijo_actual|default:"Archivo actual:" }} {{ field.value }}{% else %}Seleccione un archivo{% endif %}
+    </span>
+    <small class="file-upload-hint">{{ hint|default:"PDF, DOC, DOCX, XLS, XLSX — Máximo 10MB" }}</small>
+  </label>
+</div>

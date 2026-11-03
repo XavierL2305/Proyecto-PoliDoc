@@ -189,6 +189,7 @@
 <form method="get" class="filter-bar">
   <select name="estado" onchange="this.form.submit()">
     <option value="pendiente" {% if filtro_estado == 'pendiente' %}selected{% endif %}>Pendientes</option>
+    <option value="esperando" {% if filtro_estado == 'esperando' %}selected{% endif %}>Esperando aprobador</option>
     <option value="aprobada" {% if filtro_estado == 'aprobada' %}selected{% endif %}>Aprobadas</option>
     <option value="rechazada" {% if filtro_estado == 'rechazada' %}selected{% endif %}>Rechazadas</option>
     <option value="" {% if not filtro_estado %}selected{% endif %}>Todas</option>
@@ -220,7 +221,7 @@
   <div class="solicitud-header">
     <div class="solicitud-info">
       <h4>{% if sol.documento %}{{ sol.documento.nombre }}{% else %}Documento no disponible{% endif %}</h4>
-      <p>{% if sol.documento %}{{ sol.documento.codigo }}{% endif %}</p>
+      <p>{% if sol.documento %}{{ sol.documento.codigo }}{% if sol.documento.es_plantilla %} <span class="badge badge--primary">Plantilla</span>{% endif %}{% endif %}</p>
     </div>
     <span class="accion-badge accion-badge--{{ sol.accion_solicitud }}">
       {% if sol.accion_solicitud == 'creacion' %}
@@ -257,12 +258,12 @@
     {% endif %}
   </div>
 
-  {% if sol.estado == 'pendiente' %}
+  {% if sol.estado == 'pendiente' or sol.estado == 'esperando' %}
   <div class="solicitud-actions">
     <a href="{% url 'documentos:detalle' tipo=sol.documento.tipo_id documento_id=sol.documento.uuid %}" class="btn btn--ghost btn--sm">
       <i class="fa-solid fa-eye"></i> Ver Documento
     </a>
-    {% if sol.aprobador_id == request.user.id %}
+    {% if sol.aprobador_id == request.user.id or not sol.aprobador_id and user.perfil.es_administrador %}
     <button class="btn btn--success btn--sm" onclick="aprobarSolicitud({{ sol.id }}, '{{ sol.documento.tipo_id }}', '{{ sol.documento.uuid }}')">
       <i class="fa-solid fa-check"></i> Aprobar
     </button>
@@ -276,7 +277,7 @@
     </span>
     {% endif %}
   </div>
-  {% if sol.aprobador_id == request.user.id %}
+  {% if sol.aprobador_id == request.user.id or not sol.aprobador_id and user.perfil.es_administrador %}
   <div class="rechazo-form" id="rechazo-{{ sol.id }}">
     <label class="form-label">Motivo del rechazo</label>
     <textarea class="form-input form-textarea" id="motivo-{{ sol.id }}" rows="2" placeholder="Ingrese el motivo del rechazo..."></textarea>
@@ -439,7 +440,16 @@
   </div>
   {% elif paso.estado == 'esperando' %}
   <div class="solicitud-actions">
+    <a href="{% url 'documentos:detalle_planilla' planilla_uuid=paso.planilla.uuid %}" class="btn btn--ghost btn--sm">
+      <i class="fa-solid fa-eye"></i> Ver Planilla
+    </a>
+    {% if user.perfil.es_administrador and not paso.aprobador_id %}
+    <a href="{% url 'documentos:aprobar_planilla' planilla_uuid=paso.planilla.uuid %}" class="btn btn--success btn--sm">
+      <i class="fa-solid fa-check"></i> Revisar y aprobar
+    </a>
+    {% else %}
     <span class="badge"><i class="fa-solid fa-hourglass-half"></i> En espera de evaluación</span>
+    {% endif %}
   </div>
   {% elif paso.estado == 'aprobada' %}
   <div class="solicitud-actions">
