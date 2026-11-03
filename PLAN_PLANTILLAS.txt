@@ -516,6 +516,7 @@ TEMPLATES:
   apps/documentos/templates/documentos/formularios.html        (F1)
   apps/documentos/templates/documentos/seleccionar_tipo.html   (F1)
   apps/documentos/templates/documentos/formulario.html         (F2,F4)
+  apps/documentos/templates/documentos/_plantilla_preview.html (F4, NUEVO)
   apps/documentos/templates/documentos/mis_documentos.html     (F1)
   apps/documentos/templates/documentos/documentos_departamento.html (F1)
   apps/documentos/templates/documentos/detalle.html            (F3,F4)
@@ -526,44 +527,64 @@ TESTS:
   apps/documentos/tests_endpoints.py, tests.py, etc. (actualizaciones)
 
 ================================================================================
-14. CHECKLIST POR ARCHIVO (tildar a medida que se avanza)
+14. CHECKLIST POR ARCHIVO (estado real al 2026-11-03)
 ================================================================================
-[ ] F0  models.py: Documento.es_plantilla
-[ ] F0  models.py: Documento.plantilla_origen
-[ ] F0  models.py: construir_codigo(..., es_plantilla)
-[ ] F0  models.py: generar_codigo_secuencial(..., es_plantilla)
-[ ] F0  grep llamadores de generar_codigo_secuencial/construir_codigo
-[ ] F0  migración 0055_plantillas (SIN backfill automático)
-[ ] F0  comando marcar_formularios_como_plantillas (--dry-run/--apply)
-[ ] F0  migrate + makemigrations --check
-[ ] F1  views.formularios (catálogo -> plantillas + visibilidad)
-[ ] F1  formularios.html (título/badge/tipo/botón subir)
-[ ] F1  base_app.html sidebar -> "Plantillas"
-[ ] F1  seleccionar_tipo (+?plantilla=1) + template
-[ ] F1  listado general: filtro es_plantilla (mis_documentos, departamento)
-[ ] F1  badge "Plantilla" en listados
-[ ] F2  urls: plantilla_crear
-[ ] F2  views.crear_plantilla (sin SolicitudCambio, archivo obligatorio)
-[ ] F2  crear_cadena_aprobacion_documento(plantilla=True)
-[ ] F2  avisar_paso_sin_asignar para documento/plantilla
-[ ] F2  formulario.html modo plantilla (ocultar formato dinámico)
-[ ] F2  etiquetas bandeja/mis_solicitudes + notificación + auditoría
-[ ] F3  verificar crear_planilla en plantillas
-[ ] F3  verificar eliminar/destruir en plantillas
-[ ] F3  detalle.html acciones para plantillas
-[ ] F4  DocumentoForm.plantilla_origen
-[ ] F4  crear_documento: descarga + autocompletado + guardar vínculo
-[ ] F4  formulario.html bloque "Plantilla de origen"
-[ ] F4  detalle.html muestra "Plantilla de origen"
+Nota: [x] = implementado/verificado; [ ] = pendiente. Se reflejan las
+decisiones posteriores al plan (jefe autoaprueba con fila de evidencia, sin
+Gerencia General para plantillas, plantilla_origen obligatorio, filtro por
+defecto "Todos", migración 0056 de tipo_archivo).
+
+[x] F0  models.py: Documento.es_plantilla
+[x] F0  models.py: Documento.plantilla_origen
+[x] F0  models.py: construir_codigo(..., es_plantilla)
+[x] F0  models.py: generar_codigo_secuencial(..., es_plantilla)
+[x] F0  grep llamadores de generar_codigo_secuencial/construir_codigo
+[x] F0  migración 0055_plantillas (SIN backfill automático)
+[x] F0  comando marcar_formularios_como_plantillas (--dry-run/--apply)
+[x] F0  migrate + makemigrations --check
+[x] F0  EXTRA: migración 0056_reparar_tipo_archivo (tipo_archivo real)
+[x] F1  views.formularios (catálogo -> plantillas + visibilidad)
+[x] F1  formularios.html: título, badge "Plantilla" y botón "Subir plantilla"
+[x] F1  formularios.html: ícono/color por tipo en la card del catálogo
+[x] F1  base_app.html sidebar -> "Plantillas"
+[x] F1  seleccionar_tipo (+?plantilla=1) + template
+[x] F1  listado general: filtro es_plantilla (mis_documentos, departamento)
+[x] F1  badge "Plantilla" en listados
+[x] F2  urls: alta de plantilla
+        -> name real: 'crear_plantilla' (el plan decía 'plantilla_crear')
+[x] F2  views.crear_plantilla (sin SolicitudCambio, archivo obligatorio)
+[x] F2  crear_cadena_aprobacion_documento(plantilla=True)
+        -> con fila de evidencia al autoaprobar (decisión posterior)
+[x] F2  avisar_paso_sin_asignar para documento/plantilla
+[x] F2  formulario.html modo plantilla (ocultar formato dinámico)
+        -> resuelto con template dedicado crear_plantilla.html
+[x] F2  notificación al jefe ("subió la plantilla ...")
+[x] F2  etiqueta "Plantilla" en la bandeja de aprobaciones
+[x] F2  etiqueta "Creación de plantilla" en mis_solicitudes
+[x] F2  auditoría explícita del alta de plantilla (es_plantilla en detalles)
+[x] F3  verificar crear_planilla en plantillas (FOR-005)
+[x] F3  verificar eliminar/destruir en plantillas (FOR-001)
+[x] F3  detalle.html: acciones editar/eliminar verificadas para plantillas
+[x] F4  DocumentoForm.plantilla_origen (obligatorio, mismo tipo/activo)
+[x] F4  crear_documento: selección + autocompletado + guardar vínculo
+[x] F4  crear_documento: botón Ver -> modal con preview AJAX y descarga
+[x] F4  formulario.html bloque "Plantilla de origen"
+[x] F4  detalle.html muestra "Plantilla de origen"
 [ ] F5  (OPCIONAL / FUTURO) services/aprobacion_flujo.py
 [ ] F5  (OPCIONAL / FUTURO) bandeja/aprobar usan el servicio
 [ ] F5  (OPCIONAL / FUTURO) solicitudes.py etiquetas
-[ ] T   tests_plantillas.py (T1..T9)
-[ ] T   actualizar tests del catálogo/códigos
-[ ] V   manage.py check
-[ ] V   makemigrations --check
-[ ] V   tests dirigidos -k plantilla -k catalogo
-[ ] V   (opcional) suite completa documentos
+[x] T   tests_plantillas.py: T1, T2, T5, T6, T7 (modificación), T8 (selección)
+[x] T   T3: coordinador sin delegación -> pendiente del jefe
+[x] T   T4: coordinador con delegación vigente -> activo directo
+[x] T   T8: preview por endpoint/modal (permisos y descarga)
+[x] T   T9: filtro del listado general (documentos/plantillas/todos)
+[x] T   test de la vista FOR-001 al eliminar plantilla
+[x] T   actualizar tests del catálogo/códigos
+[x] V   manage.py check
+[x] V   makemigrations --check
+[x] V   tests dirigidos (plantillas, formato, conversión, endpoints)
+[x] V   (opcional) suite completa documentos
+        -> 2 fallos preexistentes de AfectaTodosTest, ajenos a este plan
 
 ================================================================================
 15. HISTORIAL DE DECISIONES (Q&A con la jefa TI)

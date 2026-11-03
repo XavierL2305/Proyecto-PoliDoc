@@ -40,6 +40,19 @@ class BaseFormatoEdicionTest(BaseDocumentosTest):
                 call_command(cmd, stdout=StringIO(), stderr=StringIO())
         cls.for001 = Formato.objects.get(codigo='SGC-FOR-001')
         cls.for005 = Formato.objects.get(codigo='SGC-FOR-005')
+        # Política nueva: todo Documento nuevo exige una plantilla_origen
+        # activa del mismo tipo. Fixture mínima para los POST de creación.
+        cls.plantilla_prg = Documento.objects.create(
+            tipo=cls.tipo_procedimiento,
+            nombre='Plantilla de Procedimiento (test)',
+            codigo='TI-PRG-PLT-TST',
+            estado='activo',
+            es_plantilla=True,
+            propietario=cls.user_jefe_ti,
+            departamento=cls.depto_ti,
+            clasificacion='interno',
+            version_actual='1.0',
+        )
 
     def setUp(self):
         super().setUp()
@@ -54,6 +67,7 @@ class BaseFormatoEdicionTest(BaseDocumentosTest):
             'periodo_retencion': '',
             'secuencia': '009',
             'accion': 'borrador',
+            'plantilla_origen': str(self.plantilla_prg.uuid),
         }
         payload.update(extra)
         return self.client.post(

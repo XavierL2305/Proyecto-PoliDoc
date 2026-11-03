@@ -9,6 +9,11 @@ conservada (``SolicitudAprobacionDocumento`` + auditoría):
 * **Jefe de departamento**: lo aprueba el jefe de Gerencia General.
 * **Propietario**: lo aprueba el jefe del departamento del documento.
 
+**Plantillas** (``es_plantilla=True``) usan un flujo SIMPLIFICADO: aprueba
+el jefe/delegado del departamento del documento (sin Gerencia General); el
+jefe que solicita se autoaprueba y, sin jefe asignado, queda ``'esperando'``
+con aviso a los administradores.
+
 El documento NO cambia de estado mientras la solicitud está pendiente: la
 edición sigue permitida y el cambio se aplica al resolver la aprobación.
 """
@@ -66,6 +71,9 @@ def aprobador_de_cambio(documento, usuario):
 
     Regla de negocio confirmada:
 
+    * **Plantillas** → flujo SIMPLIFICADO: aprueba el jefe del departamento
+      del documento (sin Gerencia General). Si no hay jefe → ``(None, ...)``
+      (queda ``'esperando'`` y se avisa a los administradores).
     * Si el solicitante **ejerce jefatura** (jefe natural o delegado vigente)
       → aprueba el jefe de Gerencia General.
     * Si no lo es → aprueba el jefe del departamento del documento.
@@ -81,6 +89,15 @@ def aprobador_de_cambio(documento, usuario):
     from ..jefatura import es_delegado_vigente
 
     perfil = usuario.perfil
+    if getattr(documento, 'es_plantilla', False):
+        # Plantilla: UN solo paso con el jefe del departamento. Sin GG.
+        departamento = documento.departamento
+        jefe_depto = departamento.jefe if departamento and departamento.jefe_id else None
+        if jefe_depto and jefe_depto.id != usuario.id:
+            return jefe_depto, 'autorizador'
+        # Sin jefe (o el solicitante es el jefe → se resuelve en la rama
+        # directa de `solicitar_cambio_estado`): queda en espera.
+        return None, 'autorizador'
     if perfil.es_jefe or es_delegado_vigente(usuario):
         # Jefe (o delegado) de cualquier departamento → jefe de Gerencia General.
         return jefe_gerencia_general(), 'autorizador'
@@ -203,6 +220,13 @@ def solicitar_cambio_estado(documento, usuario, accion, *, observaciones='',
         )
 
     directo = usuario.perfil.es_administrador or es_jefe_gg(usuario)
+    es_plantilla = getattr(documento, 'es_plantilla', False)
+    if es_plantilla and not directo:
+        # Plantilla: el jefe/delegado del departamento aplica el cambio
+        # directamente (auto-aprobación); sin GG.
+        from ..jefatura import es_jefe_efectivo
+
+        directo = es_jefe_efectivo(usuario, documento.departamento)
     departamento = documento.departamento or usuario.perfil.departamento
     if departamento is None:
         return ResultadoCambio(
@@ -259,6 +283,14 @@ def solicitar_cambio_estado(documento, usuario, accion, *, observaciones='',
     if aprobador:
         _notificar_aprobador(solicitud, label, ip_address=ip_address, user_agent=user_agent)
         mensaje = f'Solicitud de {label} enviada a {aprobador.get_full_name() or aprobador.username} para aprobación.'
+    elif es_plantilla:
+        from .aprobaciones import avisar_paso_sin_asignar
+
+        mensaje = (
+            f'Solicitud de {label} registrada. No hay jefe de departamento '
+            'asignado; quedará en espera de aprobación.'
+        )
+        avisar_paso_sin_asignar(documento, label)
     else:
         mensaje = (
             f'Solicitud de {label} registrada. No hay jefe de Gerencia General '

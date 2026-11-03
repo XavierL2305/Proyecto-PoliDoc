@@ -14,7 +14,7 @@ from ..models import Documento
 
 
 def calcular_conteos_vigencia(departamentos, clasificacion, usuario,
-                              solo_departamento=False):
+                              solo_departamento=False, registro=''):
     """Conteos de documentos por estado de vigencia para `departamentos`.
 
     - `departamentos`: iterable de `Departamento` que delimitan el alcance
@@ -25,6 +25,8 @@ def calcular_conteos_vigencia(departamentos, clasificacion, usuario,
     - `solo_departamento`: con `True`, cuenta solo documentos propiedad de
       `departamentos` (mismo alcance estricto de la vista "Departamento"
       para jefes/delegados), sin generales ni afectados ajenos.
+    - `registro`: 'documentos' | 'plantillas' para restringir el tipo de
+      registro; cadena vacía para todos.
 
     Devuelve un dict con las claves `vencidos`, `vence_pronto`, `vigentes` y
     `sin_vigencia`.
@@ -37,6 +39,10 @@ def calcular_conteos_vigencia(departamentos, clasificacion, usuario,
     base = base.filter(q_documentos_visibles(usuario))
     if clasificacion:
         base = base.filter(clasificacion=clasificacion)
+    if registro == 'documentos':
+        base = base.filter(es_plantilla=False)
+    elif registro == 'plantillas':
+        base = base.filter(es_plantilla=True)
     if solo_departamento:
         base = base.filter(departamento_id__in=dep_ids)
     else:

@@ -33,9 +33,14 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
   editarlo (modificación). Ver `maps.py` flags `sin_prefijo_depto` y
   `solo_jefes`, y `Documento.construir_codigo()`.
 
-  Modelo Plantilla: ELIMINADO (migración 0005_remove_plantilla). El catálogo
-  ahora usa directamente el modelo Documento (tipo='formulario', estado='activo').
-  La sección "Plantillas ISO" de Configuración también fue eliminada.
+  Plantillas (desde migración 0055): NO es un modelo aparte. Una Plantilla es
+  un Documento normal con `es_plantilla=True` (documento en blanco descargable).
+  El catálogo /documentos/ lista SOLO esas plantillas activas. El código usa una
+  serie separada: `{DEPTO}-{TIPO}-PLT-{SEC}` (ej. TI-DPR-PLT-001) o
+  `{TIPO}-PLT-{SEC}` para tipos sin prefijo (DPR-PLT-001). Ver §5.
+  Todo Documento NUEVO exige `plantilla_origen` (FK a una plantilla activa del
+  mismo tipo y visible para el usuario); si el tipo no tiene plantilla activa se
+  bloquea la creación. Los documentos existentes quedan exentos (NULL).
 
 2. ROLES DEL SISTEMA
 -------------------------------------------------------------------
@@ -153,14 +158,36 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
        requieren solicitud aprobada (`restringido`, doble control secuencial
        jefe del depto dueño → jefe de Gerencia General). Ver §10.3.
 
-5. FLUJO DE FORMULARIOS DESCARGABLES
+5. FLUJO DE PLANTILLAS (CATÁLOGO DESCARGABLE)
 -------------------------------------------------------------------
   5.1 CONCEPTO:
-      - El catálogo muestra documentos de tipo "Formulario" (estado=activo)
-      - Visibilidad: documentos del departamento del usuario + documentos públicos (clasificacion='publico')
-      - Admin: ve todos los formularios activos
-      - Jefe: ve propios + de su departamento + públicos
-      - Trabajador/Coordinador: ve de su departamento + públicos
+      - Una Plantilla es un Documento normal con `es_plantilla=True`
+        (documento en blanco que otros descargan, llenan y convierten en un
+        Documento nuevo). NO existe un modelo Plantilla aparte.
+      - El catálogo /documentos/ ("Plantillas" en el sidebar) lista SOLO
+        plantillas activas (estado='activo'); los documentos normales no
+        aparecen ahí.
+      - Código con serie propia: `{DEPTO}-{TIPO}-PLT-{SEC}` (ej.
+        TI-DPR-PLT-001); tipos sin prefijo: `{TIPO}-PLT-{SEC}` (DPR-PLT-001).
+      - Visibilidad: hereda `q_documentos_visibles` (admin: todo; jefe: su
+        departamento interno/confidencial; trabajador/coordinador: propios,
+        públicos activos, asignaciones y distribuciones).
+      - Alta: botón "Subir plantilla" → seleccionar tipo → formulario. Se
+        crea con es_plantilla=True y `plantilla_origen=None`. El archivo es
+        obligatorio (una plantilla sin archivo rompería el "Descargar").
+      - Aprobación SIMPLIFICADA (creación, modificación y eliminación):
+        jefe/delegado del departamento del documento (sin Gerencia General).
+        Si quien sube/modifica/elimina ejerce jefatura → autoaprobación con
+        fila de evidencia (SolicitudAprobacionDocumento / AprobacionPlanilla).
+        Si no → pendiente del jefe del departamento. Sin jefe → 'esperando' +
+        aviso a los administradores (bandeja las muestra para tomarlas).
+      - Creación de plantilla NO genera SolicitudCambio/FOR-001. La
+        modificación usa FOR-005 (Planilla de Cambios). La eliminación conserva
+        FOR-001 (`solicitar_cambio_estado`), solo cambia quién aprueba.
+      - `plantilla_origen` es OBLIGATORIO al crear un Documento nuevo: debe ser
+        una plantilla activa del mismo tipo y visible para el usuario. Si el
+        tipo no tiene plantilla activa, la creación queda bloqueada. Los
+        documentos existentes no se backfillean (NULL).
 
   5.2 DESCARGA DIRECTA (Formularios Públicos):
       - Documentos con clasificacion='publico' se descargan directamente (sin aprobación)
@@ -1382,6 +1409,12 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
               propietario                → aprueba el jefe del depto del doc
               coordinador con asignación → aprueba el jefe del depto del doc
               resto                      → sin permiso
+        - PLANTILLAS (`documento.es_plantilla=True`): flujo SIMPLIFICADO sin
+          Gerencia General. Aprueba el jefe/delegado del departamento del
+          documento. Si quien solicita ejerce jefatura → se autoaprueba en el
+          acto (fila aprobada como evidencia); si no → pendiente del jefe;
+          sin jefe → 'esperando' + `avisar_paso_sin_asignar(documento, ...)`
+          a los administradores.
           (mismo criterio de "quién puede iniciar" que
           `views.puede_eliminar_documento`, con GG añadido como autoridad
           máxima). `permissions.puede_inhabilitar` devuelve
@@ -1742,10 +1775,19 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
                               afectados/borradores/todos), guardado de
                               pendientes en la planilla y render en ambas
                               pantallas. Ver §20.8.
-        migrations/        0001–0048; última: 0048
-                            (SolicitudAprobacionDocumento.fecha_propuesta +
-                            ACCION_CHOICES con reactivar/renovar, para el flujo
-                            de cambio de estado con UNA aprobación; ver §20.9).
+         tests_plantillas.py  apartado Plantillas: código PLT, alta con
+                              aprobación simplificada (jefe/delegado, sin GG),
+                              modificación FOR-005, eliminación FOR-001 y
+                              `plantilla_origen` obligatorio al crear Documento.
+        migrations/        0001–0056; última: 0056
+                            (0056 repara Documento.tipo_archivo según la
+                            extensión real del archivo; la 0055 añade
+                            Documento.es_plantilla + plantilla_origen para el
+                            apartado Plantillas; ver §5. La 0054 ajustó
+                            unique_together/index de AprobacionDescarga.
+                            La 0048 añadió fecha_propuesta +
+                            ACCION_CHOICES con reactivar/renovar (flujo de
+                            cambio de estado con UNA aprobación; ver §20.9).
                             La 0047 añadió índices en Documento y
                             SolicitudDescarga. La 0046 añadió
                             PlanillaCambios.referencias_pendientes, para asociar
@@ -1763,7 +1805,10 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
                               probar_gemini, verificar_vencimientos,
                               verificar_destruccion, verificar_exportacion,
                               verificar_revisiones_pendientes, limpiar_documentos,
-                              revisar_pdfs
+                              revisar_pdfs,
+                              marcar_formularios_como_plantillas
+                              (dry-run por defecto; --apply reclasifica como
+                              plantilla los documentos tipo 'formulario')
     - apps/autenticacion/
         models.py          PerfilUsuario (roles: administrador/jefe_departamento/
                            coordinador/trabajador), Notificacion

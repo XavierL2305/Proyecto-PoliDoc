@@ -1,12 +1,34 @@
 import os
 import uuid
 from datetime import datetime
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Max
 from django.contrib.auth.models import User
 from django.utils import timezone
 
 from .validators import validar_archivo_documento
+
+
+#: Extensión permitida → valor de `Documento.tipo_archivo`.
+TIPO_ARCHIVO_POR_EXTENSION = {
+    '.pdf': 'pdf',
+    '.doc': 'doc',
+    '.docx': 'docx',
+    '.xls': 'xls',
+    '.xlsx': 'xlsx',
+    '.vsdx': 'vsdx',
+}
+
+
+def tipo_archivo_desde_nombre(nombre, por_defecto='pdf'):
+    """Infiere `tipo_archivo` a partir de la extensión del archivo.
+
+    Fuente única de verdad: evita que un `.xlsx` quede guardado como `pdf`
+    (lo que mostraría el visor PDF con un archivo que no lo es).
+    """
+    ext = os.path.splitext(nombre or '')[1].lower()
+    return TIPO_ARCHIVO_POR_EXTENSION.get(ext, por_defecto)
 
 
 def generar_ruta_archivo(instance, filename):
@@ -325,6 +347,16 @@ class Documento(models.Model):
             '"Público" hace el documento visible para otros departamentos.'
         )
     )
+    # Discriminador de Plantilla (documento en blanco subido para que otros
+    # lo descarguen y llenen). NO es entidad nueva: es un Documento normal.
+    es_plantilla = models.BooleanField(
+        default=False, db_index=True, verbose_name='Es plantilla'
+    )
+    plantilla_origen = models.ForeignKey(
+        'self', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='documentos_generados',
+        verbose_name='Plantilla de origen',
+    )
     fecha_retencion = models.DateField(null=True, blank=True, verbose_name='Fecha de Retención')
     fecha_destruccion = models.DateField(null=True, blank=True, verbose_name='Fecha de Destrucción')
     fecha_vencimiento = models.DateField(null=True, blank=True, verbose_name='Fecha de Vencimiento')
@@ -487,32 +519,37 @@ class Documento(models.Model):
         ).exists()
 
     @classmethod
-    def construir_codigo(cls, departamento, tipo, secuencia):
+    def construir_codigo(cls, departamento, tipo, secuencia, es_plantilla=False):
         """Construye el código según el tipo.
 
         - Normal:      {DEPTO}-{TIPO}-{SEC}  (ej. TI-PRG-001)
+        - Plantilla:   {DEPTO}-{TIPO}-PLT-{SEC} (ej. TI-DPR-PLT-001)
         - Sin prefijo: {TIPO}-{SEC}          (ej. DPR-001)
+        - Plantilla sin prefijo: {TIPO}-PLT-{SEC} (ej. DPR-PLT-001)
         """
         tipo_obj = TipoDocumento.objects.filter(key=tipo).first()
         tipo_codigo = tipo_obj.codigo if tipo_obj else tipo
+        marca = '-PLT' if es_plantilla else ''
         if cls.es_sin_prefijo_depto(tipo):
-            return f"{tipo_codigo}-{secuencia}"
-        return f"{departamento.codigo}-{tipo_codigo}-{secuencia}"
+            return f"{tipo_codigo}{marca}-{secuencia}"
+        return f"{departamento.codigo}-{tipo_codigo}{marca}-{secuencia}"
 
     @classmethod
-    def generar_codigo_secuencial(cls, departamento, tipo):
+    def generar_codigo_secuencial(cls, departamento, tipo, es_plantilla=False):
         """Genera el siguiente código secuencial.
 
         Args:
             departamento: Instancia de Departamento (None si el tipo no lo usa).
             tipo: Key del tipo de documento (ej: 'formulario', 'descripcion_procesos')
+            es_plantilla: True si se genera código de plantilla; la serie es
+                separada de la de documentos normales.
 
         Los tipos con `sin_prefijo_depto` numeran de forma GLOBAL (todos los
         departamentos comparten la secuencia): DPR-001, DPR-002, ...
         """
         sin_prefijo = cls.es_sin_prefijo_depto(tipo)
 
-        qs = cls.objects.filter(tipo__key=tipo)
+        qs = cls.objects.filter(tipo__key=tipo, es_plantilla=es_plantilla)
         if not sin_prefijo and departamento is not None:
             qs = qs.filter(departamento=departamento)
         max_codigo = qs.order_by('-codigo').values_list('codigo', flat=True).first()
@@ -525,9 +562,59 @@ class Documento(models.Model):
             except (ValueError, IndexError):
                 num = 1
 
-        return cls.construir_codigo(departamento, tipo, f"{num:03d}")
+        return cls.construir_codigo(departamento, tipo, f"{num:03d}",
+                                    es_plantilla=es_plantilla)
+
+    def clean(self):
+        """Valida la integridad de `plantilla_origen` (defensa en profundidad).
+
+        El formulario ya limita el queryset, pero otros caminos (API, scripts,
+        importaciones) podrían asignar un origen inválido. Solo se valida al
+        crear (`_state.adding`) y con `tipo_id` ya asignado: la validación del
+        ModelForm ocurre antes de que la vista fije el tipo, y un documento
+        existente puede conservar su origen aunque la plantilla se inhabilite.
+
+        Los documentos existentes sin plantilla_origen no se ven afectados.
+        """
+        super().clean()
+        # Solo al crear: un documento ya existente puede conservar su
+        # plantilla_origen aunque luego la plantilla se inhabilite.
+        if not self._state.adding or not self.tipo_id:
+            return
+        # La propia plantilla no se genera desde otra plantilla.
+        if self.es_plantilla:
+            return
+        if not self.plantilla_origen_id:
+            raise ValidationError({
+                'plantilla_origen': (
+                    'Todo documento nuevo debe partir de una plantilla activa.'
+                ),
+            })
+        origen = self.plantilla_origen
+        if not origen.es_plantilla:
+            raise ValidationError({
+                'plantilla_origen': 'El documento de origen debe ser una plantilla.',
+            })
+        if origen.tipo_id != self.tipo_id:
+            raise ValidationError({
+                'plantilla_origen': 'La plantilla debe ser del mismo tipo que el documento.',
+            })
+        if origen.estado != 'activo':
+            raise ValidationError({
+                'plantilla_origen': 'La plantilla de origen debe estar activa.',
+            })
 
     def save(self, *args, **kwargs):
+        if self.archivo:
+            nuevo_tipo = tipo_archivo_desde_nombre(
+                self.archivo.name, self.tipo_archivo,
+            )
+            if nuevo_tipo != self.tipo_archivo:
+                self.tipo_archivo = nuevo_tipo
+                update_fields = kwargs.get('update_fields')
+                if (update_fields is not None
+                        and 'tipo_archivo' not in update_fields):
+                    kwargs['update_fields'] = list(update_fields) + ['tipo_archivo']
         if self.codigo and self.nombre:
             self.hash_integridad = self.calcular_hash()
         super().save(*args, **kwargs)

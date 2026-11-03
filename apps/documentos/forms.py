@@ -7,10 +7,43 @@ from .models import (
 )
 from .icons import ICONOS_DISPONIBLES, ICONO_POR_DEFECTO
 
-TIPO_ARCHIVO_MAP = {
-    '.pdf': 'pdf', '.doc': 'doc', '.docx': 'docx',
-    '.xls': 'xls', '.xlsx': 'xlsx',
-}
+class PlantillaForm(forms.ModelForm):
+    """Formulario para subir una Plantilla (documento en blanco)."""
+
+    class Meta:
+        model = Documento
+        fields = ['nombre', 'descripcion', 'archivo', 'clasificacion']
+        widgets = {
+            'nombre': forms.TextInput(attrs={
+                'class': 'form-input',
+                'placeholder': 'Ej. Formato de Control de Documentos',
+            }),
+            'descripcion': forms.Textarea(attrs={
+                'class': 'form-input', 'rows': 3, 'placeholder': ' ',
+            }),
+            'clasificacion': forms.Select(attrs={'class': 'form-input'}),
+            'archivo': forms.FileInput(attrs={'class': 'form-input'}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['nombre'].label = 'Nombre de la plantilla'
+        self.fields['nombre'].help_text = (
+            'Nombre con el que se identificará en el catálogo de plantillas.'
+        )
+        self.fields['archivo'].label = 'Archivo de la plantilla'
+        self.fields['archivo'].help_text = (
+            'Documento en blanco (PDF, Word o Excel, máx. 10 MB) que otros '
+            'usuarios descargarán y llenarán.'
+        )
+        self.fields['clasificacion'].help_text = (
+            '"Público" hace la plantilla visible para todos los departamentos; '
+            'el resto se mantiene dentro del tuyo.'
+        )
+        self.fields['descripcion'].required = False
+        # El archivo en blanco es la razón de ser de la plantilla: sin él el
+        # catálogo mostraría un "Descargar" que apunta a un FileField vacío.
+        self.fields['archivo'].required = True
 
 
 class DocumentoForm(forms.ModelForm):
@@ -52,6 +85,9 @@ class DocumentoForm(forms.ModelForm):
         }
 
     def __init__(self, *args, **kwargs):
+        con_plantilla = kwargs.pop('con_plantilla', False)
+        usuario = kwargs.pop('usuario', None)
+        plantillas_queryset = kwargs.pop('plantillas_queryset', None)
         departamento_id = kwargs.pop('departamento_id', None)
         tipo_documento = kwargs.pop('tipo_documento', None)
         super().__init__(*args, **kwargs)
@@ -112,6 +148,39 @@ class DocumentoForm(forms.ModelForm):
             if not tipo_obj.usa_documentos_relacionados:
                 self.fields.pop('documentos_relacionados', None)
 
+        # Plantilla de origen (solo al CREAR un Documento nuevo). Exigida por
+        # política: todo documento nuevo debe provenir de una plantilla activa
+        # del mismo tipo. Los documentos existentes quedan exentos.
+        if con_plantilla and not self.instance.pk:
+            if plantillas_queryset is not None:
+                # La vista calcula el queryset una sola vez (evita duplicar la
+                # regla de visibilidad y posibles divergencias).
+                plantillas = plantillas_queryset
+            else:
+                from .permissions import q_documentos_visibles
+
+                plantillas = Documento.objects.filter(
+                    es_plantilla=True, estado='activo',
+                ).select_related('departamento')
+                if tipo_obj:
+                    plantillas = plantillas.filter(tipo=tipo_obj)
+                else:
+                    plantillas = plantillas.none()
+                if usuario is not None:
+                    plantillas = plantillas.filter(q_documentos_visibles(usuario))
+            self.fields['plantilla_origen'] = forms.ModelChoiceField(
+                queryset=plantillas,
+                required=True,
+                label='Plantilla de origen',
+                empty_label='Selecciona la plantilla que usarás',
+                to_field_name='uuid',
+                help_text=(
+                    'Documento en blanco del que parte este documento. '
+                    'Debe estar activo y ser del mismo tipo.'
+                ),
+                widget=forms.Select(attrs={'class': 'form-input'}),
+            )
+
     def clean(self):
         cleaned = super().clean()
         if cleaned.get('afecta_todos'):
@@ -128,19 +197,6 @@ class DocumentoForm(forms.ModelForm):
 
     def clean_participantes(self):
         return self.cleaned_data.get('participantes') or []
-
-    def save(self, commit=True):
-        instance = super().save(commit=False)
-        archivo = self.cleaned_data.get('archivo')
-        if archivo:
-            import os
-            ext = os.path.splitext(archivo.name)[1].lower()
-            instance.tipo_archivo = TIPO_ARCHIVO_MAP.get(ext, 'pdf')
-        if commit:
-            instance.save()
-            self.save_m2m()
-        return instance
-
 
 class SolicitudDescargaForm(forms.ModelForm):
     class Meta:

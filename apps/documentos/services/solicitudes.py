@@ -23,6 +23,7 @@ PENDIENTES = ('pendiente', 'esperando')
 ICONOS = {
     'descarga': 'fa-download',
     'creacion': 'fa-plus',
+    'creacion_plantilla': 'fa-plus',
     'edicion': 'fa-pen',
     'inhabilitar': 'fa-ban',
     'reactivar': 'fa-rotate-left',
@@ -36,6 +37,7 @@ ICONOS = {
 TIPOS_LABEL = {
     'descarga': 'Descarga',
     'creacion': 'Creación',
+    'creacion_plantilla': 'Creación de plantilla',
     'edicion': 'Edición',
     'inhabilitar': 'Inhabilitar',
     'reactivar': 'Reactivar',
@@ -199,6 +201,18 @@ def _item_descarga(solicitud):
 def _item_cambio(solicitud):
     """Ítem para :class:`models.SolicitudAprobacionDocumento`."""
     documento = solicitud.documento
+    es_alta_plantilla = (
+        solicitud.accion_solicitud == 'creacion'
+        and bool(getattr(documento, 'es_plantilla', False))
+    )
+    tipo_item = (
+        'creacion_plantilla' if es_alta_plantilla
+        else solicitud.accion_solicitud
+    )
+    tipo_label = TIPOS_LABEL.get(
+        tipo_item, solicitud.get_accion_solicitud_display(),
+    )
+    icono = ICONOS.get(tipo_item, 'fa-file-signature')
     aprobadores = [
         _aprobador_item(solicitud.aprobador, solicitud.rol_aprobador, solicitud.estado,
                         solicitud.fecha_respuesta),
@@ -207,10 +221,9 @@ def _item_cambio(solicitud):
     return ItemSolicitud(
         id=solicitud.id,
         clave=CLAVE_CAMBIO,
-        tipo=solicitud.accion_solicitud,
-        tipo_label=TIPOS_LABEL.get(solicitud.accion_solicitud,
-                                   solicitud.get_accion_solicitud_display()),
-        icono=ICONOS.get(solicitud.accion_solicitud, 'fa-file-signature'),
+        tipo=tipo_item,
+        tipo_label=tipo_label,
+        icono=icono,
         estado=solicitud.estado,
         estado_label=ESTADO_LABELS.get(solicitud.estado,
                                        solicitud.get_estado_display()),
