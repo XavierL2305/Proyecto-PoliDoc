@@ -72,3 +72,47 @@ class ReporteAuditoria(models.Model):
         if self.fecha_inicio and self.fecha_fin:
             return f'{self.fecha_inicio.strftime("%d/%m/%Y")} a {self.fecha_fin.strftime("%d/%m/%Y")}'
         return '—'
+
+
+class AuditoriaOutbox(models.Model):
+    """Evento de auditoría pendiente de enviar a MongoDB.
+
+    Se escribe en la MISMA transacción SQL que la acción auditada, de modo que
+    la traza no se pierde si el proceso cae justo después del commit (el
+    worker de Celery la reintenta). Es un patrón outbox: la entrega es
+    at-least-once; ``payload`` incluye ``correlation_id`` para agrupar posibles
+    duplicados.
+    """
+
+    ESTADO_CHOICES = [
+        ('pendiente', 'Pendiente'),
+        ('procesando', 'Procesando'),
+        ('enviado', 'Enviado'),
+        ('error', 'Error'),
+    ]
+
+    evento_id = models.UUIDField(
+        default=uuid.uuid4, unique=True, editable=False,
+        verbose_name='ID del evento',
+    )
+    payload = models.JSONField(verbose_name='Payload de auditoría')
+    estado = models.CharField(
+        max_length=12, choices=ESTADO_CHOICES, default='pendiente',
+        db_index=True, verbose_name='Estado',
+    )
+    intentos = models.PositiveIntegerField(default=0, verbose_name='Intentos')
+    ultimo_error = models.TextField(blank=True, default='', verbose_name='Último error')
+    creado_en = models.DateTimeField(auto_now_add=True, db_index=True)
+    actualizado_en = models.DateTimeField(auto_now=True)
+    enviado_en = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'Evento de auditoría en outbox'
+        verbose_name_plural = 'Eventos de auditoría en outbox'
+        ordering = ['creado_en']
+        indexes = [
+            models.Index(fields=['estado', 'creado_en'], name='aud_outbox_estado_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.evento_id} ({self.estado})'

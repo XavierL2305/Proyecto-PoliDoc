@@ -9,6 +9,8 @@ from datetime import datetime, timedelta
 from uuid import uuid4
 from pymongo import MongoClient, ASCENDING, DESCENDING, ReturnDocument
 from django.conf import settings
+from django.db import transaction
+from django.utils import timezone
 from .middleware import get_client_ip
 
 logger = logging.getLogger(__name__)
@@ -148,6 +150,99 @@ def _encolar_log_buffer(payload):
         logger.warning("Auditoría bufferizada (Mongo no disponible): %s", nombre)
     except Exception as exc:  # noqa: BLE001
         logger.error("No se pudo bufferizar el log de auditoría: %s", exc)
+
+
+def encolar_evento_auditoria(payload):
+    """Guarda un evento de auditoría en el outbox SQL.
+
+    Debe llamarse DENTRO de la misma transacción que la acción auditada: así
+    el evento solo existe si la acción se confirma y sobrevive a una caída del
+    proceso (el worker de Celery lo reenvía).
+    """
+    from .models import AuditoriaOutbox
+
+    return AuditoriaOutbox.objects.create(payload=payload)
+
+
+def drenar_outbox(limite=200):
+    """Envía a Mongo los eventos pendientes del outbox SQL.
+
+    Reclama una fila a la vez (``select_for_update`` + estado ``procesando``)
+    para no duplicar trabajo entre workers. Si Mongo falla, deja la fila para
+    el siguiente intento y corta el lote. Devuelve un resumen.
+    """
+    from django.contrib.auth.models import User
+
+    from .models import AuditoriaOutbox
+
+    max_intentos = getattr(settings, 'AUDITORIA_OUTBOX_MAX_INTENTOS', 10)
+    timeout_min = getattr(settings, 'AUDITORIA_OUTBOX_TIMEOUT_MIN', 10)
+    # Recupera filas que quedaron 'procesando' por una caída del worker.
+    limite_stale = timezone.now() - timedelta(minutes=timeout_min)
+    AuditoriaOutbox.objects.filter(
+        estado='procesando', actualizado_en__lt=limite_stale,
+    ).update(estado='pendiente')
+
+    enviados = fallidos = 0
+    for _ in range(limite):
+        with transaction.atomic():
+            fila = (
+                AuditoriaOutbox.objects.select_for_update()
+                .filter(estado='pendiente')
+                .order_by('creado_en')
+                .first()
+            )
+            if fila is None:
+                break
+            fila.estado = 'procesando'
+            fila.save(update_fields=['estado'])
+
+        payload = dict(fila.payload or {})
+        usuario_id = payload.pop('usuario_id', None)
+        usuario = User.objects.filter(pk=usuario_id).first() if usuario_id else None
+        try:
+            log_id = registrar_log_iso(
+                usuario=usuario, _no_buffer=True, fail_closed=True, **payload,
+            )
+        except Exception as exc:  # noqa: BLE001 - Mongo caído: reintentar luego
+            fila.intentos += 1
+            fila.ultimo_error = str(exc)[:500]
+            fila.estado = (
+                'error' if fila.intentos >= max_intentos else 'pendiente'
+            )
+            fila.save(update_fields=['intentos', 'ultimo_error', 'estado'])
+            fallidos += 1
+            break
+
+        if not log_id:
+            fila.intentos += 1
+            fila.ultimo_error = 'registrar_log_iso no devolvió log_id'
+            fila.estado = 'error' if fila.intentos >= max_intentos else 'pendiente'
+            fila.save(update_fields=['intentos', 'ultimo_error', 'estado'])
+            fallidos += 1
+            break
+
+        fila.estado = 'enviado'
+        fila.enviado_en = timezone.now()
+        fila.ultimo_error = ''
+        fila.save(update_fields=['estado', 'enviado_en', 'ultimo_error'])
+        enviados += 1
+
+    # Los eventos ya enviados no necesitan conservarse: Mongo es la fuente de
+    # verdad. Se purgan para que la tabla no crezca indefinidamente.
+    retencion_dias = getattr(settings, 'AUDITORIA_OUTBOX_RETENCION_DIAS', 30)
+    if retencion_dias > 0:
+        AuditoriaOutbox.objects.filter(
+            estado='enviado',
+            enviado_en__lt=timezone.now() - timedelta(days=retencion_dias),
+        ).delete()
+
+    return {
+        'enviados': enviados,
+        'fallidos': fallidos,
+        'pendientes': AuditoriaOutbox.objects.filter(estado='pendiente').count(),
+        'errores': AuditoriaOutbox.objects.filter(estado='error').count(),
+    }
 
 
 def reprocesar_buffer(limite=200):
@@ -561,8 +656,9 @@ def registrar_logout(usuario, ip_address=None, user_agent=None, sesion_id=None):
 def registrar_creacion_documento(usuario, recurso_tipo, recurso_id,
                                  codigo=None, nombre=None,
                                  estado_posterior='borrador',
+                                 es_plantilla=False,
                                  ip_address=None, correlation_id=None):
-    """Registra creación de un documento"""
+    """Registra creación de un documento (o plantilla)."""
     return registrar_log_iso(
         usuario=usuario,
         accion_tipo='creacion',
@@ -574,9 +670,16 @@ def registrar_creacion_documento(usuario, recurso_tipo, recurso_id,
         recurso_version='1.0',
         estado_anterior=None,
         estado_posterior=estado_posterior,
-        detalles={'codigo': codigo, 'nombre': nombre},
+        detalles={
+            'codigo': codigo,
+            'nombre': nombre,
+            'es_plantilla': bool(es_plantilla),
+        },
         resultado_exitoso=True,
-        resultado_mensaje=f'{recurso_tipo.title()} creado correctamente',
+        resultado_mensaje=(
+            'Plantilla creada correctamente' if es_plantilla
+            else f'{recurso_tipo.title()} creado correctamente'
+        ),
         correlation_id=correlation_id,
         ip_address=ip_address
     )

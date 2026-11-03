@@ -265,6 +265,11 @@ AUDIT_TRUSTED_PROXIES = [
 # producción; hacerlo debilita la garantía de trazabilidad.
 AUDIT_FAIL_CLOSED = os.getenv('AUDIT_FAIL_CLOSED', 'True').lower() in ('true', '1', 't')
 
+# Outbox SQL de auditoría: reintentos y recuperación de filas colgadas.
+AUDITORIA_OUTBOX_MAX_INTENTOS = int(os.getenv('AUDITORIA_OUTBOX_MAX_INTENTOS', '10'))
+AUDITORIA_OUTBOX_TIMEOUT_MIN = int(os.getenv('AUDITORIA_OUTBOX_TIMEOUT_MIN', '10'))
+AUDITORIA_OUTBOX_RETENCION_DIAS = int(os.getenv('AUDITORIA_OUTBOX_RETENCION_DIAS', '30'))
+
 # Tamaño máximo (MB) para la subida de documentos. Lo aplica el validador
 # apps/documentos/validators.py sobre los FileField de subida de usuario.
 DOCUMENTOS_MAX_UPLOAD_MB = int(os.getenv('DOCUMENTOS_MAX_UPLOAD_MB', '10'))
@@ -403,6 +408,10 @@ CELERY_BEAT_SCHEDULE = {
     'reprocesar-logs-buffer': {
         'task': 'auditoria.tasks.reprocesar_logs_buffer',
         'schedule': timedelta(minutes=5),
+    },
+    'drenar-outbox-auditoria': {
+        'task': 'auditoria.tasks.drenar_outbox_auditoria',
+        'schedule': timedelta(minutes=1),
     },
     'purgar-reportes-auditoria': {
         'task': 'auditoria.tasks.purgar_reportes_auditoria',

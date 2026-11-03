@@ -25,6 +25,26 @@ def reprocesar_logs_buffer(self):
 
 
 @shared_task
+def drenar_outbox_auditoria():
+    """Reenvía a MongoDB los eventos del outbox SQL.
+
+    Lo escribe ``tomar_paso_esperando`` en la misma transacción de la toma.
+    Corre cada minuto por Celery Beat; si Mongo falla, las filas quedan para
+    el siguiente intento.
+    """
+    from .services import drenar_outbox
+
+    resumen = drenar_outbox()
+    if resumen.get('enviados'):
+        logger.info(
+            "Auditoría outbox: %s eventos enviados (%s fallidos, %s pendientes).",
+            resumen['enviados'], resumen.get('fallidos', 0),
+            resumen.get('pendientes', 0),
+        )
+    return resumen
+
+
+@shared_task
 def purgar_reportes_auditoria():
     """Elimina los reportes de auditoría que superan la retención (ISO 15489).
 
