@@ -509,7 +509,7 @@ FORMS:
 SERVICIOS:
   apps/documentos/services/solicitudes.py        (F2 etiquetas)
   apps/documentos/services/aprobaciones.py       (F2 avisar_*)
-  # F5 (OPCIONAL, fuera de alcance): services/aprobacion_flujo.py, NUEVO
+  # F5: services/aprobacion_flujo.py (NUEVO)
 PERMISOS:
   apps/documentos/permissions.py                 (verificación F1)
 TEMPLATES:
@@ -570,9 +570,9 @@ defecto "Todos", migración 0056 de tipo_archivo).
 [x] F4  crear_documento: botón Ver -> modal con preview AJAX y descarga
 [x] F4  formulario.html bloque "Plantilla de origen"
 [x] F4  detalle.html muestra "Plantilla de origen"
-[ ] F5  (OPCIONAL / FUTURO) services/aprobacion_flujo.py
-[ ] F5  (OPCIONAL / FUTURO) bandeja/aprobar usan el servicio
-[ ] F5  (OPCIONAL / FUTURO) solicitudes.py etiquetas
+[x] F5  services/aprobacion_flujo.py (cadenas y resolución unificadas)
+[x] F5  bandeja/API/vistas usan el servicio de flujo
+[x] F5  solicitudes.py etiquetas unificadas (creacion_plantilla)
 [x] T   tests_plantillas.py: T1, T2, T5, T6, T7 (modificación), T8 (selección)
 [x] T   T3: coordinador sin delegación -> pendiente del jefe
 [x] T   T4: coordinador con delegación vigente -> activo directo
