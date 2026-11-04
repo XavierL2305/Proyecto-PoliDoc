@@ -25,7 +25,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='tipodocumento',
             name='key',
-            field=models.SlugField(default='sin_tipo', max_length=40, verbose_name='Clave'),
+            field=models.SlugField(default='sin_tipo', max_length=40, db_index=False, verbose_name='Clave'),
         ),
         migrations.RunPython(populate_keys, migrations.RunPython.noop),
         migrations.AlterField(
