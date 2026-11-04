@@ -15,7 +15,8 @@ from unittest.mock import patch
 
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.db import connection, transaction
+from concurrent.futures import ThreadPoolExecutor
+from django.db import close_old_connections, connection, transaction
 from django.test import Client, TransactionTestCase
 from django.urls import reverse
 from django.test.utils import CaptureQueriesContext
@@ -28,9 +29,9 @@ from autenticacion.models import Notificacion
 from documentos.models import (
     AprobacionPlanilla, AsignacionDocumento, CampoFormato,
     DelegacionJefatura, DistribucionDocumento, Documento, Formato,
-    PlanillaCambios, SeccionFormato, SolicitudAprobacionDocumento,
-    SolicitudCambio, SolicitudDescarga, TipoDocumento,
-    tipo_archivo_desde_nombre,
+    PlanillaCambios, SeccionFormato, SecuenciaCodigo,
+    SolicitudAprobacionDocumento, SolicitudCambio, SolicitudDescarga,
+    TipoDocumento, tipo_archivo_desde_nombre,
 )
 from documentos.permissions import documentos_descargables, puede_descargar
 from documentos.services.aprobaciones import (
@@ -620,7 +621,9 @@ class PlanillaPlantillaAdminTest(BaseDocumentosTest):
         aprobacion.refresh_from_db()
         self.assertEqual(aprobacion.estado, 'pendiente')
         self.assertEqual(aprobacion.aprobador, self.user_admin)
-        evento = AuditoriaOutbox.objects.get()
+        evento = AuditoriaOutbox.objects.filter(
+            payload__accion_tipo='toma_aprobacion',
+        ).latest('id')
         self.assertEqual(evento.estado, 'pendiente')
         self.assertEqual(evento.payload['accion_tipo'], 'toma_aprobacion')
         self.assertEqual(evento.payload['usuario_id'], self.user_admin.id)
@@ -740,29 +743,99 @@ class DocumentosDescargablesBulkTest(BaseDocumentosTest):
 
 
 class AuditoriaAltaPlantillaTest(BaseDocumentosTest):
-    def test_alta_plantilla_marca_flag_en_auditoria(self):
-        with patch('auditoria.services.registrar_log_iso') as audit:
-            Documento.objects.create(
-                tipo=self.tipo_formulario, nombre='Plantilla Auditada',
-                codigo='TI-FOR-PLT-970', estado='activo', es_plantilla=True,
-                propietario=self.user_jefe_ti, departamento=self.depto_ti,
-            )
+    def test_alta_plantilla_marca_flag_en_outbox(self):
+        Documento.objects.create(
+            tipo=self.tipo_formulario, nombre='Plantilla Auditada',
+            codigo='TI-FOR-PLT-970', estado='activo', es_plantilla=True,
+            propietario=self.user_jefe_ti, departamento=self.depto_ti,
+        )
 
-        audit.assert_called_once()
-        detalles = audit.call_args.kwargs['detalles']
-        self.assertTrue(detalles['es_plantilla'])
+        evento = AuditoriaOutbox.objects.filter(
+            payload__accion_tipo='creacion',
+            payload__recurso_codigo='TI-FOR-PLT-970',
+        ).latest('id')
+        self.assertTrue(evento.payload['detalles']['es_plantilla'])
 
     def test_documento_normal_no_se_marca_como_plantilla(self):
-        with patch('auditoria.services.registrar_log_iso') as audit:
-            Documento.objects.create(
-                tipo=self.tipo_formulario, nombre='Documento Auditado',
-                codigo='TI-FOR-971', estado='activo', es_plantilla=False,
-                propietario=self.user_jefe_ti, departamento=self.depto_ti,
-            )
+        Documento.objects.create(
+            tipo=self.tipo_formulario, nombre='Documento Auditado',
+            codigo='TI-FOR-971', estado='activo', es_plantilla=False,
+            propietario=self.user_jefe_ti, departamento=self.depto_ti,
+        )
 
-        audit.assert_called_once()
-        detalles = audit.call_args.kwargs['detalles']
-        self.assertFalse(detalles['es_plantilla'])
+        evento = AuditoriaOutbox.objects.filter(
+            payload__accion_tipo='creacion',
+            payload__recurso_codigo='TI-FOR-971',
+        ).latest('id')
+        self.assertFalse(evento.payload['detalles']['es_plantilla'])
+
+
+class SecuenciaCodigoTest(BaseDocumentosTest):
+    def test_reserva_secuencial_plantilla(self):
+        c1 = Documento.reservar_codigo_secuencial(
+            self.depto_ti, 'formulario', es_plantilla=True,
+        )
+        c2 = Documento.reservar_codigo_secuencial(
+            self.depto_ti, 'formulario', es_plantilla=True,
+        )
+        self.assertNotEqual(c1, c2)
+        self.assertTrue(c1.endswith('-001'))
+        self.assertTrue(c2.endswith('-002'))
+
+    def test_series_normal_y_plantilla_separadas(self):
+        normal = Documento.reservar_codigo_secuencial(
+            self.depto_ti, 'formulario', es_plantilla=False,
+        )
+        plantilla = Documento.reservar_codigo_secuencial(
+            self.depto_ti, 'formulario', es_plantilla=True,
+        )
+        self.assertNotIn('PLT', normal)
+        self.assertIn('PLT', plantilla)
+
+    def test_secuencia_global_sin_prefijo(self):
+        tipo = TipoDocumento.objects.create(
+            key='tipo_sin_prefijo_test', nombre='Tipo sin prefijo',
+            codigo='SPT', activo=True, sin_prefijo_depto=True,
+        )
+        c1 = Documento.reservar_codigo_secuencial(
+            self.depto_ti, tipo.key, es_plantilla=True,
+        )
+        c2 = Documento.reservar_codigo_secuencial(
+            self.depto_th, tipo.key, es_plantilla=True,
+        )
+        self.assertTrue(c1.startswith('SPT-PLT-'))
+        self.assertTrue(c2.startswith('SPT-PLT-'))
+        self.assertNotEqual(c1, c2)
+
+
+class SecuenciaCodigoConcurrenteTest(TransactionTestCase):
+    def setUp(self):
+        from documentos.models import Departamento, TipoDocumento
+        with patch('auditoria.services.get_mongo_client', return_value=None):
+            self.depto = Departamento.objects.create(
+                nombre='TI Concurrente', codigo='TIC', activo=True,
+            )
+        self.tipo = TipoDocumento.objects.create(
+            key='tipo_concurrente', nombre='Tipo concurrente',
+            codigo='TPC', activo=True,
+        )
+
+    def test_reservas_concurrentes_no_duplican(self):
+        def reservar(_):
+            close_old_connections()
+            try:
+                return Documento.reservar_codigo_secuencial(
+                    self.depto, 'tipo_concurrente', es_plantilla=True,
+                )
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            codigos = list(pool.map(reservar, range(12)))
+
+        self.assertEqual(len(codigos), 12)
+        self.assertEqual(len(set(codigos)), 12)
+        self.assertEqual(SecuenciaCodigo.objects.count(), 1)
 
 
 class DocumentoCleanPlantillaTest(BaseDocumentosTest):

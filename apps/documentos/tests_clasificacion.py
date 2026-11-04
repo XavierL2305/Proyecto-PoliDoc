@@ -21,6 +21,7 @@ from django.utils import timezone
 from tests_base import MONGO_PATCH_TARGET, BaseDocumentosTest
 from documentos.forms import PlanillaCambiosForm
 from documentos.models import AprobacionPlanilla, PlanillaCambios, VersionDocumento
+from auditoria.services import drenar_outbox
 from documentos.services.planillas import aplicar_planilla_al_documento
 
 
@@ -268,6 +269,7 @@ class PlanillaClasificacionAuditoriaTest(BaseDocumentosTest):
                 estado='en_revision', clasificacion_propuesta='publico',
                 clasificacion_actual_snapshot='interno',
             )
+            drenar_outbox()
 
         registros = _registros(store, 'planillas_cambios')
         self.assertEqual(registros[-1]['clasificacion_propuesta'], 'publico')
@@ -290,6 +292,7 @@ class PlanillaClasificacionAuditoriaTest(BaseDocumentosTest):
         url = reverse('documentos:aprobar_planilla', args=[planilla.uuid])
         with patch(MONGO_PATCH_TARGET, return_value=client):
             self.client.post(url, {'accion': 'aprobar', 'observaciones': 'ok'})
+            drenar_outbox()
 
         registros = _registros(store, 'audit_logs')
         aprobaciones = [

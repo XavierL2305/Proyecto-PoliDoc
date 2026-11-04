@@ -9,6 +9,7 @@ from django.utils import timezone
 from .models import AuditoriaOutbox
 from .services import (
     _cerrar_circuito_mongo, drenar_outbox, encolar_evento_auditoria,
+    encolar_evento_mongo,
 )
 
 
@@ -78,6 +79,35 @@ class AuditoriaOutboxDrainTest(TestCase):
         evento.refresh_from_db()
         self.assertEqual(evento.estado, 'error')
         self.assertEqual(evento.intentos, 1)
+
+    def test_drenar_evento_coleccion_inserta(self):
+        encolar_evento_mongo('planillas_cambios', {'planilla_id': 7})
+
+        db = MagicMock()
+        with patch('auditoria.services.get_mongo_client', return_value=db):
+            resumen = drenar_outbox()
+
+        self.assertEqual(resumen['enviados'], 1)
+        db.__getitem__.assert_called_with('planillas_cambios')
+        db.__getitem__.return_value.insert_one.assert_called_once_with(
+            {'planilla_id': 7},
+        )
+
+    def test_drenar_evento_coleccion_actualiza(self):
+        encolar_evento_mongo(
+            'aprobaciones_planilla', {'aprobacion_id': 9},
+            filtro={'aprobacion_id': 9},
+        )
+
+        db = MagicMock()
+        with patch('auditoria.services.get_mongo_client', return_value=db):
+            resumen = drenar_outbox()
+
+        self.assertEqual(resumen['enviados'], 1)
+        db.__getitem__.assert_called_with('aprobaciones_planilla')
+        db.__getitem__.return_value.update_one.assert_called_once_with(
+            {'aprobacion_id': 9}, {'$set': {'aprobacion_id': 9}},
+        )
 
     @override_settings(AUDITORIA_OUTBOX_RETENCION_DIAS=1)
     def test_drenar_purga_enviados_antiguos(self):

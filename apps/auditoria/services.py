@@ -198,12 +198,25 @@ def drenar_outbox(limite=200):
             fila.save(update_fields=['estado'])
 
         payload = dict(fila.payload or {})
-        usuario_id = payload.pop('usuario_id', None)
-        usuario = User.objects.filter(pk=usuario_id).first() if usuario_id else None
         try:
-            log_id = registrar_log_iso(
-                usuario=usuario, _no_buffer=True, fail_closed=True, **payload,
-            )
+            if payload.get('coleccion'):
+                db = get_mongo_client()
+                coleccion = db[payload['coleccion']]
+                filtro = payload.get('filtro')
+                if filtro:
+                    coleccion.update_one(filtro, {'$set': payload['registro']})
+                else:
+                    coleccion.insert_one(payload['registro'])
+                log_id = True
+            else:
+                usuario_id = payload.pop('usuario_id', None)
+                usuario = (
+                    User.objects.filter(pk=usuario_id).first()
+                    if usuario_id else None
+                )
+                log_id = registrar_log_iso(
+                    usuario=usuario, _no_buffer=True, fail_closed=True, **payload,
+                )
         except Exception as exc:  # noqa: BLE001 - Mongo caído: reintentar luego
             fila.intentos += 1
             fila.ultimo_error = str(exc)[:500]
@@ -415,6 +428,51 @@ def _extraer_hash(integridad_hash):
 # FUNCIÓN PRINCIPAL DE REGISTRO ISO
 # =============================================================================
 
+def payload_log_iso(usuario, accion_tipo, accion_categoria,
+                    recurso_tipo=None, recurso_id=None,
+                    recurso_codigo=None, recurso_nombre=None,
+                    recurso_version=None, estado_anterior=None,
+                    estado_posterior=None, detalles=None,
+                    resultado_exitoso=True, resultado_mensaje='',
+                    correlation_id=None, ip_address=None,
+                    user_agent=None, sesion_id=None):
+    """Payload serializable de un log ISO (kwargs de registrar_log_iso)."""
+    return {
+        'accion_tipo': accion_tipo,
+        'accion_categoria': accion_categoria,
+        'recurso_tipo': recurso_tipo,
+        'recurso_id': recurso_id,
+        'recurso_codigo': recurso_codigo,
+        'recurso_nombre': recurso_nombre,
+        'recurso_version': recurso_version,
+        'estado_anterior': estado_anterior,
+        'estado_posterior': estado_posterior,
+        'detalles': detalles,
+        'resultado_exitoso': resultado_exitoso,
+        'resultado_mensaje': resultado_mensaje,
+        'correlation_id': correlation_id,
+        'ip_address': ip_address,
+        'user_agent': user_agent,
+        'sesion_id': sesion_id,
+        'usuario_id': getattr(usuario, 'id', None),
+    }
+
+
+def encolar_log_iso(**kwargs):
+    """Encola un log ISO en el outbox SQL (auditoría diferida)."""
+    return encolar_evento_auditoria(payload_log_iso(**kwargs))
+
+
+def encolar_evento_mongo(coleccion, registro, filtro=None):
+    """Encola un upsert/insert en una colección Mongo arbitraria."""
+    payload = {
+        'coleccion': coleccion,
+        'registro': registro,
+        'filtro': filtro,
+    }
+    return encolar_evento_auditoria(payload)
+
+
 def registrar_log_iso(usuario, accion_tipo, accion_categoria,
                       recurso_tipo=None, recurso_id=None,
                       recurso_codigo=None, recurso_nombre=None,
@@ -464,27 +522,18 @@ def registrar_log_iso(usuario, accion_tipo, accion_categoria,
     sesion_id : str
         ID de sesión del usuario
     """
-    # Payload serializable para el buffer (se reenvía tal cual al recuperar
-    # Mongo). `usuario` no se picklea: se guarda solo su id.
-    payload = {
-        'accion_tipo': accion_tipo,
-        'accion_categoria': accion_categoria,
-        'recurso_tipo': recurso_tipo,
-        'recurso_id': recurso_id,
-        'recurso_codigo': recurso_codigo,
-        'recurso_nombre': recurso_nombre,
-        'recurso_version': recurso_version,
-        'estado_anterior': estado_anterior,
-        'estado_posterior': estado_posterior,
-        'detalles': detalles,
-        'resultado_exitoso': resultado_exitoso,
-        'resultado_mensaje': resultado_mensaje,
-        'correlation_id': correlation_id,
-        'ip_address': ip_address,
-        'user_agent': user_agent,
-        'sesion_id': sesion_id,
-        'usuario_id': getattr(usuario, 'id', None),
-    }
+    # Payload serializable para buffer/outbox. `usuario` no se serializa:
+    # solo se guarda su id.
+    payload = payload_log_iso(
+        usuario, accion_tipo, accion_categoria,
+        recurso_tipo=recurso_tipo, recurso_id=recurso_id,
+        recurso_codigo=recurso_codigo, recurso_nombre=recurso_nombre,
+        recurso_version=recurso_version,
+        estado_anterior=estado_anterior, estado_posterior=estado_posterior,
+        detalles=detalles, resultado_exitoso=resultado_exitoso,
+        resultado_mensaje=resultado_mensaje, correlation_id=correlation_id,
+        ip_address=ip_address, user_agent=user_agent, sesion_id=sesion_id,
+    )
 
     # Circuito abierto y evento no crítico: bufferizar sin tocar la red.
     if not _no_buffer and not fail_closed and _mongo_circuit_open():
@@ -657,9 +706,10 @@ def registrar_creacion_documento(usuario, recurso_tipo, recurso_id,
                                  codigo=None, nombre=None,
                                  estado_posterior='borrador',
                                  es_plantilla=False,
-                                 ip_address=None, correlation_id=None):
+                                 ip_address=None, correlation_id=None,
+                                 asincrono=False):
     """Registra creación de un documento (o plantilla)."""
-    return registrar_log_iso(
+    kwargs = dict(
         usuario=usuario,
         accion_tipo='creacion',
         accion_categoria='documento',
@@ -681,8 +731,11 @@ def registrar_creacion_documento(usuario, recurso_tipo, recurso_id,
             else f'{recurso_tipo.title()} creado correctamente'
         ),
         correlation_id=correlation_id,
-        ip_address=ip_address
+        ip_address=ip_address,
     )
+    if asincrono:
+        return encolar_log_iso(**kwargs)
+    return registrar_log_iso(**kwargs)
 
 
 def registrar_edicion_documento(usuario, recurso_tipo, recurso_id,
@@ -690,15 +743,15 @@ def registrar_edicion_documento(usuario, recurso_tipo, recurso_id,
                                 estado_anterior=None, estado_posterior=None,
                                 version_anterior=None, version_nueva=None,
                                 cambios=None, valores_anteriores=None,
-                                ip_address=None, correlation_id=None):
-    """Registra edición de un documento"""
+                                ip_address=None, correlation_id=None,
+                                asincrono=False):
+    """Registra edición de un documento."""
     detalles = {
         'campos_modificados': list(cambios.keys()) if cambios else [],
         'valores_anteriores': valores_anteriores or {},
         'valores_nuevos': cambios
     }
-
-    return registrar_log_iso(
+    kwargs = dict(
         usuario=usuario,
         accion_tipo='edicion',
         accion_categoria='documento',
@@ -713,8 +766,11 @@ def registrar_edicion_documento(usuario, recurso_tipo, recurso_id,
         resultado_exitoso=True,
         resultado_mensaje=f'{recurso_tipo.title()} editado correctamente',
         correlation_id=correlation_id,
-        ip_address=ip_address
+        ip_address=ip_address,
     )
+    if asincrono:
+        return encolar_log_iso(**kwargs)
+    return registrar_log_iso(**kwargs)
 
 
 def registrar_eliminacion_documento(usuario, recurso_tipo, recurso_id,
@@ -800,9 +856,10 @@ def registrar_rechazo_planilla(usuario, planilla, documento=None,
 
 def registrar_solicitud_descarga(usuario, recurso_tipo, recurso_id,
                                  solicitud_id=None, codigo=None,
-                                 ip_address=None, correlation_id=None):
-    """Registra solicitud de descarga"""
-    return registrar_log_iso(
+                                 ip_address=None, correlation_id=None,
+                                 asincrono=False):
+    """Registra solicitud de descarga."""
+    kwargs = dict(
         usuario=usuario,
         accion_tipo='solicitud_descarga',
         accion_categoria='documento',
@@ -813,19 +870,22 @@ def registrar_solicitud_descarga(usuario, recurso_tipo, recurso_id,
         resultado_exitoso=True,
         resultado_mensaje='Solicitud de descarga creada',
         correlation_id=correlation_id,
-        ip_address=ip_address
+        ip_address=ip_address,
     )
+    if asincrono:
+        return encolar_log_iso(**kwargs)
+    return registrar_log_iso(**kwargs)
 
 
 def registrar_aprobacion_descarga(usuario, recurso_tipo, recurso_id,
                                   solicitud_id=None, aprobada=True,
                                   observaciones=None, codigo=None,
-                                  ip_address=None, correlation_id=None):
-    """Registra aprobación o rechazo de descarga"""
+                                  ip_address=None, correlation_id=None,
+                                  asincrono=False):
+    """Registra aprobación o rechazo de descarga."""
     accion = 'aprobacion_descarga' if aprobada else 'rechazo_descarga'
     resultado = 'Descarga aprobada' if aprobada else 'Descarga rechazada'
-
-    return registrar_log_iso(
+    kwargs = dict(
         usuario=usuario,
         accion_tipo=accion,
         accion_categoria='documento',
@@ -840,8 +900,11 @@ def registrar_aprobacion_descarga(usuario, recurso_tipo, recurso_id,
         resultado_exitoso=aprobada,
         resultado_mensaje=resultado,
         correlation_id=correlation_id,
-        ip_address=ip_address
+        ip_address=ip_address,
     )
+    if asincrono:
+        return encolar_log_iso(**kwargs)
+    return registrar_log_iso(**kwargs)
 
 
 def registrar_descarga(usuario, recurso_tipo, recurso_id,
@@ -947,9 +1010,9 @@ def registrar_eliminacion_version(usuario, recurso_tipo, recurso_id,
 def registrar_asignacion_documento(usuario, recurso_tipo, recurso_id,
                                    coordinador_username=None, permisos=None,
                                    codigo=None, ip_address=None,
-                                   correlation_id=None):
-    """Registra asignación de documento a coordinador"""
-    return registrar_log_iso(
+                                   correlation_id=None, asincrono=False):
+    """Registra asignación de documento a coordinador."""
+    kwargs = dict(
         usuario=usuario,
         accion_tipo='asignacion',
         accion_categoria='documento',
@@ -963,8 +1026,11 @@ def registrar_asignacion_documento(usuario, recurso_tipo, recurso_id,
         resultado_exitoso=True,
         resultado_mensaje=f'Documento asignado a {coordinador_username}',
         correlation_id=correlation_id,
-        ip_address=ip_address
+        ip_address=ip_address,
     )
+    if asincrono:
+        return encolar_log_iso(**kwargs)
+    return registrar_log_iso(**kwargs)
 
 
 def registrar_transferencia_propiedad(usuario, recurso_tipo, recurso_id,

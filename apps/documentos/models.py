@@ -1,8 +1,9 @@
 import os
+import time
 import uuid
 from datetime import datetime
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.db import IntegrityError, OperationalError, models, transaction
 from django.db.models import Max
 from django.contrib.auth.models import User
 from django.utils import timezone
@@ -296,6 +297,26 @@ class TipoDocumento(models.Model):
 # MODELO UNIFICADO: DOCUMENTO
 # =========================================================================
 
+class SecuenciaCodigo(models.Model):
+    """Contador atómico por serie de códigos (depto + tipo + plantilla).
+
+    Evita el patrón ``Max(codigo)+exists()``, que bajo concurrencia asigna el
+    mismo consecutivo a dos altas. La clave es un texto portable:
+    ``TI:formulario:1`` (plantilla) o ``GLOBAL:descripcion_procesos:0``.
+    """
+
+    clave = models.CharField(max_length=120, unique=True, verbose_name='Clave de serie')
+    ultimo = models.PositiveIntegerField(default=0, verbose_name='Último consecutivo')
+    actualizado_en = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Secuencia de código'
+        verbose_name_plural = 'Secuencias de código'
+
+    def __str__(self):
+        return f'{self.clave} → {self.ultimo}'
+
+
 class Documento(models.Model):
     """
     Modelo unificado para todos los tipos de documento ISO.
@@ -564,6 +585,64 @@ class Documento(models.Model):
 
         return cls.construir_codigo(departamento, tipo, f"{num:03d}",
                                     es_plantilla=es_plantilla)
+
+    @classmethod
+    def _clave_secuencia(cls, departamento, tipo, es_plantilla):
+        depto = 'GLOBAL' if departamento is None or cls.es_sin_prefijo_depto(tipo) else departamento.pk
+        return f"{depto}:{tipo}:{1 if es_plantilla else 0}"
+
+    @classmethod
+    def _max_secuencia(cls, departamento, tipo, es_plantilla):
+        qs = cls.objects.filter(tipo__key=tipo, es_plantilla=es_plantilla)
+        if not cls.es_sin_prefijo_depto(tipo) and departamento is not None:
+            qs = qs.filter(departamento=departamento)
+        max_codigo = qs.order_by('-codigo').values_list('codigo', flat=True).first()
+        if not max_codigo:
+            return 0
+        try:
+            return int(max_codigo.rsplit('-', 1)[-1])
+        except (ValueError, IndexError):
+            return 0
+
+    @classmethod
+    def reservar_codigo_secuencial(cls, departamento, tipo, es_plantilla=False):
+        """Reserva el siguiente código de forma atómica.
+
+        La fila de ``SecuenciaCodigo`` se bloquea con ``select_for_update`` y
+        se incrementa dentro de la transacción del alta. Si la transacción se
+        revierte, el incremento también se revierte (sin huecos por fallos).
+        """
+        clave = cls._clave_secuencia(departamento, tipo, es_plantilla)
+        for intento in range(8):
+            try:
+                with transaction.atomic():
+                    secuencia = (
+                        SecuenciaCodigo.objects.select_for_update()
+                        .filter(clave=clave).first()
+                    )
+                    if secuencia is None:
+                        inicial = cls._max_secuencia(
+                            departamento, tipo, es_plantilla,
+                        )
+                        try:
+                            with transaction.atomic():
+                                secuencia = SecuenciaCodigo.objects.create(
+                                    clave=clave, ultimo=inicial,
+                                )
+                        except IntegrityError:
+                            continue
+                    secuencia.ultimo += 1
+                    secuencia.save(update_fields=['ultimo', 'actualizado_en'])
+                    numero = secuencia.ultimo
+                return cls.construir_codigo(
+                    departamento, tipo, f'{numero:03d}',
+                    es_plantilla=es_plantilla,
+                )
+            except OperationalError as exc:
+                if 'locked' not in str(exc).lower() or intento >= 7:
+                    raise
+                time.sleep(0.05 * (intento + 1))
+        return None
 
     def clean(self):
         """Valida la integridad de `plantilla_origen` (defensa en profundidad).

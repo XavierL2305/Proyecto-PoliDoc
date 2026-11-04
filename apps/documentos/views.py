@@ -192,31 +192,49 @@ def _procesar_referencias(doc, request, perfil):
     except (json.JSONDecodeError, TypeError):
         referencias_codigos = []
 
-    for ref_codigo in referencias_codigos:
-        ref_codigo = ref_codigo.strip().upper()
-        if not ref_codigo:
+    codigos = []
+    for ref in referencias_codigos:
+        codigo = str(ref).strip().upper()
+        if codigo and codigo not in codigos:
+            codigos.append(codigo)
+    if not codigos:
+        return
+
+    destinos = {
+        d.codigo: d
+        for d in Documento.objects.filter(codigo__in=codigos).select_related(
+            'departamento',
+        )
+    }
+    relacionados = []
+    pendientes = []
+    for codigo in codigos:
+        destino = destinos.get(codigo)
+        if destino is None:
+            pendientes.append(codigo)
             continue
-        destino = Documento.objects.filter(codigo=ref_codigo).first()
-        if destino:
-            mismo_depto = destino.departamento_id == perfil.departamento_id
-            es_accesible = mismo_depto or destino.clasificacion == 'publico'
-            if es_accesible and destino.estado == 'activo':
-                doc.documentos_relacionados.add(destino)
-            elif not destino.activo if hasattr(destino, 'activo') else destino.estado != 'activo':
-                ReferenciaDocumento.objects.get_or_create(
-                    documento=doc, codigo_destino=ref_codigo,
-                    defaults={'creado_por': request.user}
-                )
-            else:
-                messages.warning(
-                    request,
-                    f'Sin acceso al documento {ref_codigo}. No se agregó la referencia.'
-                )
+        mismo_depto = destino.departamento_id == perfil.departamento_id
+        es_accesible = mismo_depto or destino.clasificacion == 'publico'
+        if es_accesible and destino.estado == 'activo':
+            relacionados.append(destino)
+        elif destino.estado != 'activo':
+            pendientes.append(codigo)
         else:
-            ReferenciaDocumento.objects.get_or_create(
-                documento=doc, codigo_destino=ref_codigo,
-                defaults={'creado_por': request.user}
+            messages.warning(
+                request,
+                f'Sin acceso al documento {codigo}. No se agregó la referencia.',
             )
+
+    if relacionados:
+        doc.documentos_relacionados.add(*relacionados)
+    if pendientes:
+        ReferenciaDocumento.objects.bulk_create([
+            ReferenciaDocumento(
+                documento=doc, codigo_destino=codigo,
+                creado_por=request.user,
+            )
+            for codigo in pendientes
+        ], ignore_conflicts=True)
 
 
 def _selector_relacionados(documento=None):
@@ -273,6 +291,7 @@ def _procesar_asociados_planilla(planilla, request, permitido, documento, usuari
     except (json.JSONDecodeError, TypeError):
         return
     pendientes = []
+    uuids = []
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -280,12 +299,24 @@ def _procesar_asociados_planilla(planilla, request, permitido, documento, usuari
             codigo = str(item.get('codigo', '')).strip().upper()
             if codigo:
                 pendientes.append(codigo)
-            continue
-        doc_asoc = asociables.filter(uuid=item.get('uuid')).first()
+        elif item.get('uuid'):
+            uuids.append(str(item['uuid']))
+
+    existentes = {
+        str(d.uuid): d
+        for d in asociables.filter(uuid__in=uuids)
+    }
+    nuevos = []
+    for uuid_item in dict.fromkeys(uuids):
+        doc_asoc = existentes.get(uuid_item)
         if doc_asoc:
-            DocumentoAsociadoPlanilla.objects.get_or_create(
-                planilla=planilla, documento=doc_asoc
-            )
+            nuevos.append(DocumentoAsociadoPlanilla(
+                planilla=planilla, documento=doc_asoc,
+            ))
+    if nuevos:
+        DocumentoAsociadoPlanilla.objects.bulk_create(
+            nuevos, ignore_conflicts=True,
+        )
     planilla.referencias_pendientes = pendientes
     planilla.save(update_fields=['referencias_pendientes'])
 
@@ -1030,22 +1061,6 @@ def crear_documento(request, tipo):
     })
 
 
-def _codigo_plantilla_disponible(departamento, tipo, intentos=5):
-    """Siguiente código PLT libre, con reintentos ante colisiones.
-
-    `generar_codigo_secuencial` + `exists()` no es atómico frente a altas
-    concurrentes; se reintenta unas pocas veces antes de rendirse. El campo
-    `codigo` sigue siendo UNIQUE como última barrera de integridad.
-    """
-    for _ in range(intentos):
-        codigo = Documento.generar_codigo_secuencial(
-            departamento, tipo, es_plantilla=True,
-        )
-        if not Documento.objects.filter(codigo=codigo).exists():
-            return codigo
-    return None
-
-
 @login_required(login_url='/login/')
 def crear_plantilla(request, tipo):
     """Alta de una PLANTILLA (documento en blanco es_plantilla=True).
@@ -1080,7 +1095,9 @@ def crear_plantilla(request, tipo):
         form = PlantillaForm(request.POST, request.FILES)
         if form.is_valid():
             with transaction.atomic():
-                codigo = _codigo_plantilla_disponible(perfil.departamento, tipo)
+                codigo = Documento.reservar_codigo_secuencial(
+                    perfil.departamento, tipo, es_plantilla=True,
+                )
                 if codigo is None:
                     messages.error(
                         request,
