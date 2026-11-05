@@ -104,7 +104,7 @@
           {% endif %}
           {% if planilla.archivo_adjunto %}
           <div style="margin-top: 1rem;">
-            <a href="{{ planilla.archivo_adjunto.url }}" class="btn btn--ghost btn--sm">
+            <a href="{{ planilla.archivo_adjunto.url }}" class="btn btn--ghost btn--sm" data-motion="download" data-loading="download">
               <i class="fa-solid fa-download"></i> Descargar Archivo Adjunto
             </a>
           </div>

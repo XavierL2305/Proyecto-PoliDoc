@@ -28,7 +28,7 @@
 
 <form method="get" action="{% url 'documentos:buscar' %}" class="search-bar">
   <input type="text" name="q" value="{{ q }}" placeholder="Buscar por nombre, código o propietario..." autofocus>
-  <button type="submit" class="btn btn--primary"><i class="fa-solid fa-search"></i> Buscar</button>
+  <button type="submit" class="btn btn--primary" data-motion="search" data-loading="search"><i class="fa-solid fa-search"></i> Buscar</button>
 </form>
 
 {% if not q or q|length < 2 %}

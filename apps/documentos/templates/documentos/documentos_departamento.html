@@ -44,7 +44,7 @@
         </div>
         <div style="display: flex; gap: 0.5rem;">
           {% if user.perfil.ejerce_jefatura or user.perfil.es_administrador %}
-          <a href="{% url 'documentos:bandeja_aprobaciones' %}" class="btn btn--primary btn--sm">
+          <a href="{% url 'documentos:bandeja_aprobaciones' %}" class="btn btn--primary btn--sm" data-motion="stamp">
             <i class="fa-solid fa-stamp"></i> Bandeja de Aprobaciones
           </a>
           {% endif %}

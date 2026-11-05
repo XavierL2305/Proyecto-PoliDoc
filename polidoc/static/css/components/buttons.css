@@ -16,7 +16,15 @@
   border: none;
   border-radius: var(--radius);
   cursor: pointer;
-  transition: all var(--transition);
+  /* Transiciones explícitas (sin `all`): así el hover puede animar
+     transform/box-shadow sin arrastrar propiedades de layout. */
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease,
+    background-color var(--transition),
+    color var(--transition),
+    border-color var(--transition),
+    opacity var(--transition);
   text-decoration: none;
   white-space: nowrap;
   user-select: none;
@@ -26,6 +34,28 @@
   opacity: 0.5;
   cursor: not-allowed;
   pointer-events: none;
+}
+
+/* Anillo de foco visible para navegación por teclado (sin depender del
+   outline por defecto del navegador). */
+.btn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* Micro-interacción global sutil: elevación al pasar el cursor y press
+   (también en táctil) al pulsar. Se omite si el usuario pide movimiento
+   reducido. */
+@media (prefers-reduced-motion: no-preference) {
+  .btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  }
+
+  .btn:active {
+    transform: translateY(0) scale(0.98);
+    box-shadow: none;
+  }
 }
 
 /* === BUTTON VARIANTS === */
@@ -149,6 +179,15 @@
 .btn--outline.btn--loading::after {
   border-color: var(--color-primary);
   border-top-color: transparent;
+}
+
+/* Spinner proporcional a los botones pequeños (18px queda grande en
+   btn--sm: el texto sigue ocupando su sitio, solo se reduce el arco). */
+.btn--sm.btn--loading::after {
+  width: 14px;
+  height: 14px;
+  margin-left: -7px;
+  margin-top: -7px;
 }
 
 @keyframes btn-spin {

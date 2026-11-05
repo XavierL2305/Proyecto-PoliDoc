@@ -16,7 +16,7 @@
     </div>
     <div class="plantilla-preview__actions">
       {% if plantilla_descargable %}
-      <a href="{% url 'documentos:descargar_archivo' tipo=tipo documento_id=plantilla_preview.uuid %}" class="btn btn--primary btn--sm">
+      <a href="{% url 'documentos:descargar_archivo' tipo=tipo documento_id=plantilla_preview.uuid %}" class="btn btn--primary btn--sm" data-motion="download" data-loading="download">
         <i class="fa-solid fa-download"></i> Descargar plantilla
       </a>
       {% elif plantilla_pendiente %}
@@ -24,7 +24,7 @@
         <i class="fa-solid fa-clock"></i> Solicitud pendiente
       </span>
       {% else %}
-      <a href="{% url 'documentos:solicitar_descarga' tipo=tipo documento_id=plantilla_preview.uuid %}" class="btn btn--secondary btn--sm">
+      <a href="{% url 'documentos:solicitar_descarga' tipo=tipo documento_id=plantilla_preview.uuid %}" class="btn btn--secondary btn--sm" data-motion="download">
         <i class="fa-solid fa-download"></i> Solicitar descarga
       </a>
       {% endif %}

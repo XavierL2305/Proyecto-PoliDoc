@@ -146,12 +146,12 @@
   </div>
   <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
     {% if puede_subir %}
-    <a href="{% url 'documentos:seleccionar_tipo' %}?plantilla=1" class="btn btn--secondary btn--sm">
+    <a href="{% url 'documentos:seleccionar_tipo' %}?plantilla=1" class="btn btn--secondary btn--sm" data-motion="upload">
       <i class="fa-solid fa-upload"></i> Subir plantilla
     </a>
     {% endif %}
     {% if user.perfil.ejerce_jefatura or user.perfil.es_administrador %}
-    <a href="{% url 'documentos:bandeja_aprobaciones' %}" class="btn btn--primary btn--sm">
+    <a href="{% url 'documentos:bandeja_aprobaciones' %}" class="btn btn--primary btn--sm" data-motion="stamp">
       <i class="fa-solid fa-stamp"></i> Bandeja de Aprobaciones
     </a>
     {% endif %}
@@ -213,7 +213,7 @@
               </div>
               <div class="plantilla-actions">
                 {% if doc.uuid in docs_descargables %}
-                   <a href="{% url 'documentos:descargar_archivo' tipo=doc.tipo_id documento_id=doc.uuid %}" class="btn btn--primary btn--sm">
+                   <a href="{% url 'documentos:descargar_archivo' tipo=doc.tipo_id documento_id=doc.uuid %}" class="btn btn--primary btn--sm" data-motion="download" data-loading="download">
                     <i class="fa-solid fa-download"></i> Descargar
                   </a>
                 {% elif doc.uuid in docs_pendientes %}
@@ -221,7 +221,7 @@
                     <i class="fa-solid fa-clock"></i> Solicitud pendiente
                   </span>
                 {% else %}
-                   <a href="{% url 'documentos:solicitar_descarga' tipo=doc.tipo_id documento_id=doc.uuid %}" class="btn btn--secondary btn--sm">
+                   <a href="{% url 'documentos:solicitar_descarga' tipo=doc.tipo_id documento_id=doc.uuid %}" class="btn btn--secondary btn--sm" data-motion="download">
                     <i class="fa-solid fa-download"></i> Solicitar
                   </a>
                 {% endif %}

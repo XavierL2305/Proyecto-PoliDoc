@@ -109,7 +109,7 @@
           </a>
           {% endif %}
           {% if puede_descargar %}
-          <a href="{% url 'documentos:descargar_archivo' tipo=tipo documento_id=documento.uuid %}" class="btn btn--primary btn--sm">
+          <a href="{% url 'documentos:descargar_archivo' tipo=tipo documento_id=documento.uuid %}" class="btn btn--primary btn--sm" data-motion="download" data-loading="download">
             <i class="fa-solid fa-download"></i> Descargar
           </a>
           {% elif solicitud_pendiente %}
@@ -120,18 +120,18 @@
           <span class="badge badge--danger" style="display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.375rem 0.75rem;">
             <i class="fa-solid fa-xmark"></i> Solicitud rechazada
           </span>
-          <a href="{% url 'documentos:solicitar_descarga' tipo=tipo documento_id=documento.uuid %}" class="btn btn--secondary btn--sm">
+          <a href="{% url 'documentos:solicitar_descarga' tipo=tipo documento_id=documento.uuid %}" class="btn btn--secondary btn--sm" data-motion="download">
             <i class="fa-solid fa-download"></i> Solicitar Descarga
           </a>
           {% elif autorizacion_descarga and not autorizacion_descarga.esta_vigente %}
           <span class="badge badge--warning" style="display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.375rem 0.75rem;">
             <i class="fa-solid fa-clock-rotate-left"></i> Autorización vencida
           </span>
-          <a href="{% url 'documentos:solicitar_descarga' tipo=tipo documento_id=documento.uuid %}" class="btn btn--secondary btn--sm">
+          <a href="{% url 'documentos:solicitar_descarga' tipo=tipo documento_id=documento.uuid %}" class="btn btn--secondary btn--sm" data-motion="download">
             <i class="fa-solid fa-download"></i> Solicitar Descarga
           </a>
           {% else %}
-          <a href="{% url 'documentos:solicitar_descarga' tipo=tipo documento_id=documento.uuid %}" class="btn btn--secondary btn--sm">
+          <a href="{% url 'documentos:solicitar_descarga' tipo=tipo documento_id=documento.uuid %}" class="btn btn--secondary btn--sm" data-motion="download">
             <i class="fa-solid fa-download"></i> Solicitar Descarga
           </a>
           {% endif %}
@@ -408,7 +408,7 @@
                 Vista previa no disponible para este tipo de archivo
               </p>
               {% if puede_descargar %}
-              <a href="{% url 'documentos:descargar_archivo' tipo=tipo documento_id=documento.uuid %}" class="btn btn--primary">
+              <a href="{% url 'documentos:descargar_archivo' tipo=tipo documento_id=documento.uuid %}" class="btn btn--primary" data-motion="download" data-loading="download">
                 <i class="fa-solid fa-download"></i> Descargar
               </a>
               {% endif %}
@@ -729,7 +729,7 @@
                 <span style="font-size: 0.8rem; color: var(--color-muted);">
                   {% if versiones|length == 1 %}1 versión{% else %}{{ versiones|length }} versiones{% endif %}
                 </span>
-                <a href="{% url 'documentos:historial_versiones' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost btn--sm" data-anim="view">
+                <a href="{% url 'documentos:historial_versiones' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost btn--sm" data-motion="view">
                   <i class="fa-solid fa-clock-rotate-left"></i> <span class="btn-label">Ver historial de versiones</span>
                 </a>
               </div>

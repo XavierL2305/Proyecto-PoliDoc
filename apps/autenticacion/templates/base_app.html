@@ -45,7 +45,7 @@
       <a href="{% url 'documentos:mis_documentos' %}" class="sidebar-item {% if request.resolver_match.url_name == 'mis_documentos' %}active{% endif %}">
         <i class="fa-solid fa-file-lines"></i><span>Mis Documentos</span>
       </a>
-      <a href="{% url 'documentos:seleccionar_tipo' %}" class="sidebar-item sidebar-item--primary {% if request.resolver_match.url_name == 'seleccionar_tipo' %}active{% endif %}">
+      <a href="{% url 'documentos:seleccionar_tipo' %}" class="sidebar-item sidebar-item--primary {% if request.resolver_match.url_name == 'seleccionar_tipo' %}active{% endif %}" data-motion="new">
         <i class="fa-solid fa-plus-circle"></i><span>Nuevo Documento</span>
       </a>
       {% if user.perfil.ejerce_jefatura or user.perfil.es_administrador %}

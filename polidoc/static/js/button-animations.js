@@ -4,11 +4,18 @@
    micro-animation BEFORE the real (native) submit, so the page navigation
    that already exists in the backend happens after the animation.
 
-     data-anim="save"    → "sello"      (Guardar Borrador)
-     data-anim="send"    → "vuelo"      (Enviar a Revisión)
-     data-anim="delete"  → "papelera"   (Confirmar Eliminación)
+      data-anim="save"    → "sello"      (Guardar Borrador)
+      data-anim="send"    → "vuelo"      (Enviar a Revisión)
+      data-anim="delete"  → "papelera"   (Confirmar Eliminación)
 
-   Notes:
+      data-loading="search"    → botón de un form GET (Buscar): se pone en
+        estado de carga SIN bloquear el envío (la navegación la hace el
+        propio navegador).
+      data-loading="download"  → enlace de descarga: se pone en carga y se
+        restaura a los CARGA_MS (no existe un evento fiable de "descarga
+        terminada" para descargas con Content-Disposition).
+
+    Notes:
      - The real submit uses HTMLFormElement.prototype.submit so no submit
        event is fired again (no recursion) and the submitter's name/value
        (e.g. name="accion") is re-injected as a hidden input.
@@ -87,6 +94,28 @@
     var icon = iconOf(btn);
     if (icon && estado.iconClass) icon.className = estado.iconClass;
     btn.style.minWidth = estado.minWidth || '';
+  }
+
+  /* ------------------------------------------------- estado de carga
+     El aspecto (icono/texto ocultos + arco girando) lo pinta CSS con la
+     clase .btn--loading de buttons.css: el texto sigue ocupando su sitio
+     (color transparente) y por eso NO hay layout shift, así que aquí solo
+     se marcan/quitan clases y aria-busy. */
+  var CARGA_MS = 1200;
+
+  function marcarCargando(btn) {
+    if (!btn || btn.getAttribute('data-cargando') === '1') return false;
+    btn.setAttribute('data-cargando', '1');
+    btn.setAttribute('aria-busy', 'true');
+    btn.classList.add('btn--loading');
+    return true;
+  }
+
+  function liberarCargando(btn) {
+    if (!btn || btn.getAttribute('data-cargando') !== '1') return;
+    btn.removeAttribute('data-cargando');
+    btn.removeAttribute('aria-busy');
+    btn.classList.remove('btn--loading');
   }
 
   /* ------------------------------------------------------------ submit real */
@@ -252,5 +281,62 @@
     } else {
       done();
     }
+  });
+
+  /* ------------------------------------------------- data-loading
+     Marca el botón de formulario pulsado (fallback de e.submitter) y
+     gestiona el estado de carga de los enlaces de descarga. Sin
+     preventDefault: la navegación es la nativa. */
+  document.addEventListener(
+    'click',
+    function (e) {
+      var node = e.target;
+      if (!node) return;
+      if (node.nodeType !== 1) node = node.parentElement;
+      if (!node || !node.closest) return;
+      var target = node.closest('[data-loading]');
+      if (!target) return;
+
+      // Botón de formulario: solo se recuerda cuál se pulsó; el estado de
+      // carga lo pone el submit handler de abajo.
+      if (target.tagName !== 'A') {
+        var otros = document.querySelectorAll('[data-loading-clic="1"]');
+        for (var i = 0; i < otros.length; i++) otros[i].removeAttribute('data-loading-clic');
+        target.setAttribute('data-loading-clic', '1');
+        return;
+      }
+
+      // Enlace de descarga: estado de carga con restauración automática.
+      // Red de seguridad a CARGA_MS y, por si acaso, a 8 s.
+      if (!marcarCargando(target)) {
+        e.preventDefault();
+        return;
+      }
+      window.setTimeout(function () { liberarCargando(target); }, CARGA_MS);
+      window.setTimeout(function () { liberarCargando(target); }, 8000);
+    },
+    true
+  );
+
+  document.addEventListener('submit', function (e) {
+    var form = e.target;
+    if (!form || form.nodeName !== 'FORM') return;
+
+    var btn = e.submitter;
+    if (!btn) {
+      btn = form.querySelector('[data-loading-clic="1"]');
+      var clicados = form.querySelectorAll('[data-loading-clic="1"]');
+      for (var k = 0; k < clicados.length; k++) clicados[k].removeAttribute('data-loading-clic');
+    }
+    if (!btn || !btn.getAttribute('data-loading')) return;
+    // Los botones con data-anim ya tienen su propio flujo (arriba).
+    if (btn.getAttribute('data-anim')) return;
+
+    if (!marcarCargando(btn)) {
+      e.preventDefault();
+      return;
+    }
+    // Red de seguridad: si la navegación no ocurre, se libera el botón.
+    window.setTimeout(function () { liberarCargando(btn); }, 8000);
   });
 })();

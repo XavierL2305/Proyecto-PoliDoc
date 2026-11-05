@@ -141,7 +141,7 @@
 <div class="page-header">
   <h1>Mis Documentos</h1>
   <div class="page-actions">
-    <a href="{% url 'documentos:seleccionar_tipo' %}" class="btn btn--primary btn--sm"><i class="fa-solid fa-plus"></i> Nuevo Documento</a>
+    <a href="{% url 'documentos:seleccionar_tipo' %}" class="btn btn--primary btn--sm" data-motion="new"><i class="fa-solid fa-plus"></i> Nuevo Documento</a>
   </div>
 </div>
 
@@ -165,7 +165,7 @@
     <option value="{{ valor }}" {% if clasificacion_filter == valor %}selected{% endif %}>{{ etiqueta }}</option>
     {% endfor %}
   </select>
-  <button type="submit" class="btn btn--primary btn--sm"><i class="fa-solid fa-search"></i> Buscar</button>
+  <button type="submit" class="btn btn--primary btn--sm" data-motion="search" data-loading="search"><i class="fa-solid fa-search"></i> Buscar</button>
 </form>
 
 {% if tipos_documento %}

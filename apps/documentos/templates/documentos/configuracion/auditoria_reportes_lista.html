@@ -81,7 +81,7 @@
         <td>{{ reporte.tamano_bytes|filesizeformat }}</td>
         <td><span class="hash-mono">{{ reporte.hash_sha256|truncatechars:19 }}</span></td>
         <td>
-          <a href="{% url 'documentos:auditoria_reporte_descarga' reporte.uuid %}" class="btn btn--success btn--sm">
+          <a href="{% url 'documentos:auditoria_reporte_descarga' reporte.uuid %}" class="btn btn--success btn--sm" data-motion="download" data-loading="download">
             <i class="fa-solid fa-download"></i> Descargar
           </a>
         </td>

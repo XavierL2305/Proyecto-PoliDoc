@@ -28,6 +28,108 @@
 }
 
 /* ============================================================
+   0. MICRO-INTERACCIONES DE NAVEGACIÓN (data-motion)
+   Se activan desde el HTML: el botón/enlace lleva
+   data-motion="upload|download|search|new|stamp|view" y su icono
+   directo <i> hace un gesto breve al pasar el cursor, al recibir
+   foco por teclado o al pulsar (táctil). Son one-shot: al terminar
+   el keyframe el icono vuelve a su estado base (no se usa forwards,
+   así no queda "congelado" a un ángulo distinto).
+   El estilo GLOBAL de hover/press (elevación + press) vive en
+   buttons.css y aplica a todos los .btn; aquí solo vive el gesto
+   del icono, específico de cada acción.
+   ============================================================ */
+@media (prefers-reduced-motion: no-preference) {
+  [data-motion] > i {
+    display: inline-block;
+  }
+
+  /* Subir plantilla: la flecha sube y aterriza. */
+  [data-motion="upload"]:hover > i,
+  [data-motion="upload"]:focus-visible > i,
+  [data-motion="upload"]:active > i {
+    animation: motionUpload 0.5s cubic-bezier(0.3, 0, 0.4, 1);
+  }
+
+  @keyframes motionUpload {
+    0% { transform: translateY(0); }
+    40% { transform: translateY(-6px); }
+    70% { transform: translateY(2px); }
+    100% { transform: translateY(0); }
+  }
+
+  /* Descargar: la flecha baja y rebota. */
+  [data-motion="download"]:hover > i,
+  [data-motion="download"]:focus-visible > i,
+  [data-motion="download"]:active > i {
+    animation: motionDownload 0.5s cubic-bezier(0.3, 0, 0.4, 1);
+  }
+
+  @keyframes motionDownload {
+    0% { transform: translateY(0); }
+    40% { transform: translateY(6px); }
+    70% { transform: translateY(-2px); }
+    100% { transform: translateY(0); }
+  }
+
+  /* Buscar: la lupa se inclina. */
+  [data-motion="search"]:hover > i,
+  [data-motion="search"]:focus-visible > i,
+  [data-motion="search"]:active > i {
+    animation: motionSearch 0.5s cubic-bezier(0.3, 0, 0.4, 1);
+  }
+
+  @keyframes motionSearch {
+    0% { transform: rotate(0deg) scale(1); }
+    45% { transform: rotate(-14deg) scale(1.15); }
+    100% { transform: rotate(0deg) scale(1); }
+  }
+
+  /* Nuevo Documento: el "+" gira un cuarto de vuelta y crece. El final
+     queda en 90deg (el "+" es simétrico: al soltar la animación, volver
+     a 0deg es visualmente idéntico, sin "snap"). */
+  [data-motion="new"]:hover > i,
+  [data-motion="new"]:focus-visible > i,
+  [data-motion="new"]:active > i {
+    animation: motionNew 0.5s cubic-bezier(0.3, 0, 0.4, 1);
+  }
+
+  @keyframes motionNew {
+    0% { transform: scale(1) rotate(0deg); }
+    40% { transform: scale(1.3) rotate(90deg); }
+    70% { transform: scale(1.1) rotate(90deg); }
+    100% { transform: scale(1) rotate(90deg); }
+  }
+
+  /* Bandeja de Aprobaciones: el sello se estampa. */
+  [data-motion="stamp"]:hover > i,
+  [data-motion="stamp"]:focus-visible > i,
+  [data-motion="stamp"]:active > i {
+    animation: motionStamp 0.5s cubic-bezier(0.3, 0, 0.4, 1);
+  }
+
+  @keyframes motionStamp {
+    0% { transform: translateY(0) scale(1); }
+    40% { transform: translateY(4px) scale(0.9); }
+    70% { transform: translateY(-1px) scale(1.06); }
+    100% { transform: translateY(0) scale(1); }
+  }
+
+  /* Ver historial: el icono pulsa. */
+  [data-motion="view"]:hover > i,
+  [data-motion="view"]:focus-visible > i,
+  [data-motion="view"]:active > i {
+    animation: motionView 0.5s cubic-bezier(0.3, 0, 0.4, 1);
+  }
+
+  @keyframes motionView {
+    0% { transform: scale(1); }
+    45% { transform: scale(1.18); }
+    100% { transform: scale(1); }
+  }
+}
+
+/* ============================================================
    1. SELLO - Guardar Borrador
    El icono se "estampa", aparece un anillo verde y luego el check.
    ============================================================ */

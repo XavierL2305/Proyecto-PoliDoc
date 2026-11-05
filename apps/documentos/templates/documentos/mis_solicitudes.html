@@ -326,7 +326,7 @@
     </a>
     {% endif %}
     {% if item.url_accion and item.url_accion_label == 'Descargar' %}
-    <a href="{{ item.url_accion }}" class="btn btn--success btn--sm">
+    <a href="{{ item.url_accion }}" class="btn btn--success btn--sm" data-motion="download" data-loading="download">
       <i class="fa-solid fa-download"></i> Descargar
     </a>
     {% elif item.url_accion and item.url_accion_label %}
