@@ -2263,13 +2263,13 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
     - APPROVAL_THRESHOLD eliminado de settings.py.
 
   23.5 PENDIENTES CONOCIDOS
-    - (Resuelto 2026-11-05) `verificar_exportacion` ejecutado en local:
-      `python manage.py verificar_exportacion --formato SGC-FOR-005
-      --salida /tmp/verif_export` → XLSX OK (87 586 B), PDF OK (284 953 B)
-      con reparación automática de maquetación y QA final limpio
-      (LibreOffice 25.2.3.2). En Docker queda pendiente de ejecutar en el
-      servidor: `docker compose exec web python manage.py verificar_exportacion`
-      (este sandbox no tiene daemon Docker).
+    - (Resuelto 2026-11-05) `verificar_exportacion` ejecutado en local y en
+      Docker: LibreOffice 25.2.3.2, XLSX OK (87 586 B), PDF OK (284 953 B)
+      con reparación automática de maquetación (`imagen_recortada@p2`) y QA
+      final limpio → RESULTADO OK. Comandos:
+      `python manage.py verificar_exportacion --formato SGC-FOR-005`
+      (local) y `docker compose exec web python manage.py verificar_exportacion`
+      (contenedor).
     - (Resuelto 2026-11-05) `detalle_documento` ya NO reencola la conversión
       en cada apertura: un candado en caché (`conv-pdf:<pk>`, TTL 300 s,
       fail-open si la caché cae) evita duplicar la tarea; el task libera el
