@@ -42,19 +42,33 @@ def buscar_sugerencias(request):
     from .services.busqueda import buscar_documentos_visibles
 
     queryset, target_ids = buscar_documentos_visibles(request.user, q)
-    documentos = list(queryset[:limit])
+    # Precarga relaciones usadas en el bucle: antes eran 2 consultas por
+    # sugerencia (documento relacionado y referencia pendiente).
+    documentos = list(
+        queryset.prefetch_related(
+            'documentos_relacionados', 'referencias_salientes',
+        )[:limit]
+    )
+    objetivo_ids = set(target_ids)
+    q_lower = q.lower()
 
     sugerencias = []
     for d in documentos:
         relacionado_con = None
-        if target_ids:
-            rel = d.documentos_relacionados.filter(id__in=target_ids).first()
+        if objetivo_ids:
+            rel = next(
+                (r for r in d.documentos_relacionados.all()
+                 if r.id in objetivo_ids),
+                None,
+            )
             if rel:
                 relacionado_con = rel.codigo
         if not relacionado_con:
-            ref = d.referencias_salientes.filter(
-                codigo_destino__icontains=q
-            ).first()
+            ref = next(
+                (r for r in d.referencias_salientes.all()
+                 if q_lower in (r.codigo_destino or '').lower()),
+                None,
+            )
             if ref:
                 relacionado_con = ref.codigo_destino
 

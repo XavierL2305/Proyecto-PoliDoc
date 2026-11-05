@@ -85,6 +85,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'documentos.middleware.CachePeticionMiddleware',
     'auditoria.middleware.AuditIPMiddleware',
 ]
 

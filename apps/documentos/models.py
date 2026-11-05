@@ -1890,7 +1890,17 @@ class Formato(models.Model):
                     pass
 
     def get_secciones(self):
-        return self.secciones.all().order_by('orden')
+        # Lista evaluada con los campos ya precargados: las plantillas iteran
+        # `seccion.campos.all` y así no se lanza una consulta por sección al
+        # pintar la ficha o el formulario dinámico. Se memoriza en la instancia
+        # porque la ficha invoca el método más de una vez por render.
+        cache = getattr(self, '_secciones_precargadas', None)
+        if cache is None:
+            cache = list(
+                self.secciones.all().order_by('orden').prefetch_related('campos')
+            )
+            self._secciones_precargadas = cache
+        return cache
 
     def get_todos_los_campos(self):
         return CampoFormato.objects.filter(seccion__formato=self).select_related('seccion').order_by('seccion__orden', 'orden')

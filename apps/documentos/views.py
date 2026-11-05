@@ -8,6 +8,7 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
 from django.contrib import messages
 from django.core.exceptions import ValidationError
+from django.core.paginator import Paginator
 from django.http import FileResponse, Http404, JsonResponse
 from django.urls import reverse
 from django.utils import timezone
@@ -40,6 +41,18 @@ from .cache_utils import tipos_activos, periodos_activos, departamentos_activos
 from . import ai
 
 logger = logging.getLogger(__name__)
+
+
+class _PaginatorConteoFijo(Paginator):
+    """Paginator con el total ya calculado (evita un COUNT por página/tipo)."""
+
+    def __init__(self, object_list, per_page, count, **kwargs):
+        super().__init__(object_list, per_page, **kwargs)
+        self._conteo_fijo = count
+
+    @property
+    def count(self):
+        return self._conteo_fijo
 
 
 def get_documento(tipo, documento_id):
@@ -405,47 +418,55 @@ def mis_documentos(request):
             ).values_list('id', flat=True)
         )
 
+    # Mismo conjunto base para todos los tipos: propios + (coordinador)
+    # asignados. El conteo por tipo se resuelve en UNA sola consulta agrupada
+    # en vez de un COUNT por cada tipo activo (antes: ~15 COUNTs por carga).
+    docs_base = Documento.objects.filter(propietario=user)
+    if perfil.es_coordinador:
+        ids_asignados = AsignacionDocumento.objects.filter(
+            coordinador=user, activa=True, puede_leer=True,
+        ).values('documento_id')
+        docs_base = Documento.objects.filter(
+            Q(propietario=user) | Q(id__in=ids_asignados)
+        )
+    if buscar:
+        docs_base = docs_base.filter(
+            Q(nombre__icontains=buscar) | Q(codigo__icontains=buscar)
+            | Q(documentos_relacionados__in=target_ids)
+            | Q(referencias_salientes__codigo_destino__icontains=buscar)
+        ).distinct()
+    if registro_filter == 'documentos':
+        docs_base = docs_base.filter(es_plantilla=False)
+    elif registro_filter == 'plantillas':
+        docs_base = docs_base.filter(es_plantilla=True)
+    if estado_filter:
+        docs_base = docs_base.filter(estado=estado_filter)
+    if clasificacion_filter:
+        docs_base = docs_base.filter(clasificacion=clasificacion_filter)
+
+    conteos_por_tipo = dict(
+        docs_base.order_by().values_list('tipo').annotate(total=Count('id'))
+    )
+
     tipos_documento = []
     for tipo in tipos_activos():
         tipo_key = tipo.key
-        docs = Documento.objects.filter(propietario=user, tipo=tipo_key)
-        if perfil.es_coordinador:
-            asignaciones = AsignacionDocumento.objects.filter(
-                coordinador=user, activa=True, puede_leer=True,
-                documento__tipo=tipo_key
-            )
-            ids_asignados = asignaciones.values_list('documento_id', flat=True)
-            if ids_asignados:
-                docs = docs | Documento.objects.filter(id__in=ids_asignados)
-        if buscar:
-            docs = docs.filter(
-                Q(nombre__icontains=buscar) | Q(codigo__icontains=buscar)
-                | Q(documentos_relacionados__in=target_ids)
-                | Q(referencias_salientes__codigo_destino__icontains=buscar)
-            ).distinct()
-        if registro_filter == 'documentos':
-            docs = docs.filter(es_plantilla=False)
-        elif registro_filter == 'plantillas':
-            docs = docs.filter(es_plantilla=True)
-        if estado_filter:
-            docs = docs.filter(estado=estado_filter)
-        if clasificacion_filter:
-            docs = docs.filter(clasificacion=clasificacion_filter)
-        docs = docs.select_related('departamento', 'tipo', 'periodo_vigencia')
-        # Sin `exists()` previo: el Paginator ya cuenta y pagina; evaluamos la
-        # página y solo anexamos el tipo si tiene documentos. Ahorra una query
-        # por cada tipo activo en cada carga de "Mis Documentos".
-        paginator = Paginator(docs, 12)
+        total = conteos_por_tipo.get(tipo_key, 0)
+        if not total:
+            continue
+        docs = docs_base.filter(tipo=tipo_key).select_related(
+            'departamento', 'tipo', 'periodo_vigencia', 'propietario',
+        )
+        paginator = _PaginatorConteoFijo(docs, 12, count=total)
         page = paginator.get_page(request.GET.get(f'page_{tipo_key}', 1))
-        if page.object_list:
-            tipos_documento.append({
-                'key': tipo_key,
-                'nombre': tipo.nombre,
-                'codigo': tipo.codigo,
-                'icono': tipo.icono or 'file',
-                'color': tipo.color or 'primary',
-                'documentos': page,
-            })
+        tipos_documento.append({
+            'key': tipo_key,
+            'nombre': tipo.nombre,
+            'codigo': tipo.codigo,
+            'icono': tipo.icono or 'file',
+            'color': tipo.color or 'primary',
+            'documentos': page,
+        })
 
     # Borradores de planilla propios: permiten retomarlos desde la tarjeta en
     # vez de crear un segundo borrador para el mismo documento.
@@ -1437,8 +1458,26 @@ def detalle_documento(request, tipo, documento_id):
     versiones.sort(key=lambda v: v.fecha_creacion, reverse=True)
     if version_vigente:
         versiones.sort(key=lambda v: v.pk != version_vigente.pk)
-    from .permissions import descarga_autorizada, puede_descargar
-    tiene_descarga_aprobada = descarga_autorizada(documento, request.user)
+    from .permissions import puede_descargar
+    # Todas las solicitudes de descarga de ESTE usuario para el documento, en
+    # una sola consulta: de aquí se derivan la autorización vigente, la
+    # solicitud pendiente, la última solicitud y su historial de aprobaciones.
+    # Antes eran 4 consultas separadas a la misma tabla.
+    from django.utils import timezone as _tz
+
+    solicitudes_descarga_usuario = list(
+        SolicitudDescarga.objects
+        .filter(documento=documento, solicitado_por=request.user)
+        .prefetch_related('aprobaciones__aprobador')
+        .order_by('-fecha_solicitud')
+    )
+    tiene_descarga_aprobada = any(
+        s.estado == 'aprobada'
+        and s.version_aprobada == documento.version_actual
+        and s.fecha_expiracion is not None
+        and s.fecha_expiracion > _tz.now()
+        for s in solicitudes_descarga_usuario
+    )
 
     convirtiendo = False
     from .services.documentos_pdf import FORMATOS_CONVERTIBLES, pdf_disponible
@@ -1453,27 +1492,45 @@ def detalle_documento(request, tipo, documento_id):
         pdf_listo = encolar_conversion(documento)
         convirtiendo = not pdf_listo
 
-    solicitud_aprobacion = SolicitudAprobacionDocumento.objects.filter(
-        documento=documento, estado='pendiente', aprobador=request.user,
-    ).order_by('-fecha_solicitud').first()
+    # Todas las aprobaciones del documento en una sola consulta (con sus
+    # usuarios/versión precargados): de aquí se derivan la solicitud pendiente
+    # del usuario, la espera, el historial y la cadena actual. Antes se hacían
+    # ~8 consultas con N+1 de auth_user.
+    from .services.cambios_estado import PENDIENTES as ESTADOS_CAMBIO_PENDIENTES
+
+    aprobaciones_documento = list(
+        SolicitudAprobacionDocumento.objects.filter(documento=documento)
+        .select_related('aprobador', 'solicitante', 'version_a_eliminar')
+        .order_by('id')
+    )
+
+    solicitud_aprobacion = next(
+        (s for s in sorted(
+            (s for s in aprobaciones_documento
+             if s.estado == 'pendiente' and s.aprobador_id == request.user.id),
+            key=lambda s: s.fecha_solicitud, reverse=True,
+        )), None,
+    )
 
     puede_aprobar = bool(solicitud_aprobacion)
 
-    solicitud_espera = SolicitudAprobacionDocumento.objects.filter(
-        documento=documento, estado='esperando', aprobador__isnull=True,
-    ).order_by('id').first()
+    solicitud_espera = next(
+        (s for s in aprobaciones_documento
+         if s.estado == 'esperando' and s.aprobador_id is None),
+        None,
+    )
 
     espera_msg = None
     if solicitud_espera:
         if solicitud_espera.rol_aprobador == 'evaluador':
             espera_msg = 'Pendiente de evaluación por jefe de departamento'
         else:
-            evaluador_aprobado = SolicitudAprobacionDocumento.objects.filter(
-                documento=documento,
-                accion_solicitud=solicitud_espera.accion_solicitud,
-                rol_aprobador='evaluador',
-                estado='aprobada',
-            ).exists()
+            evaluador_aprobado = any(
+                s.accion_solicitud == solicitud_espera.accion_solicitud
+                and s.rol_aprobador == 'evaluador'
+                and s.estado == 'aprobada'
+                for s in aprobaciones_documento
+            )
             if evaluador_aprobado:
                 espera_msg = 'Evaluado — pendiente de autorización por Gerencia General'
             else:
@@ -1491,11 +1548,13 @@ def detalle_documento(request, tipo, documento_id):
     responsables = documento.responsables.all()
     distribuciones = DistribucionDocumento.objects.filter(
         documento=documento
-    ).select_related('usuario', 'distribuido_por').order_by('-fecha_distribucion')
+    ).select_related(
+        'usuario', 'distribuido_por', 'revocado_por',
+    ).order_by('-fecha_distribucion')
 
-    solicitud_pendiente = SolicitudDescarga.objects.filter(
-        documento=documento, solicitado_por=request.user, estado='pendiente'
-    ).exists()
+    solicitud_pendiente = any(
+        s.estado == 'pendiente' for s in solicitudes_descarga_usuario
+    )
 
     from .permissions import puede_inhabilitar
     puede_inhab, rol_inhab = puede_inhabilitar(request.user, documento)
@@ -1503,46 +1562,51 @@ def detalle_documento(request, tipo, documento_id):
     # Solicitudes de cambio de estado todavía sin resolver: si ya hay una
     # en trámite, la ficha muestra un aviso en lugar de ofrecer de nuevo
     # el botón de solicitud (el API devolvería 409 "duplicado").
-    # Se importa con alias porque el nombre coincide con la variable local
-    # `solicitud_pendiente` (descarga) que se pasa al contexto más abajo.
-    from .services.cambios_estado import (
-        solicitud_pendiente as buscar_cambio_pendiente,
-    )
-    reactivacion_pendiente = buscar_cambio_pendiente(documento, 'reactivar')
-    inhabilitacion_pendiente = buscar_cambio_pendiente(documento, 'inhabilitar')
-    renovacion_pendiente = buscar_cambio_pendiente(documento, 'renovar')
+    def _cambio_pendiente(accion):
+        return next(
+            (s for s in sorted(
+                (s for s in aprobaciones_documento
+                 if s.accion_solicitud == accion
+                 and s.estado in ESTADOS_CAMBIO_PENDIENTES),
+                key=lambda s: s.fecha_solicitud, reverse=True,
+            )), None,
+        )
 
-    from django.db.models.functions import Coalesce
-    historial_estados = (
-        SolicitudAprobacionDocumento.objects.filter(documento=documento)
-        .annotate(fecha_accion=Coalesce('fecha_respuesta', 'fecha_solicitud'))
-        .order_by('-fecha_accion', '-id')
-    )
+    reactivacion_pendiente = _cambio_pendiente('reactivar')
+    inhabilitacion_pendiente = _cambio_pendiente('inhabilitar')
+    renovacion_pendiente = _cambio_pendiente('renovar')
 
     # Cadena de aprobación actual: solo la de la ACCIÓN más reciente
     # (evaluador primero, luego autorizador). Sin acotar por acción se
     # mezclaba la autorización ya aprobada de una acción anterior con la
     # pendiente de la actual, y el card mostraba filas duplicadas.
-    ultima_solicitud = (
-        SolicitudAprobacionDocumento.objects.filter(documento=documento)
-        .order_by('-id').first()
-    )
+    ultima_solicitud = aprobaciones_documento[-1] if aprobaciones_documento else None
     if ultima_solicitud:
-        aprobaciones_actuales = list(
-            SolicitudAprobacionDocumento.objects.filter(
-                documento=documento,
-                accion_solicitud=ultima_solicitud.accion_solicitud,
-            ).order_by('id')
-        )
+        aprobaciones_actuales = [
+            s for s in aprobaciones_documento
+            if s.accion_solicitud == ultima_solicitud.accion_solicitud
+        ]
     else:
         aprobaciones_actuales = []
+
+    # Historial: acción más reciente primero (fecha de respuesta, o de
+    # solicitud si aún no se respondió).
+    historial_estados = sorted(
+        aprobaciones_documento,
+        key=lambda s: (s.fecha_respuesta or s.fecha_solicitud, s.id),
+        reverse=True,
+    )
 
     renovaciones = RenovacionVencimiento.objects.filter(documento=documento)
     es_propietario = documento.propietario == request.user
 
     solicitudes_cambio = list(
         SolicitudCambio.objects.filter(documento=documento)
-        .select_related('formato', 'solicitante', 'departamento')
+        .select_related(
+            'formato', 'solicitante', 'departamento',
+            'documento__tipo', 'documento__departamento__jefe',
+            'documento__periodo_vigencia', 'departamento__jefe',
+        )
         .order_by('-fecha_creacion')
     )
     # La planilla se muestra con los campos auto releídos de la BD: si la
@@ -1580,21 +1644,16 @@ def detalle_documento(request, tipo, documento_id):
         solicitud__documento=documento
     ).select_related('solicitud', 'solicitud__solicitado_por')
 
-    # Seguimiento de la última solicitud de ESTE usuario: la ficha le
-    # informa el estado, el motivo y el resultado de lo que solicitó.
+    # Seguimiento de la última solicitud de ESTE usuario (ya precargada arriba):
+    # la ficha le informa el estado, el motivo y el resultado de lo solicitado.
     ultima_solicitud_descarga = (
-        SolicitudDescarga.objects
-        .filter(documento=documento, solicitado_por=request.user)
-        .prefetch_related('aprobaciones__aprobador')
-        .order_by('-fecha_solicitud')
-        .first()
+        solicitudes_descarga_usuario[0] if solicitudes_descarga_usuario else None
     )
-    autorizacion_descarga = (
-        SolicitudDescarga.objects
-        .filter(documento=documento, solicitado_por=request.user, estado='aprobada')
-        .exclude(fecha_expiracion=None)
-        .order_by('-fecha_expiracion')
-        .first()
+    autorizacion_descarga = max(
+        (s for s in solicitudes_descarga_usuario
+         if s.estado == 'aprobada' and s.fecha_expiracion is not None),
+        key=lambda s: s.fecha_expiracion,
+        default=None,
     )
 
     codigos_relacionados = {}
@@ -1618,6 +1677,8 @@ def detalle_documento(request, tipo, documento_id):
         documento=documento, estado='borrador', responsable=request.user,
     ).first()
 
+    ia_habilitada = ai.esta_habilitado()
+
     return render(request, 'documentos/detalle.html', {
         'documento': documento,
         'planilla_borrador': planilla_borrador,
@@ -1629,7 +1690,10 @@ def detalle_documento(request, tipo, documento_id):
         'puede_eliminar': puede_eliminar_documento(request.user, documento),
         'puede_eliminar_versiones': es_admin or es_propietario,
         'versiones_eliminables': len(versiones) >= 2,
-        'puede_descargar': puede_descargar(request.user, documento) or tiene_descarga_aprobada,
+        'puede_descargar': puede_descargar(
+            request.user, documento,
+            descarga_autorizada_previa=tiene_descarga_aprobada,
+        ),
         'puede_inhabilitar': puede_inhab,
         'puede_inhabilitar_directo': rol_inhab == 'directo',
         'reactivacion_pendiente': reactivacion_pendiente,
@@ -1669,8 +1733,8 @@ def detalle_documento(request, tipo, documento_id):
         'dias7': dias7,
         'solicitudes_por_operacion': solicitudes_por_operacion,
         'sc_permisos': solicitudes_permitidas,
-        'ia_habilitada': ai.esta_habilitado(),
-        'ia_usos_hoy': ai.consumo_hoy(request.user),
+        'ia_habilitada': ia_habilitada,
+        'ia_usos_hoy': ai.consumo_hoy(request.user) if ia_habilitada else 0,
         'ia_limite': ai.limite_diario(),
     })
 

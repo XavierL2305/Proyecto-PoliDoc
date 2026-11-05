@@ -94,13 +94,17 @@ def tiene_distribucion(documento, usuario):
     ).exists()
 
 
-def puede_descargar(usuario, documento):
+def puede_descargar(usuario, documento, descarga_autorizada_previa=False):
     """Descarga directa según clasificación (ISO 9001:7.5.3).
 
     admin y públicos: directo; jefe del departamento para ``interno``; el
     propietario de un ``interno``; quien tenga una distribución vigente; y
     quien tenga una solicitud aprobada vigente y de la versión actual.
     ``confidencial``/``restringido`` requieren solicitud aprobada.
+
+    ``descarga_autorizada_previa`` permite reutilizar una comprobación de
+    :func:`descarga_autorizada` ya hecha por la vista (evita repetir la
+    consulta en la ficha del documento).
     """
     if not hasattr(usuario, 'perfil'):
         return False
@@ -114,6 +118,8 @@ def puede_descargar(usuario, documento):
     if documento.clasificacion == 'interno' and documento.propietario == usuario:
         return True
     if tiene_distribucion(documento, usuario):
+        return True
+    if descarga_autorizada_previa:
         return True
     if descarga_autorizada(documento, usuario):
         return True
