@@ -1,0 +1,6 @@
+catalogo            47.4
+detalle            129.1
+mis_documentos      52.2
+departamento        61.2
+buscar_api          46.0
+TOTAL              335.9
