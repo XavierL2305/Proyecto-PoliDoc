@@ -1,6 +1,7 @@
 ===================================================================
 PROYECTO: POLIDOC (Gestión Documental - Policlínica Táchira)
 ===================================================================
+Última actualización: 2026-11-05
 
 1. ALCANCE DEL SISTEMA
 -------------------------------------------------------------------
@@ -2262,15 +2263,18 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
     - APPROVAL_THRESHOLD eliminado de settings.py.
 
   23.5 PENDIENTES CONOCIDOS
-    - Ejecutar la verificación de exportación en Docker:
-      `python manage.py verificar_exportacion` (genera XLSX y PDF desde
-      SGC-FOR-005 y valida cabecera/peso; opcional `--formato` y `--salida`).
-      En local también funciona: LibreOffice **sí está instalado** en este
-      entorno (verificado 2026-10-01; los tests reales de conversión corren
-      sin Docker y generan PDF 595×842).
-      El Dockerfile incluye `fonts-liberation` y `fonts-crosextra-carlito` para
-      reducir diferencias de tipografía en el PDF.
-    - `detalle_documento` reencola conversión a PDF en cada apertura.
+    - (Resuelto 2026-11-05) `verificar_exportacion` ejecutado en local:
+      `python manage.py verificar_exportacion --formato SGC-FOR-005
+      --salida /tmp/verif_export` → XLSX OK (87 586 B), PDF OK (284 953 B)
+      con reparación automática de maquetación y QA final limpio
+      (LibreOffice 25.2.3.2). En Docker queda pendiente de ejecutar en el
+      servidor: `docker compose exec web python manage.py verificar_exportacion`
+      (este sandbox no tiene daemon Docker).
+    - (Resuelto 2026-11-05) `detalle_documento` ya NO reencola la conversión
+      en cada apertura: un candado en caché (`conv-pdf:<pk>`, TTL 300 s,
+      fail-open si la caché cae) evita duplicar la tarea; el task libera el
+      candado al terminar. Tests en `tests_conversion.py`
+      (`test_detalle_no_reencola_conversion_en_curso` y compañía).
     - Validar jurídicamente la sección 12 de los Términos y Condiciones
       (uso de IA / transferencia internacional de información) antes de
       publicarla; el texto actual es borrador.
@@ -2568,7 +2572,7 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
       6 tributario), pero debe ajustarse por tipo de documento.
     - Documentos con valor histórico y las historias clínicas NO deben
       destruirse: conviene un tipo/período "permanente" (sin destrucción).
-    - PENDIENTE OPCIONAL: hacer la retención configurable por TIPO de
+    - BACKLOG OPCIONAL: hacer la retención configurable por TIPO de
       documento (hoy es por documento, default 10 años).
 
 ===================================================================
@@ -2719,8 +2723,20 @@ el cuello NO era el volumen de datos.
     Mongo; fail_closed siempre intenta), cierre al recuperar y
     `reprocesar_buffer`.
 
-  - Suite total: 921 tests. Comando:
+  - Suite total: 1213 tests (2026-11-05). Comando:
     `python manage.py test auditoria documentos autenticacion --settings=polidoc.test_settings`
+
+  26.7 CIERRE DE LA FASE DE CARGA (2026-11-05)
+    - Informe v1.0 entregado en `docs/informes/` (MD + DOCX + PDF de 23
+      páginas, generador, gráficas y evidencias congeladas): commit
+      `641e911`.
+    - Optimizaciones N+1 y middleware de caché por petición: commit
+      `63dfee8`.
+    - Micro-animaciones y estado de carga de botones: commit `2a3c432`.
+    - Stack de carga detenido (gunicorn/nginx/celery); las BD de prueba
+      quedan intactas. Reactivar con
+      `WORKERS=3 THREADS=4 bash /tmp/polidoc_loadtest/start_stack.sh`.
+    - Suite completa: 1213 tests OK con `polidoc.test_settings`.
 
 -------------------------------------------------------------------
 27. MANUAL DE USUARIO (docs/manual-usuario/) — TOMO 1 + TOMO 2 + EXPORT
@@ -2740,9 +2756,8 @@ el cuello NO era el volumen de datos.
     válida. `dist/` está en .gitignore.
   - Verificación: `python3 docs/manual-usuario/verificar.py` (enlaces,
     imágenes, criterios de capítulo; debe dar 0 errores).
-  - Pendiente: 1 captura — `imagenes/ampliacion/conversion-pdf.png`
-    (barra de conversión; requiere app levantada + navegador, fuera del
-    alcance del sandbox).
+  - Capturas completas: `imagenes/ampliacion/conversion-pdf.png` ya está
+    versionada (commit `957489c`); no quedan capturas pendientes.
   - El manual NO se versiona en este archivo hasta ahora; esta sección es
     el resumen de estado.
 

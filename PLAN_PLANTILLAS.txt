@@ -2,7 +2,7 @@
 POLIDOC — PLAN DE IMPLEMENTACIÓN: APARTADO DE PLANTILLAS
 ================================================================================
 Archivo         : PLAN_PLANTILLAS.txt
-Estado          : PLAN CERRADO — listo para ejecutar
+Estado          : PLAN EJECUTADO Y CERRADO (verificado 2026-11-05)
 Alcance         : apps/documentos  (+ sidebar en apps/autenticacion)
 Enfoque         : Opción B — conservar los modelos de aprobación actuales y
                   unificar el comportamiento/UI con una capa de servicios.
@@ -100,13 +100,12 @@ Plantilla = Documento en blanco que reutiliza:
  D14. TipoDocumento 'formulario' (FOR) se MANTIENE activo.
 
 --------------------------------------------------------------------------------
-PENDIENTE DE CONFIRMAR AL EJECUTAR
+DECISIONES CONFIRMADAS AL EJECUTAR (2026-11-03)
 --------------------------------------------------------------------------------
- P1. ¿plantilla_origen es OBLIGATORIO cuando el tipo tiene plantillas activas?
-     Default de implementación: OPCIONAL; el desplegable solo ofrece plantillas
-     válidas (mismo tipo, activas). Si el tipo no tiene plantillas -> sin campo.
- P2. Comportamiento por defecto del filtro del listado general
-     (Todos / Documentos / Plantillas). Default propuesto: "Documentos".
+ P1. RESUELTO: `plantilla_origen` es OBLIGATORIO cuando el tipo tiene
+     plantillas activas; el desplegable solo ofrece plantillas válidas (mismo
+     tipo, activas). Si el tipo no tiene plantillas, la creación se bloquea.
+ P2. RESUELTO: el filtro del listado general arranca en "Todos".
 
 ================================================================================
 3. REGLAS DE NEGOCIO
@@ -583,8 +582,8 @@ defecto "Todos", migración 0056 de tipo_archivo).
 [x] V   manage.py check
 [x] V   makemigrations --check
 [x] V   tests dirigidos (plantillas, formato, conversión, endpoints)
-[x] V   (opcional) suite completa documentos
-        -> 2 fallos preexistentes de AfectaTodosTest, ajenos a este plan
+[x] V   suite completa documentos/auditoria/autenticacion
+        -> 1213 tests OK (2026-11-05); sin fallos
 
 ================================================================================
 15. HISTORIAL DE DECISIONES (Q&A con la jefa TI)
