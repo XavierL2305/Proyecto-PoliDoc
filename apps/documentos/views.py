@@ -343,11 +343,16 @@ def formularios(request):
     # clasificación/permisos que el resto de Documento).
     from .permissions import documentos_descargables, q_documentos_visibles
 
+    visibles = q_documentos_visibles(user)
+    # Las plantillas de uso INTERNO pertenecen a su departamento: las ve
+    # cualquier miembro de ese departamento (mismo criterio que
+    # puede_ver_documento), no solo el propietario o el jefe. Confidencial y
+    # restringido conservan su propio control de acceso.
+    if not user.perfil.es_administrador and dept:
+        visibles |= Q(departamento=dept, clasificacion='interno')
     docs = Documento.objects.filter(
         es_plantilla=True, estado='activo',
-    ).filter(
-        q_documentos_visibles(user)
-    ).select_related('departamento', 'propietario', 'tipo')
+    ).filter(visibles).select_related('departamento', 'propietario', 'tipo')
 
     solicitudes = SolicitudDescarga.objects.filter(
         solicitado_por=user

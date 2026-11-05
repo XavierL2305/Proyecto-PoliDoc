@@ -327,6 +327,78 @@ class CatalogoPlantillasTest(BaseDocumentosTest):
         self.assertContains(resp, 'fa-clipboard')
         self.assertContains(resp, '--color-success-light')
 
+    def _crear_plantilla(self, nombre, codigo, propietario, departamento,
+                         clasificacion='interno'):
+        return Documento.objects.create(
+            tipo=self.tipo_formulario, nombre=nombre, codigo=codigo,
+            estado='activo', es_plantilla=True, clasificacion=clasificacion,
+            propietario=propietario, departamento=departamento,
+            version_actual='1.0',
+        )
+
+    def _todos_los_grupos(self, resp):
+        return {
+            g['titulo']: {doc.nombre for doc in g['documentos']}
+            for g in resp.context['grupos']
+        }
+
+    def test_trabajador_ve_plantilla_interna_de_su_departamento(self):
+        """Un `interno` del departamento lo ve cualquier miembro del depto."""
+        doc = self._crear_plantilla(
+            'Interna TI', 'TI-FOR-PLT-910',
+            self.user_jefe_ti, self.depto_ti,
+        )
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get('/documentos/')
+
+        self.assertEqual(resp.status_code, 200)
+        grupos = self._todos_los_grupos(resp)
+        self.assertIn('Interna TI', grupos.get('Mi Departamento', set()))
+        # La descarga sigue requiriendo aprobación: la tarjeta ofrece
+        # "Solicitar", no descarga directa.
+        self.assertNotIn(doc.uuid, resp.context['docs_descargables'])
+        self.assertContains(resp, reverse(
+            'documentos:solicitar_descarga',
+            kwargs={'tipo': doc.tipo_id, 'documento_id': doc.uuid},
+        ))
+
+    def test_trabajador_no_ve_plantilla_confidencial_de_su_departamento(self):
+        self._crear_plantilla(
+            'Confidencial TI', 'TI-FOR-PLT-911',
+            self.user_jefe_ti, self.depto_ti, clasificacion='confidencial',
+        )
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get('/documentos/')
+
+        self.assertEqual(resp.status_code, 200)
+        nombres = set().union(*self._todos_los_grupos(resp).values())
+        self.assertNotIn('Confidencial TI', nombres)
+
+    def test_trabajador_no_ve_plantilla_interna_de_otro_departamento(self):
+        self._crear_plantilla(
+            'Interna TH', 'TH-FOR-PLT-912',
+            self.user_trabajador_otro, self.depto_th,
+        )
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get('/documentos/')
+
+        self.assertEqual(resp.status_code, 200)
+        nombres = set().union(*self._todos_los_grupos(resp).values())
+        self.assertNotIn('Interna TH', nombres)
+
+    def test_trabajador_sigue_viendo_publicas_de_otros_departamentos(self):
+        self._crear_plantilla(
+            'Publica TH', 'TH-FOR-PLT-913',
+            self.user_trabajador_otro, self.depto_th,
+            clasificacion='publico',
+        )
+        self.client.login(username='trab01', password='testpass123')
+        resp = self.client.get('/documentos/')
+
+        self.assertEqual(resp.status_code, 200)
+        grupos = self._todos_los_grupos(resp)
+        self.assertIn('Publica TH', grupos.get('Otros Departamentos', set()))
+
 
 class ModificarPlantillaTest(BaseDocumentosTest):
     def setUp(self):

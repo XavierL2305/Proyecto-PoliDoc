@@ -172,7 +172,12 @@ El sistema se limita exclusivamente a la gestión, control y distribución de do
         TI-DPR-PLT-001); tipos sin prefijo: `{TIPO}-PLT-{SEC}` (DPR-PLT-001).
       - Visibilidad: hereda `q_documentos_visibles` (admin: todo; jefe: su
         departamento interno/confidencial; trabajador/coordinador: propios,
-        públicos activos, asignaciones y distribuciones).
+        públicos activos, asignaciones y distribuciones). Además, en el
+        catálogo `/documentos/` todo miembro ve las plantillas `interno` de
+        SU departamento (aunque no sea el propietario ni jefe): la tarjeta
+        ofrece "Solicitar" y la descarga sigue requiriendo aprobación. Este
+        refuerzo es SOLO del catálogo; "Mis Documentos", búsqueda y la vista
+        "Departamento" no cambian.
       - Alta: botón "Subir plantilla" → seleccionar tipo → formulario. Se
         crea con es_plantilla=True y `plantilla_origen=None`. El archivo es
         obligatorio (una plantilla sin archivo rompería el "Descargar").
