@@ -612,9 +612,13 @@ class Documento(models.Model):
         se incrementa dentro de la transacción del alta. Si la transacción se
         revierte, el incremento también se revierte (sin huecos por fallos).
         """
-        clave = cls._clave_secuencia(departamento, tipo, es_plantilla)
+        clave = None
         for intento in range(8):
             try:
+                # La clave consulta TipoDocumento (es_sin_prefijo_depto) y
+                # también puede chocar con el lock de SQLite bajo concurrencia:
+                # se calcula dentro del reintento.
+                clave = cls._clave_secuencia(departamento, tipo, es_plantilla)
                 with transaction.atomic():
                     secuencia = (
                         SecuenciaCodigo.objects.select_for_update()

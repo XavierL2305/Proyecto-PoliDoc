@@ -20,7 +20,7 @@ def q_documentos_visibles(usuario):
     para no introducir JOINs que dupliquen resultados.
     """
     from .models import AsignacionDocumento, DistribucionDocumento
-    from .jefatura import departamentos_jefados
+    from .jefatura import delegaciones_vigentes
 
     perfil = getattr(usuario, 'perfil', None)
     if perfil and perfil.es_administrador:
@@ -36,10 +36,18 @@ def q_documentos_visibles(usuario):
     grants = Q(id__in=ids_asignados) | Q(id__in=ids_distribuidos)
 
     base = Q(propietario=usuario) | publicos | grants
-    deptos_jefe = departamentos_jefados(usuario)
+    # Jefatura natural + delegada como subconsulta: así la visibilidad no
+    # añade una consulta aparte (permite que el aggregate de vigencia se
+    # resuelva en una sola query).
+    deptos_jefe = Q()
+    if perfil and perfil.es_jefe and perfil.departamento_id:
+        deptos_jefe |= Q(departamento_id=perfil.departamento_id)
+    if getattr(usuario, 'pk', None):
+        deptos_jefe |= Q(
+            departamento_id__in=delegaciones_vigentes(usuario).values('departamento_id')
+        )
     if deptos_jefe:
-        base |= Q(
-            departamento_id__in=deptos_jefe,
+        base |= deptos_jefe & Q(
             clasificacion__in=['interno', 'confidencial'],
         )
     return base

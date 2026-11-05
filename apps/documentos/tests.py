@@ -3916,7 +3916,7 @@ class AfectaTodosTest(BaseDocumentosTest):
         self.assertEqual(list(form.cleaned_data['departamentos_afectados']), [])
 
     def test_visibilidad_afecta_todos(self):
-        """Un doc con `afecta_todos` se muestra UNA vez, en el grupo general."""
+        """Con alcance estricto, el jefe lo ve UNA vez bajo su departamento."""
         self.doc_activo.afecta_todos = True
         self.doc_activo.save(update_fields=['afecta_todos'])
         # La vista aplica visibilidad por clasificación: usamos un jefe que
@@ -3924,17 +3924,19 @@ class AfectaTodosTest(BaseDocumentosTest):
         self.client.login(username='jefe_ti', password='testpass123')
         resp = self.client.get('/documentos/departamento/')
         self.assertEqual(resp.status_code, 200)
-        # Aparece en el grupo general ("Todos los departamentos")...
+        # El alcance del jefe es estricto: no hay sección "Todos los
+        # departamentos" (CONTEXT §13.4).
         generales = [
             doc for t in resp.context['generales'] for doc in t['documentos']
         ]
-        self.assertIn(self.doc_activo, generales)
-        # ...y NO se repite bajo el departamento del jefe.
-        for g in resp.context['grupos']:
-            codigos = [
-                doc.codigo for t in g['tipos_documento'] for doc in t['documentos']
-            ]
-            self.assertNotIn(self.doc_activo.codigo, codigos)
+        self.assertEqual(generales, [])
+        # ...y aparece una sola vez, bajo su departamento dueño (TI).
+        codigos = [
+            doc.codigo
+            for g in resp.context['grupos']
+            for t in g['tipos_documento'] for doc in t['documentos']
+        ]
+        self.assertEqual(codigos.count(self.doc_activo.codigo), 1)
 
     def test_afecta_todos_no_se_repite_por_departamento(self):
         """El doc general aparece exactamente una vez: ni en los grupos."""
@@ -3944,11 +3946,9 @@ class AfectaTodosTest(BaseDocumentosTest):
         resp = self.client.get('/documentos/departamento/')
         self.assertEqual(resp.status_code, 200)
         html = resp.content.decode()
-        # El card del documento ahora lleva varios enlaces de acciones
-        # rápidas (todos con el uuid en la URL), así que se cuenta el
-        # `codigo` — que aparece una sola vez por card — para verificar
-        # que el doc general NO se duplica.
-        self.assertEqual(html.count(self.doc_activo.codigo), 1)
+        # La card pinta el código en el `title` y en el texto: se cuenta solo
+        # el texto visible (`>CODIGO<`) para verificar que no se duplica.
+        self.assertEqual(html.count(f'>{self.doc_activo.codigo}<'), 1)
         for g in resp.context['grupos']:
             codigos = [
                 doc.codigo for t in g['tipos_documento'] for doc in t['documentos']
