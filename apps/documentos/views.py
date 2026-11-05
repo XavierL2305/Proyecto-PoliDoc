@@ -1480,7 +1480,10 @@ def detalle_documento(request, tipo, documento_id):
     )
 
     convirtiendo = False
-    from .services.documentos_pdf import FORMATOS_CONVERTIBLES, pdf_disponible
+    from .services.documentos_pdf import (
+        FORMATOS_CONVERTIBLES, adquirir_candado_conversion, encolar_conversion,
+        liberar_candado_conversion, pdf_disponible,
+    )
     pdf_listo = pdf_disponible(documento)
     if (documento.archivo and documento.tipo_archivo in FORMATOS_CONVERTIBLES
             and not pdf_listo):
@@ -1488,8 +1491,12 @@ def detalle_documento(request, tipo, documento_id):
         # progreso haciendo polling de `estado_conversion`. Si el broker no
         # responde, `encolar_conversion` degrada a la conversión en línea
         # (mismo comportamiento que antes) y devuelve el resultado.
-        from .services.documentos_pdf import encolar_conversion
-        pdf_listo = encolar_conversion(documento)
+        # El candado evita reencolar en cada apertura de la ficha mientras
+        # la conversión anterior sigue en curso.
+        if adquirir_candado_conversion(documento):
+            pdf_listo = encolar_conversion(documento)
+            if pdf_listo:
+                liberar_candado_conversion(documento)
         convirtiendo = not pdf_listo
 
     # Todas las aprobaciones del documento en una sola consulta (con sus

@@ -47,6 +47,7 @@ from documentos.services.conversion_pdf import (
     resolver_papel,
 )
 from documentos.services.documentos_pdf import (
+    adquirir_candado_conversion,
     archivo_existe,
     asegurar_pdf,
     convertir_documento_sync,
@@ -1427,6 +1428,45 @@ class RegeneracionVistasTest(BaseRegeneracionTest):
         self.assertEqual(resp.status_code, 200)
         doc.refresh_from_db()
         self.assertFalse(doc.archivo_pdf)
+
+    def test_detalle_no_reencola_conversion_en_curso(self):
+        """Dos aperturas seguidas no duplican el encolado de la conversión."""
+        doc = self._doc('TI-FOR-V-10', fantasma=True)
+        self.client.login(username='trab01', password='testpass123')
+
+        with patch('documentos.tasks.convertir_documento_a_pdf.delay') as delay, \
+                patch('documentos.services.documentos_pdf.convertir_documento_sync',
+                      return_value=False):
+            primera = self.client.get(self._url(doc, ''))
+            segunda = self.client.get(self._url(doc, ''))
+
+        self.assertEqual(primera.status_code, 200)
+        self.assertEqual(segunda.status_code, 200)
+        self.assertEqual(delay.call_count, 1)
+        self.assertTrue(primera.context['convirtiendo'])
+        self.assertTrue(segunda.context['convirtiendo'])
+
+    def test_detalle_no_encola_si_el_pdf_ya_existe(self):
+        doc = self._doc_con_pdf_real('TI-FOR-V-11')
+        self.client.login(username='trab01', password='testpass123')
+
+        with patch('documentos.tasks.convertir_documento_a_pdf.delay') as delay:
+            resp = self.client.get(self._url(doc, ''))
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.context['convirtiendo'])
+        delay.assert_not_called()
+
+    def test_tarea_libera_el_candado_al_terminar(self):
+        doc = self._doc('TI-FOR-V-12', fantasma=True)
+        self.assertTrue(adquirir_candado_conversion(doc))
+
+        with patch('documentos.services.documentos_pdf.convertir_documento_sync',
+                   return_value=True):
+            convertir_documento_a_pdf(str(doc.uuid))
+
+        # Si la tarea lo liberó, se puede volver a adquirir de inmediato.
+        self.assertTrue(adquirir_candado_conversion(doc))
 
     def test_estado_conversion_espelja_el_disco(self):
         doc_fantasma = self._doc('TI-FOR-V-8', fantasma=True)

@@ -25,6 +25,48 @@ logger = logging.getLogger(__name__)
 # Formatos que convertimos a PDF (mismo criterio que documentos.tasks)
 FORMATOS_CONVERTIBLES = ('doc', 'docx', 'xls', 'xlsx', 'vsdx')
 
+# Tiempo que se considera "en curso" una conversión encolada. Evita que cada
+# apertura de la ficha vuelva a encolar la misma conversión (tormenta de
+# tareas) mientras la primera todavía está pendiente.
+CANDADO_CONVERSION_TTL = 300
+
+
+def _clave_candado_conversion(documento):
+    return f'conv-pdf:{documento.pk}'
+
+
+def adquirir_candado_conversion(documento):
+    """True si no había otra conversión en curso para ``documento``.
+
+    Fail-open: si la caché no está disponible se permite encolar, igual que
+    antes de existir el candado (la vista nunca debe romperse por Redis).
+    """
+    from django.core.cache import cache
+
+    try:
+        return cache.add(
+            _clave_candado_conversion(documento), '1', CANDADO_CONVERSION_TTL,
+        )
+    except Exception as exc:  # noqa: BLE001 - caché caída: degradar
+        logger.warning(
+            "Candado de conversión no disponible para %s: %s",
+            documento.codigo, exc,
+        )
+        return True
+
+
+def liberar_candado_conversion(documento):
+    """Borra el candado de conversión. Nunca lanza."""
+    from django.core.cache import cache
+
+    try:
+        cache.delete(_clave_candado_conversion(documento))
+    except Exception as exc:  # noqa: BLE001 - caché caída: no es crítico
+        logger.warning(
+            "No se pudo liberar el candado de conversión de %s: %s",
+            documento.codigo, exc,
+        )
+
 
 def archivo_existe(campo):
     """True si un FileField está seteado y su fichero existe en disco."""

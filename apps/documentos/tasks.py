@@ -17,7 +17,9 @@ def convertir_documento_a_pdf(self, documento_id):
     Se ejecuta asíncronamente en Celery Worker (la vista lo hace en línea).
     """
     from .models import Documento
-    from .services.documentos_pdf import convertir_documento_sync
+    from .services.documentos_pdf import (
+        convertir_documento_sync, liberar_candado_conversion,
+    )
 
     try:
         doc = Documento.objects.get(uuid=documento_id)
@@ -26,6 +28,9 @@ def convertir_documento_a_pdf(self, documento_id):
             return {'success': False, 'error': 'Formato no soportado para conversión'}
 
         if convertir_documento_sync(doc):
+            # La conversión terminó: la próxima apertura no debe quedar
+            # bloqueada por el candado puesto al encolar.
+            liberar_candado_conversion(doc)
             return {'success': True, 'pdf_path': doc.archivo_pdf.name}
 
         return {'success': False, 'error': 'LibreOffice no generó el PDF'}
