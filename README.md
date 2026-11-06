@@ -91,13 +91,21 @@ python manage.py makemigrations --check --dry-run --settings=polidoc.test_settin
 Todas las variables están documentadas en [`.env.example`](.env.example).
 Las más relevantes:
 
-- `SECRET_KEY`, `DEBUG`, `ALLOWED_HOSTS`.
+- `SECRET_KEY`, `DEBUG`, `ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`.
+- `LOGIN_MAX_INTENTOS`, `LOGIN_BLOQUEO_SEGUNDOS` (rate-limit de login).
+- `SECURE_SSL_REDIRECT`, `SESSION_COOKIE_SECURE`, `CSRF_COOKIE_SECURE`,
+  `SECURE_HSTS_SECONDS`, `SECURE_PROXY_SSL_HEADER` (HTTPS; apagados por defecto).
 - `DB_ENGINE` / `DB_NAME` (SQLite o PostgreSQL).
 - `MONGO_URI` (auditoría ISO).
 - `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`, `CACHE_REDIS_URL`.
 - `AUDIT_HMAC_KEY`, `AUDIT_FAIL_CLOSED`, `AUDIT_TRUSTED_PROXIES`.
 - `PAPEL_PDF_CONVERSION`, `PDF_QA_ADAPTATIVO`, `PDF_SALTO_DOCX`.
 - `IA_RESUMEN_HABILITADO`, `GEMINI_API_KEY`.
+
+Para la demo en LAN (desde otra máquina): agregar la IP del servidor en
+`ALLOWED_HOSTS` y `CSRF_TRUSTED_ORIGINS` (ver `.env.example`). La app corre
+detrás de nginx en el host (reverse proxy a `127.0.0.1:8001`), ver §28 de
+[CONTEXT.txt](CONTEXT.txt).
 
 ## Estructura
 
