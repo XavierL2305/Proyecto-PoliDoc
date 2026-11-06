@@ -23,8 +23,9 @@ from auditoria.middleware import resolver_ip_cliente
 logger = logging.getLogger('django_auth_ldap')
 
 # Rate-limiting de intentos de login fallidos (mitiga fuerza bruta).
-LOGIN_MAX_INTENTOS = 5
-LOGIN_BLOQUEO_SEGUNDOS = 300
+# Los valores viven en settings (por entorno); ver nota ahí sobre lockout de AD.
+LOGIN_MAX_INTENTOS = getattr(settings, 'LOGIN_MAX_INTENTOS', 3)
+LOGIN_BLOQUEO_SEGUNDOS = getattr(settings, 'LOGIN_BLOQUEO_SEGUNDOS', 300)
 MENSAJE_CREDENCIALES = 'Usuario o contraseña incorrectos.'
 
 

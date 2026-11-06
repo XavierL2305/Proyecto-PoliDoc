@@ -42,8 +42,15 @@ if not SECRET_KEY:
 # DEBUG = True
 DEBUG = os.getenv('DEBUG', 'False').lower() in ('true', '1', 't')
 
-ALLOWED_HOSTS = ["*"]
-# ALLOWED_HOSTS = [host.strip() for host in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')]
+ALLOWED_HOSTS = [
+    h.strip() for h in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',') if h.strip()
+]
+
+# Orígenes de confianza para CSRF (esquema + host, sin path). Requerido cuando
+# la app se sirve detrás de un proxy/nginx o en LAN con IP fija.
+CSRF_TRUSTED_ORIGINS = [
+    o.strip() for o in os.getenv('CSRF_TRUSTED_ORIGINS', '').split(',') if o.strip()
+]
 
 
 # Application definition
@@ -93,6 +100,31 @@ CORS_ALLOW_ALL_ORIGINS = True
 
 # Permitir iframes desde el mismo origen (para visor de documentos PDF)
 X_FRAME_OPTIONS = 'SAMEORIGIN'
+
+# =============================================================================
+# SEGURIDAD DE PRODUCCIÓN (HTTPS)
+# =============================================================================
+# Apagados por defecto para demo LAN por HTTP. Activar por .env cuando haya
+# TLS (self-signed o CA interna): SECURE_SSL_REDIRECT=True, etc.
+SECURE_SSL_REDIRECT = os.getenv('SECURE_SSL_REDIRECT', 'False').lower() in ('true', '1', 't')
+SESSION_COOKIE_SECURE = os.getenv('SESSION_COOKIE_SECURE', 'False').lower() in ('true', '1', 't')
+CSRF_COOKIE_SECURE = os.getenv('CSRF_COOKIE_SECURE', 'False').lower() in ('true', '1', 't')
+SECURE_HSTS_SECONDS = int(os.getenv('SECURE_HSTS_SECONDS', '0'))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = os.getenv('SECURE_HSTS_INCLUDE_SUBDOMAINS', 'False').lower() in ('true', '1', 't')
+SECURE_HSTS_PRELOAD = os.getenv('SECURE_HSTS_PRELOAD', 'False').lower() in ('true', '1', 't')
+# Requiere que el proxy envíe X-Forwarded-Proto: 'https' cuando TLS termina
+# en nginx (o el LB). Solo activar si hay proxy SSL delante de la app.
+_sec_proxy = os.getenv('SECURE_PROXY_SSL_HEADER', '')
+if _sec_proxy:
+    _header, _value = _sec_proxy.split(',', 1)
+    SECURE_PROXY_SSL_HEADER = (_header.strip(), _value.strip())
+
+# Rate-limiting de intentos de login fallidos (mitiga fuerza bruta).
+# Ojo: esto NO es la política de lockout de AD; cada intento fallido hace un
+# bind real contra el controlador. Mantener el umbral por debajo del lockout
+# de AD (típico 5) para no bloquear cuentas reales durante la demo.
+LOGIN_MAX_INTENTOS = int(os.getenv('LOGIN_MAX_INTENTOS', '3'))
+LOGIN_BLOQUEO_SEGUNDOS = int(os.getenv('LOGIN_BLOQUEO_SEGUNDOS', '300'))
 
 ROOT_URLCONF = 'polidoc.urls'
 
