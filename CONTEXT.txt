@@ -2854,7 +2854,18 @@ configuración corte el acceso (400 DisallowedHost / CSRF).
       durante la demo; pedir a IT el umbral real o exención de las
       cuentas de prueba. Subir LOGIN_MAX_INTENTOS solo tras confirmar
       con IT.
-    - AUDIT_TRUSTED_PROXIES vacío: la auditoría registra la IP que ve
-      el contenedor (gateway Docker, p. ej. 172.17.0.1); el throttle
-      sigue siendo por usuario (clave IP+usuario). Para atribución por
-      IP real del cliente, fijar la IP del proxy en .env.
+    - AUDIT_TRUSTED_PROXIES=172.18.0.1 (gateway de la red de compose;
+      obtener con `docker network inspect proyecto-polidoc_default`).
+      Así la auditoría y el throttle registran la IP real del cliente en
+      el tráfico que pasa por nginx (puerto 80). El middleware solo
+      confía en X-Forwarded-For si REMOTE_ADDR está en esa lista, y
+      recorre la lista de derecha a izquierda para descartar IPs
+      falseadas por el cliente (tests: AuditIPMiddlewareTest).
+    - LÍMITACIÓN CONOCIDA (8001 abierto en demo): las peticiones
+      directas a http://IP:8001 (sin nginx) siguen mostrando la gateway
+      172.18.0.1, no la IP del dispositivo. Además, al ser esa IP de
+      confianza, un cliente directo al 8001 podría falsear
+      X-Forwarded-For. Aceptable en demo; en producción cerrar el 8001
+      (bind a 127.0.0.1 o firewall) y exigir tráfico vía nginx.
+      Si la red de Docker se recrea (docker compose down), re-chequear
+      el gateway con docker network inspect y actualizar .env.
