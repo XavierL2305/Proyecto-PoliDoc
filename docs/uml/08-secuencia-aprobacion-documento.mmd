@@ -1,62 +1,94 @@
 %% POLIDOC — secuencia de aprobación de documento (creación/edición/versión).
 %% Regla: 1 paso si el solicitante ejerce jefatura (jefe natural o delegado
-%% vigente); 2 pasos secuenciales si no. El evaluador cae a GG si no hay jefe
-%% de departamento o si el jefe es el propio solicitante.
+%% vigente); 2 pasos secuenciales si no. El evaluador es el jefe del departamento
+%% de origen solo si existe y no es el solicitante; si no, cae al jefe de GG.
+%% Las PLANTILLAS usan un flujo simplificado (1 paso con el jefe del departamento).
+%% La versión (v1, v2...) la aplica el flujo de Planilla de Cambios (diagrama 09);
+%% aquí solo se sube la REVISIÓN ISO del documento.
 sequenceDiagram
   autonumber
   actor S as Solicitante
   participant SA as Servicio de aprobación
   participant E as Evaluador
   participant GG as Autorizador (GG)
+  participant ADM as Administrador
   participant DOC as Documento
   participant CEL as Celery
   participant AUD as Auditoría
 
-  S->>SA: Enviar documento a revisión
+  S->>SA: Enviar a revisión / subir plantilla
   SA->>SA: _es_jefe(usuario)<br/>(jefe natural o delegado vigente)
 
-  alt Ejerce jefatura
+  alt Documento es PLANTILLA (es_plantilla=True)
+    SA->>SA: _aprobador_plantilla(usuario, departamento)
+    alt Quien sube ejerce jefatura del departamento
+      SA->>SA: Auto-aprobación<br/>(autorizador, es_final=True)
+      SA->>DOC: aplicar_cambio() → activo
+      Note over SA: Evidencia = fila SolicitudAprobacionDocumento aprobada.<br/>No pasa por resolver_solicitud_documento (sin log ISO aquí).
+    else Hay jefe de departamento
+      SA->>E: Crear paso único (jefe del depto) + notificar
+      SA->>DOC: estado=en_revision
+      E->>SA: Aprobar paso único
+      SA->>DOC: aplicar_cambio() → activo
+    else Sin jefe de departamento
+      SA->>SA: estado=esperando, aprobador=None
+      SA->>DOC: estado=en_revision
+      SA->>ADM: Aviso a administradores<br/>(pueden tomar el paso)
+    end
+
+  else Ejerce jefatura (jefe/delegado)
+    SA->>DOC: estado=en_revision
     SA->>GG: Crear paso único<br/>rol=autorizador, es_final=True
     opt No hay jefe de GG
-      SA->>SA: estado=esperando, aprobador=None
-      SA->>AUD: Notificar a administradores
+      SA->>SA: estado=esperando, aprobador=None<br/>(sin aviso automático a administradores)
     end
+
   else No ejerce jefatura
-    SA->>SA: determinar_evaluador()
-    alt Sin jefe de depto o el jefe es el solicitante
-      SA->>SA: evaluador = jefe de GG
+    SA->>DOC: estado=en_revision
+    SA->>SA: determinar_evaluador()<br/>jefe del depto o jefe de GG
+    alt No hay evaluador (sin jefe de depto ni de GG)
+      SA->>SA: estado=esperando, aprobador=None<br/>(sin aviso automático a administradores)
+    else Hay evaluador
+      SA->>E: Crear paso evaluador<br/>rol=evaluador, es_final=False + notificar
     end
-    SA->>E: Crear paso evaluador<br/>rol=evaluador, es_final=False
     SA->>GG: Crear paso autorizador<br/>estado=esperando, es_final=True
   end
 
-  Note over S,GG: En el modo de 1 paso (solicitante jefe/delegado)<br/>se omite el bloque de evaluación.
+  Note over S,GG: En el modo de 1 paso (solicitante jefe/delegado)<br/>se omite la evaluación. Solo el autorizador (GG) activa el documento.
 
-  alt Flujo de dos pasos
-    E->>SA: Aprobar evaluación
-    SA->>GG: Activar autorizador (estado=pendiente)
-    SA->>AUD: registrar_log_iso(evaluación)
-  else Rechazo del evaluador
-    SA->>GG: Cancelar paso hermano
-    SA->>DOC: estado=borrador<br/>(creacion/edicion/version)
-    SA->>AUD: registrar_log_iso(rechazo)
-  end
+  alt Documento normal (no plantilla)
+    alt Flujo de dos pasos
+      E->>SA: Aprobar evaluación
+      Note over SA: El paso intermedio NO genera log ISO
+      SA->>GG: Activar autorizador (estado=pendiente) y notificar
+      opt Sin jefe de GG asignado
+        SA-->>S: Avisa "evaluado, pendiente de autorización"
+      end
+    else Rechazo del evaluador
+      SA->>GG: Cancelar paso hermano
+      SA->>DOC: estado=borrador<br/>(creacion/edicion/version)
+      SA->>AUD: registrar_log_iso(rechazo)
+    end
 
-  GG->>SA: Aprobar autorización final
-  SA->>DOC: aplicar_cambio() / activación
-  SA->>DOC: versión/revisión según planilla
-  SA->>CEL: Generar planilla SGC-FOR-001/005
-  alt Broker disponible
-    CEL-->>SA: PDF generado
-  else Broker caído
-    SA->>SA: fallback síncrono
-  end
-  SA->>AUD: registrar_log_iso(aprobación final)
-  SA-->>S: Documento activo / notificación
+    GG->>SA: Aprobar autorización final
+    SA->>DOC: aplicar_cambio() → activo y sube revisión ISO
+    SA->>SA: SolicitudCambio → aprobado
+    SA->>CEL: Encolar planilla SGC-FOR-001/005
+    alt Broker disponible
+      CEL-->>SA: Planilla generada
+    else Broker caído
+      SA->>SA: Fallback síncrono (_generar_en_linea)
+    end
+    SA->>AUD: registrar_log_iso(aprobación final)
+    SA-->>S: Documento activo / notificación
 
-  opt Rechazo del autorizador
-    SA->>SA: Cancelar paso hermano
-    SA->>DOC: estado=borrador<br/>(creacion/edicion/version)
-    SA->>AUD: registrar_log_iso(rechazo final)
-    SA-->>S: Notificación de rechazo
+    opt Rechazo del autorizador
+      SA->>SA: Revertir solicitud (el paso final no tiene hermano)
+      SA->>DOC: estado=borrador<br/>(creacion/edicion/version)
+      SA->>AUD: registrar_log_iso(rechazo final)
+      SA-->>S: Notificación de rechazo
+    end
+
+  else Plantilla (paso único del jefe del depto)
+    Note over SA,E: La resolución final (aprobación/rechazo) del jefe del<br/>departamento aplica el mismo cambio, sin Gerencia General.
   end
