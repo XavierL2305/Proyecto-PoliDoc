@@ -174,6 +174,33 @@
   [data-theme="dark"] .user-tag { background: #1E3A5F; color: #60A5FA; }
   [data-theme="dark"] .user-tag-remove { background: #60A5FA; color: #1E3A5F; }
   [data-theme="dark"] .user-tag-remove:hover { background: var(--color-danger); }
+
+  /* === DESTINATARIOS EXTERNOS === */
+  .externo-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    margin-bottom: 0.75rem;
+    background: var(--color-bg);
+  }
+  .externo-row input {
+    width: 100%; padding: 0.5rem 0.75rem;
+    font-size: 0.8125rem; font-family: inherit;
+    color: var(--color-text);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    outline: none;
+  }
+  .externo-row input:focus { border-color: var(--color-primary); }
+  .externo-row .full { grid-column: 1 / -1; }
+  .externo-row .externo-remove {
+    grid-column: 1 / -1; justify-self: end;
+    color: var(--color-danger); border-color: var(--color-danger);
+  }
 </style>
 {% endblock %}
 
@@ -257,6 +284,37 @@
         {% if form.usuarios.errors %}
         <span class="form-error"><i class="fa-solid fa-circle-exclamation"></i> {{ form.usuarios.errors.0 }}</span>
         {% endif %}
+      </div>
+
+      <!-- DESTINATARIOS EXTERNOS (SGC-FOR-002) -->
+      <div class="form-group">
+        <label class="form-label">Destinatarios externos</label>
+        <p class="help-text" style="margin-top:0; margin-bottom:0.75rem;">
+          Personas u organizaciones sin cuenta en POLIDOC. Recibirán una
+          invitación por correo para firmar la planilla SGC-FOR-002.
+        </p>
+        <div id="externos-list"></div>
+        <button type="button" class="btn btn--ghost" id="btn-add-externo" onclick="addExterno()">
+          <i class="fa-solid fa-user-plus"></i> Agregar externo
+        </button>
+        {{ form.externos }}
+        {% if form.externos.errors %}
+        <span class="form-error" style="display:block; margin-top:0.5rem;">
+          <i class="fa-solid fa-circle-exclamation"></i> {{ form.externos.errors.0 }}
+        </span>
+        {% endif %}
+      </div>
+
+      <!-- ADJUNTO PDF -->
+      <div class="form-group">
+        <label class="form-label" style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+          {{ form.adjuntar_pdf }}
+          Adjuntar el archivo al correo
+        </label>
+        <p class="help-text">
+          Apagado por defecto. Los documentos restringidos nunca se adjuntan y
+          los confidenciales solo si tienes autorización (queda registrado).
+        </p>
       </div>
 
       <!-- OBSERVACIONES -->
@@ -350,10 +408,69 @@
     });
   }
 
+  // === DESTINATARIOS EXTERNOS ===
+  const externosList = document.getElementById('externos-list');
+  const externosInput = document.getElementById('id_externos');
+
+  function addExterno(data) {
+    data = data || {};
+    const row = document.createElement('div');
+    row.className = 'externo-row';
+    const campos = [
+      { field: 'nombre', placeholder: 'Nombre y apellido *', type: 'text', full: true },
+      { field: 'cargo', placeholder: 'Cargo', type: 'text', full: false },
+      { field: 'organizacion', placeholder: 'Organización', type: 'text', full: false },
+      { field: 'email', placeholder: 'correo@ejemplo.com *', type: 'email', full: true },
+    ];
+    campos.forEach(({ field, placeholder, type, full }) => {
+      const inp = document.createElement('input');
+      inp.type = type;
+      inp.placeholder = placeholder;
+      inp.dataset.field = field;
+      if (full) inp.className = 'full';
+      inp.value = data[field] || '';
+      row.appendChild(inp);
+    });
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn--ghost externo-remove';
+    btn.innerHTML = '<i class="fa-solid fa-trash"></i> Quitar';
+    btn.addEventListener('click', () => row.remove());
+    row.appendChild(btn);
+    externosList.appendChild(row);
+    return row;
+  }
+
+  function syncExternos() {
+    const filas = [];
+    document.querySelectorAll('#externos-list .externo-row').forEach(row => {
+      const item = {};
+      row.querySelectorAll('input[data-field]').forEach(inp => {
+        item[inp.dataset.field] = inp.value.trim();
+      });
+      if (item.nombre || item.email || item.cargo || item.organizacion) {
+        filas.push(item);
+      }
+    });
+    externosInput.value = JSON.stringify(filas);
+    return filas;
+  }
+
+  // Restaura los externos enviados si el formulario vuelve con errores.
+  (function restaurarExternos() {
+    const crudo = externosInput.value;
+    if (!crudo) return;
+    try {
+      const filas = JSON.parse(crudo);
+      if (Array.isArray(filas)) filas.forEach(addExterno);
+    } catch (e) { /* JSON inválido: se ignora, el servidor mostrará el error */ }
+  })();
+
   document.getElementById('distribucion-form').addEventListener('submit', function(e) {
-    if (selectedUsers.size === 0) {
+    const externos = syncExternos();
+    if (selectedUsers.size === 0 && externos.length === 0) {
       e.preventDefault();
-      alert('Debes seleccionar al menos un destinatario.');
+      alert('Debes seleccionar al menos un destinatario (interno o externo).');
       return false;
     }
   });

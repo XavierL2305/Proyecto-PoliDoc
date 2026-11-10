@@ -1564,6 +1564,11 @@ def detalle_documento(request, tipo, documento_id):
         'usuario', 'distribuido_por', 'revocado_por',
     ).order_by('-fecha_distribucion')
 
+    firmas_pendientes = DistribucionDocumento.objects.filter(
+        documento=documento, usuario=request.user,
+        estado_firma='pendiente', revocado=False,
+    )
+
     solicitud_pendiente = any(
         s.estado == 'pendiente' for s in solicitudes_descarga_usuario
     )
@@ -1734,6 +1739,7 @@ def detalle_documento(request, tipo, documento_id):
         'departamentos_afectados': departamentos_afectados,
         'responsables': responsables,
         'distribuciones': distribuciones,
+        'firmas_pendientes': firmas_pendientes,
         'historial_estados': historial_estados,
         'aprobaciones_actuales': aprobaciones_actuales,
         'renovaciones': renovaciones,
@@ -4644,73 +4650,14 @@ def auditoria_reporte_descarga(request, reporte_uuid):
     )
 
 
-EMAIL_ATTACH_MAX_BYTES = 5 * 1024 * 1024
-
-
-def _enviar_email_distribucion(distribucion, documento, tipo, request):
-    """Envía el correo de una distribución. Retorna (ok, error).
-
-    - (True, '') si se envió.
-    - (False, 'sin_correo') si el destinatario no tiene email.
-    - (False, '<detalle>') si falló el envío.
-    """
-    from django.conf import settings
-    from django.core import mail
-    from django.urls import reverse
-
-    usuario = distribucion.usuario
-    if not usuario.email:
-        return False, 'sin_correo'
-
-    link = request.build_absolute_uri(
-        reverse('documentos:detalle', args=[tipo, documento.uuid])
-    )
-    asunto = f'[POLIDOC] Documento distribuido: {documento.codigo} - {documento.nombre}'
-    lineas = [
-        f'Hola {usuario.get_full_name() or usuario.username},',
-        '',
-        'Se te ha distribuido el siguiente documento:',
-        '',
-        f'  Código: {documento.codigo}',
-        f'  Nombre: {documento.nombre}',
-        f'  Versión: {documento.version_actual}',
-        f'  Departamento: {documento.departamento}',
-        '',
-        f'Puedes verlo en: {link}',
-        '',
-        f'Distribuido por: {request.user.get_full_name() or request.user.username}',
-    ]
-    if distribucion.observaciones:
-        lineas += ['', f'Observaciones: {distribucion.observaciones}']
-    lineas += ['', '— POLIDOC']
-
-    message = mail.EmailMessage(
-        asunto, '\n'.join(lineas),
-        settings.DEFAULT_FROM_EMAIL, [usuario.email],
-    )
-    archivo = documento.archivo
-    if archivo and archivo.name:
-        try:
-            if archivo.size <= EMAIL_ATTACH_MAX_BYTES:
-                message.attach_file(archivo.path)
-        except (OSError, ValueError):
-            pass
-
-    try:
-        mail.mailers.default.send_messages([message])
-        return True, ''
-    except Exception as exc:
-        return False, str(exc)
-
-
 def _enviar_email_revocacion(distribucion, documento, tipo, request):
     """Envía el correo de revocación de una distribución. Retorna (ok, error)."""
     from django.conf import settings
     from django.core import mail
     from django.urls import reverse
 
-    usuario = distribucion.usuario
-    if not usuario.email:
+    email_destino = distribucion.destinatario_email
+    if not email_destino:
         return False, 'sin_correo'
 
     link = request.build_absolute_uri(
@@ -4718,7 +4665,7 @@ def _enviar_email_revocacion(distribucion, documento, tipo, request):
     )
     asunto = f'[POLIDOC] Distribución revocada: {documento.codigo} - {documento.nombre}'
     lineas = [
-        f'Hola {usuario.get_full_name() or usuario.username},',
+        f'Hola {distribucion.destinatario_nombre},',
         '',
         'Se ha revocado tu distribución del siguiente documento:',
         '',
@@ -4740,7 +4687,7 @@ def _enviar_email_revocacion(distribucion, documento, tipo, request):
 
     message = mail.EmailMessage(
         asunto, '\n'.join(lineas),
-        settings.DEFAULT_FROM_EMAIL, [usuario.email],
+        settings.DEFAULT_FROM_EMAIL, [email_destino],
     )
 
     try:
@@ -4772,68 +4719,34 @@ def distribuir_documento(request, tipo, documento_id):
         messages.error(request, 'Solo se pueden distribuir documentos activos.')
         return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
     from .forms import DistribucionDocumentoForm
-    from django.contrib.auth.models import User as UserModel
-    from autenticacion.models import Notificacion
     if request.method == 'POST':
         form = DistribucionDocumentoForm(request.POST)
         if form.is_valid():
             metodo = form.cleaned_data['metodo']
             observaciones = form.cleaned_data['observaciones']
             usuarios = form.cleaned_data['usuarios']
-            if not usuarios:
+            externos = getattr(form, 'externos_parsed', None) or []
+            if not usuarios and not externos:
                 messages.error(request, 'Debes seleccionar al menos un destinatario.')
                 return redirect('documentos:distribuir_documento', tipo=tipo, documento_id=documento.uuid)
-            count = 0
-            sin_correo = 0
-            fallidos = 0
-            for usuario in usuarios:
-                dist = DistribucionDocumento.objects.create(
-                    documento=documento, usuario=usuario, metodo=metodo,
-                    distribuido_por=request.user, observaciones=observaciones
-                )
-                try:
-                    from auditoria.middleware import get_client_ip
-                    from auditoria.services import registrar_distribucion
-                    registrar_distribucion(
-                        usuario=request.user,
-                        recurso_tipo=documento.tipo_id or '',
-                        recurso_id=str(documento.uuid),
-                        destinatario=usuario.username,
-                        metodo=metodo,
-                        codigo=documento.codigo,
-                        distribucion_id=dist.id,
-                        ip_address=get_client_ip(),
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.error("Auditoría de distribución falló: %s", exc)
-                Notificacion.objects.create(
-                    usuario=usuario, titulo='Documento Distribuido',
-                    mensaje=f'Se le ha distribuido el documento "{documento.nombre}" ({documento.codigo}).',
-                    tipo='documento_distribuido',
-                    url_accion=f'/documentos/{tipo}/{documento.uuid}/',
-                    departamento=documento.departamento,
-                    documento=documento
-                )
-                if metodo == 'email':
-                    ok, error = _enviar_email_distribucion(dist, documento, tipo, request)
-                    if ok:
-                        dist.enviado = True
-                        dist.save(update_fields=['enviado'])
-                    elif error == 'sin_correo':
-                        sin_correo += 1
-                    else:
-                        dist.error = error
-                        dist.save(update_fields=['error'])
-                        fallidos += 1
-                count += 1
-            messages.success(request, f'Documento distribuido a {count} usuario(s) correctamente.')
-            if metodo == 'email' and sin_correo:
-                messages.warning(
-                    request,
-                    f'{sin_correo} destinatario(s) no tienen correo; no se les envió email.'
-                )
-            if metodo == 'email' and fallidos:
-                messages.warning(request, f'{fallidos} correo(s) no se pudieron enviar.')
+            from .services.distribucion import crear_distribuciones
+            resultado = crear_distribuciones(
+                documento,
+                internos=usuarios,
+                externos=externos,
+                metodo=metodo,
+                observaciones=observaciones,
+                distribuido_por=request.user,
+                adjuntar_pdf=form.cleaned_data.get('adjuntar_pdf', False),
+                request=request,
+                tipo=tipo,
+            )
+            messages.success(
+                request,
+                f'Documento distribuido a {resultado.creadas} destinatario(s) correctamente.'
+            )
+            for aviso in resultado.mensajes:
+                messages.warning(request, aviso)
             return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
     else:
         form = DistribucionDocumentoForm()
@@ -4922,11 +4835,11 @@ def revocar_distribucion(request, tipo, documento_id, dist_id):
             recurso_nombre=documento.nombre,
             detalles={
                 'dist_id': distribucion.id,
-                'destinatario': distribucion.usuario.username,
+                'destinatario': distribucion.destinatario_nombre,
                 'motivo': motivo,
             },
             resultado_exitoso=True,
-            resultado_mensaje=f'Distribución #{distribucion.id} revocada: {distribucion.usuario.username} {motivo}',
+            resultado_mensaje=f'Distribución #{distribucion.id} revocada: {distribucion.destinatario_nombre} {motivo}',
             ip_address=get_client_ip(),
             user_agent=request.META.get('HTTP_USER_AGENT'),
         )
@@ -4934,7 +4847,221 @@ def revocar_distribucion(request, tipo, documento_id, dist_id):
         logger.error("Auditoría revocación de distribución: %s", exc)
     messages.success(
         request,
-        f'Distribución a {distribucion.usuario.get_full_name() or distribucion.usuario.username} revocada correctamente.',
+        f'Distribución a {distribucion.destinatario_nombre} revocada correctamente.',
+    )
+    return redirect('documentos:historial_distribucion', tipo=tipo, documento_id=documento.uuid)
+
+
+# =============================================================================
+# FIRMA ELECTRÓNICA DE DISTRIBUCIÓN (SES) Y PLANILLA SGC-FOR-002
+# =============================================================================
+
+def _puede_gestionar_distribucion(user, documento):
+    """Admin, jefe efectivo del depto o propietario."""
+    return puede_revocar_distribucion(user, documento)
+
+
+@login_required(login_url='/login/')
+def descargar_planilla_lote(request, tipo, documento_id, lote):
+    """Descarga el XLSX de la planilla SGC-FOR-002 de un lote de distribución."""
+    from django.http import HttpResponse
+    from .permissions import puede_ver_documento
+    from .services.distribucion import exportar_planilla_lote
+
+    documento = get_documento(tipo, documento_id)
+    if documento is None or not puede_ver_documento(request.user, documento):
+        messages.error(request, 'Documento no encontrado o sin permisos.')
+        return redirect('documentos:mis_documentos')
+
+    es_gestor = _puede_gestionar_distribucion(request.user, documento)
+    es_destinatario = DistribucionDocumento.objects.filter(
+        lote=lote, documento=documento, usuario=request.user,
+    ).exists()
+    if not (es_gestor or es_destinatario):
+        messages.error(request, 'No tienes permisos para descargar esta planilla.')
+        return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
+
+    try:
+        contenido = exportar_planilla_lote(lote)
+    except ValueError:
+        messages.error(request, 'El formato SGC-FOR-002 no está disponible.')
+        return redirect('documentos:historial_distribucion', tipo=tipo, documento_id=documento.uuid)
+
+    try:
+        from auditoria.middleware import get_client_ip
+        from auditoria.services import registrar_log_iso
+        registrar_log_iso(
+            usuario=request.user,
+            accion_tipo='descarga',
+            accion_categoria='documento',
+            recurso_tipo=tipo,
+            recurso_id=str(documento.uuid),
+            recurso_codigo=documento.codigo,
+            recurso_nombre=documento.nombre,
+            detalles={'planilla_lote': str(lote)},
+            resultado_exitoso=True,
+            resultado_mensaje='Descarga de planilla SGC-FOR-002',
+            ip_address=get_client_ip(),
+            user_agent=request.META.get('HTTP_USER_AGENT'),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error('Auditoría descarga planilla: %s', exc)
+
+    nombre = f'SGC-FOR-002_{documento.codigo}_{lote}.xlsx'
+    response = HttpResponse(
+        contenido,
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    response['Content-Disposition'] = f'attachment; filename="{nombre}"'
+    return response
+
+
+@login_required(login_url='/login/')
+def firmar_distribucion(request, tipo, documento_id, dist_id):
+    """Firma interna de una distribución: OTP al correo + PIN local."""
+    from .services import firmas
+
+    distribucion = get_object_or_404(
+        DistribucionDocumento, id=dist_id, documento__uuid=documento_id,
+    )
+    documento = distribucion.documento
+    es_admin = request.user.perfil.es_administrador
+    if distribucion.usuario_id != request.user.id and not es_admin:
+        messages.error(request, 'Esta distribución no te pertenece.')
+        return redirect('documentos:mis_documentos')
+
+    if distribucion.revocado:
+        messages.error(request, 'La distribución fue revocada; no se puede firmar.')
+        return redirect('documentos:detalle', tipo=documento.tipo_id, documento_id=documento.uuid)
+
+    firma = distribucion.firmas.filter(tipo='interna').first()
+    if firma is None:
+        messages.info(request, 'Esta distribución no requiere firma electrónica.')
+        return redirect('documentos:detalle', tipo=documento.tipo_id, documento_id=documento.uuid)
+    if firma.estado != 'pendiente':
+        messages.info(request, f'La firma ya está registrada ({firma.get_estado_display()}).')
+        return redirect('documentos:detalle', tipo=documento.tipo_id, documento_id=documento.uuid)
+
+    if request.method == 'POST':
+        accion = request.POST.get('accion', '')
+        try:
+            if accion == 'crear_pin':
+                firmas.establecer_pin(
+                    request.user,
+                    request.POST.get('pin', ''),
+                    request.POST.get('pin2', ''),
+                )
+                messages.success(request, 'PIN de firma creado correctamente.')
+            elif accion == 'enviar_otp':
+                firmas.generar_otp(firma, request)
+                messages.success(
+                    request,
+                    'Enviamos un código de verificación a tu correo '
+                    f'(válido {firmas.OTP_TTL_MINUTOS} minutos).',
+                )
+            elif accion == 'firmar':
+                firmas.firmar_interna(
+                    firma, request.user,
+                    request.POST.get('codigo', ''),
+                    request.POST.get('pin', ''),
+                    request,
+                )
+                messages.success(request, 'Firma electrónica registrada correctamente.')
+                return redirect(
+                    'documentos:detalle',
+                    tipo=documento.tipo_id, documento_id=documento.uuid,
+                )
+            else:
+                messages.error(request, 'Acción de firma no reconocida.')
+        except firmas.ErrorFirma as exc:
+            messages.error(request, str(exc))
+        return redirect(
+            'documentos:firmar_distribucion',
+            tipo=tipo, documento_id=documento.uuid, dist_id=distribucion.id,
+        )
+
+    return render(request, 'documentos/firmar_distribucion.html', {
+        'distribucion': distribucion,
+        'documento': documento,
+        'tipo': documento.tipo_id,
+        'firma': firma,
+        'credencial': firmas.obtener_credencial(request.user),
+    })
+
+
+def firmar_invitacion(request, token):
+    """Firma externa vía invitación tokenizada (sin sesión de POLIDOC)."""
+    from .services import firmas
+
+    invitacion = firmas.buscar_invitacion(token)
+    if invitacion is None:
+        return render(request, 'documentos/firmar_invitacion.html', {
+            'invalida': True,
+        }, status=404)
+
+    firma = invitacion.firma
+    distribucion = firma.distribucion
+    documento = distribucion.documento
+
+    if not invitacion.esta_vigente:
+        if not invitacion.usado and firma.estado == 'pendiente':
+            firmas.marcar_expirada(invitacion)
+        return render(request, 'documentos/firmar_invitacion.html', {
+            'expirada': True, 'invitacion': invitacion,
+            'firma': firma, 'documento': documento,
+        })
+
+    error = ''
+    if request.method == 'POST':
+        try:
+            firmas.firmar_externa(
+                invitacion, request,
+                consentimiento=request.POST.get('consentimiento') == 'on',
+            )
+            return render(request, 'documentos/firmar_invitacion.html', {
+                'firmada': True, 'invitacion': invitacion,
+                'firma': firma, 'documento': documento,
+            })
+        except firmas.ErrorFirma as exc:
+            error = str(exc)
+
+    return render(request, 'documentos/firmar_invitacion.html', {
+        'invitacion': invitacion, 'firma': firma,
+        'documento': documento, 'distribucion': distribucion,
+        'error': error,
+    })
+
+
+@login_required(login_url='/login/')
+def alternar_retiro_version(request, tipo, documento_id, dist_id):
+    """Marca/desmarca que el destinatario retiró la versión anterior (FOR-002)."""
+    from .services.distribucion import generar_planilla_lote
+
+    if request.method != 'POST':
+        return redirect('documentos:historial_distribucion', tipo=tipo, documento_id=documento_id)
+    documento = get_documento(tipo, documento_id)
+    if documento is None:
+        messages.error(request, 'Documento no encontrado.')
+        return redirect('documentos:mis_documentos')
+    if not _puede_gestionar_distribucion(request.user, documento):
+        messages.error(request, 'No tienes permisos para modificar la distribución.')
+        return redirect('documentos:historial_distribucion', tipo=tipo, documento_id=documento.uuid)
+
+    distribucion = get_object_or_404(
+        DistribucionDocumento, id=dist_id, documento=documento,
+    )
+    if distribucion.revocado:
+        messages.error(request, 'La distribución está revocada.')
+        return redirect('documentos:historial_distribucion', tipo=tipo, documento_id=documento.uuid)
+
+    distribucion.retiro_version_anterior = not distribucion.retiro_version_anterior
+    distribucion.save(update_fields=['retiro_version_anterior'])
+    if distribucion.lote:
+        generar_planilla_lote(distribucion.lote)
+    messages.success(
+        request,
+        'Retiro de la versión anterior '
+        + ('registrado.' if distribucion.retiro_version_anterior else 'desmarcado.'),
     )
     return redirect('documentos:historial_distribucion', tipo=tipo, documento_id=documento.uuid)
 

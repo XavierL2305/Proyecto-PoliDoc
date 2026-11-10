@@ -16,6 +16,9 @@
   .app-delegacion i { color: var(--color-primary, #005A9C); }
   .app-delegacion .app-delegacion-link { margin-left: auto; font-weight: 600; color: var(--color-primary, #005A9C);
     text-decoration: underline; text-underline-offset: 2px; }
+  .fa-chart-pie span{
+    white-space: nowrap;
+  }
   @media (max-width: 639px) { .app-delegacion { margin: 1rem 1rem 0; } .app-delegacion .app-delegacion-link { margin-left: 0; } }
   /* Entrada escalonada de las vistas: hijos directos de .page-content. */
   @media (prefers-reduced-motion: no-preference) {
@@ -45,7 +48,7 @@
       <a href="{% url 'documentos:mis_documentos' %}" class="sidebar-item {% if request.resolver_match.url_name == 'mis_documentos' %}active{% endif %}">
         <i class="fa-solid fa-file-lines"></i><span>Mis Documentos</span>
       </a>
-      <a href="{% url 'documentos:seleccionar_tipo' %}" class="sidebar-item sidebar-item--primary {% if request.resolver_match.url_name == 'seleccionar_tipo' %}active{% endif %}" data-motion="new">
+      <a href="{% url 'documentos:seleccionar_tipo' %}" class="sidebar-item sidebar-item--primary {% if request.resolver_match.url_name == 'seleccionar_tipo' %}active{% endif %}">
         <i class="fa-solid fa-plus-circle"></i><span>Nuevo Documento</span>
       </a>
       {% if user.perfil.ejerce_jefatura or user.perfil.es_administrador %}

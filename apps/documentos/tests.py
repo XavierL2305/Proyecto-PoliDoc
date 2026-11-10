@@ -2088,14 +2088,17 @@ class DistribucionEmailTest(BaseDocumentosTest):
         self.user_coordinador.email = 'coord01@example.com'
         self.user_coordinador.save(update_fields=['email'])
 
-    def _post(self, usuarios, metodo='email'):
+    def _post(self, usuarios, metodo='email', adjuntar_pdf=False):
+        datos = {
+            'metodo': metodo,
+            'observaciones': 'prueba',
+            'usuarios': ','.join(str(u.id) for u in usuarios),
+        }
+        if adjuntar_pdf:
+            datos['adjuntar_pdf'] = 'on'
         return self.client.post(
             f'/documentos/procedimientos_generales/{self.doc_activo.uuid}/distribuir/',
-            {
-                'metodo': metodo,
-                'observaciones': 'prueba',
-                'usuarios': ','.join(str(u.id) for u in usuarios),
-            },
+            datos,
         )
 
     def test_email_se_envia_y_registra(self):
@@ -2129,9 +2132,42 @@ class DistribucionEmailTest(BaseDocumentosTest):
         from django.core import mail
         self.doc_activo.archivo = SimpleUploadedFile('doc.pdf', b'contenido')
         self.doc_activo.save(update_fields=['archivo'])
-        self._post([self.user_coordinador])
+        self._post([self.user_coordinador], adjuntar_pdf=True)
         self.assertEqual(len(mail.outbox), 1)
         self.assertEqual(len(mail.outbox[0].attachments), 1)
+        dist = DistribucionDocumento.objects.get(
+            documento=self.doc_activo, usuario=self.user_coordinador
+        )
+        self.assertTrue(dist.adjunto_pdf_enviado)
+
+    def test_adjunto_apagado_por_defecto(self):
+        """El adjunto es opt-in: sin marcar `adjuntar_pdf` no se envía."""
+        from django.core import mail
+        self.doc_activo.archivo = SimpleUploadedFile('doc.pdf', b'contenido')
+        self.doc_activo.save(update_fields=['archivo'])
+        self._post([self.user_coordinador])
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(len(mail.outbox[0].attachments), 0)
+        dist = DistribucionDocumento.objects.get(
+            documento=self.doc_activo, usuario=self.user_coordinador
+        )
+        self.assertFalse(dist.adjunto_pdf_enviado)
+        self.assertEqual(dist.motivo_sin_adjunto, 'Adjunto no solicitado')
+
+    def test_restringido_nunca_se_adjunta(self):
+        """Aun pidiendo adjunto, un documento restringido no viaja por correo."""
+        from django.core import mail
+        self.doc_activo.archivo = SimpleUploadedFile('doc.pdf', b'contenido')
+        self.doc_activo.clasificacion = 'restringido'
+        self.doc_activo.save(update_fields=['archivo', 'clasificacion'])
+        self._post([self.user_coordinador], adjuntar_pdf=True)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(len(mail.outbox[0].attachments), 0)
+        dist = DistribucionDocumento.objects.get(
+            documento=self.doc_activo, usuario=self.user_coordinador
+        )
+        self.assertFalse(dist.adjunto_pdf_enviado)
+        self.assertIn('restringido', dist.motivo_sin_adjunto.lower())
 
 
 # =============================================================================

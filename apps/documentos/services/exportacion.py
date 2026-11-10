@@ -37,7 +37,7 @@ def _cell_col_idx(ref):
     return _col_to_idx(col)
 
 
-def _build_inline_cell(ref, text, style='15'):
+def _build_inline_cell(ref, text, style='0'):
     """Build an inlineStr cell element."""
     cell = etree.Element(f'{{{NS["s"]}}}c')
     cell.set('r', ref)
@@ -65,11 +65,16 @@ def _resolve_shared_strings(zf):
 
 
 def _get_existing_style(sheet_xml, ref):
-    """Find existing style index for a cell ref in sheet XML."""
+    """Find existing style index for a cell ref in sheet XML.
+
+    El fallback es ``'0'`` (estilo por defecto de ``cellXfs``): usar un índice
+    fijo como ``'15'`` rompía plantillas mínimas, donde ese índice no existe,
+    y dejaba el XLSX ilegible con ``openpyxl``.
+    """
     for c in sheet_xml.iter(f'{{{NS["s"]}}}c'):
         if c.get('r') == ref:
-            return c.get('s', '15')
-    return '15'
+            return c.get('s', '0')
+    return '0'
 
 
 def _get_existing_label(sheet_xml, ref, shared_strings):
@@ -107,13 +112,31 @@ def exportar_xlsx(solicitud):
     """
     from ..models import respuestas_planilla_actual
 
-    plantilla = solicitud.formato.plantilla_xlsx
+    return exportar_xlsx_formato(solicitud.formato, respuestas_planilla_actual(solicitud))
+
+
+def exportar_xlsx_formato(formato, respuestas):
+    """Genera XLSX lleno dado un ``formato`` y sus ``respuestas``.
+
+    Camino genérico usado también por formatos que NO cuelgan de una
+    ``SolicitudCambio`` (p. ej. la planilla SGC-FOR-002 de un lote de
+    distribución).
+
+    Args:
+        formato: Objeto ``Formato`` con ``plantilla_xlsx`` y campos.
+        respuestas: Dict ``{campo.clave: valor}`` ya resuelto.
+
+    Returns:
+        bytes: El contenido XLSX generado.
+
+    Raises:
+        ValueError: Si el formato no tiene plantilla XLSX.
+    """
+    plantilla = formato.plantilla_xlsx
     if not plantilla:
         raise ValueError('El formato no tiene plantilla XLSX')
 
     plantilla_path = plantilla.path
-    respuestas = respuestas_planilla_actual(solicitud)
-    formato = solicitud.formato
 
     with zipfile.ZipFile(plantilla_path, 'r') as zf_in:
         buf = io.BytesIO()
@@ -144,6 +167,15 @@ def _patch_sheet1(sheet_data, formato, respuestas, shared_strings):
         if valor is None or valor == '':
             continue
 
+        if campo.tipo == 'select':
+            marca = _marca_de_opcion(campo, valor)
+            if marca:
+                ref, texto_marca = marca
+                style = _get_existing_style(root, ref)
+                cell = _build_inline_cell(ref, texto_marca, style)
+                _replace_or_add_cell(root, cell, ref)
+                continue
+
         if campo.tipo in ('texto', 'fecha', 'select') and campo.celda_excel:
             ref = campo.celda_excel.strip().split(':')[0]
             style = _get_existing_style(root, ref)
@@ -167,20 +199,94 @@ def _patch_sheet1(sheet_data, formato, respuestas, shared_strings):
         elif campo.tipo == 'tabla' and valor:
             config = campo.config_tabla or {}
             fila_inicio = config.get('fila_inicio', 36)
+            #: Tope de filas de la tabla en la plantilla (p. ej. 33 en el
+            #: FOR-002). Por defecto 6, que es el de la planilla FOR-005.
+            max_filas = config.get('max_filas', 6)
             columnas = config.get('columnas', [])
-            for i, fila_data in enumerate(valor[:6]):
+            for i, fila_data in enumerate(valor[:max_filas]):
                 row_num = fila_inicio + i
                 for col_def in columnas:
-                    celda_col = col_def.get('celda', '')
                     cell_val = fila_data.get(col_def.get('clave', ''), '')
-                    if not celda_col or not cell_val:
+                    if cell_val in (None, ''):
                         continue
-                    ref = f'{celda_col}{row_num}'
-                    style = _get_existing_style(root, ref)
-                    cell = _build_inline_cell(ref, str(cell_val), style)
-                    _replace_or_add_cell(root, cell, ref)
+                    _escribir_columna_tabla(
+                        root, col_def, row_num, cell_val,
+                    )
 
     return etree.tostring(root, xml_declaration=True, encoding='UTF-8', standalone=True)
+
+
+def _escribir_columna_tabla(root, col_def, row_num, cell_val):
+    """Escribe una celda de columna de tabla según su definición.
+
+    Dos formas soportadas en ``col_def``:
+
+    * ``{'celda': 'A'}`` — valor normal en ``A{row}``.
+    * ``{'tipo': 'si_no', 'celda_si': 'G', 'celda_no': 'H'}`` — escribe una
+      marca (``X``) en la columna que corresponda según el valor booleano
+      (``si``/``no``, ``True``/``False``, ``1``/``0``). Es el caso del
+      RETIRO DE LA VERSIÓN ANTERIOR del SGC-FOR-002.
+    """
+    if col_def.get('tipo') == 'si_no':
+        marca = col_def.get('marca', 'X')
+        ref_col = _columna_si_no(col_def, cell_val)
+        if not ref_col:
+            return
+        ref = f'{ref_col}{row_num}'
+    else:
+        ref_col = col_def.get('celda', '')
+        if not ref_col:
+            return
+        ref = f'{ref_col}{row_num}'
+        marca = str(cell_val)
+
+    style = _get_existing_style(root, ref)
+    cell = _build_inline_cell(ref, marca, style)
+    _replace_or_add_cell(root, cell, ref)
+
+
+def _columna_si_no(col_def, valor):
+    """Devuelve la columna (``G``/``H``…) que corresponde a un valor sí/no.
+
+    Acepta ``'si'``/``'no'`` (cualquier variación de mayúsculas y acentos),
+    ``True``/``False`` y ``1``/``0``. Devuelve ``''`` si el valor no es
+    reconocible (no se marca nada en vez de marcar mal).
+    """
+    if isinstance(valor, bool):
+        es_si = valor
+    else:
+        texto = str(valor).strip().lower()
+        if texto in ('si', 'sí', 's', '1', 'true', 'x'):
+            es_si = True
+        elif texto in ('no', 'n', '0', 'false'):
+            es_si = False
+        else:
+            return ''
+    clave = 'celda_si' if es_si else 'celda_no'
+    return (col_def.get(clave) or '').strip()
+
+
+def _marca_de_opcion(campo, valor):
+    """Si la opción elegida define ``celda_marca``, devuelve ``(ref, marca)``.
+
+    Permite marcar una casilla de la plantilla con una X en vez de escribir
+    el texto (p. ej. ORIGEN EXT/INT del SGC-FOR-002: ``C12``/``D12``). Las
+    opciones sin ``celda_marca`` no se ven afectadas: los formatos existentes
+    (FOR-005) que solo declaran ``celda``/``shape`` siguen igual.
+    """
+    if not valor or not campo.opciones:
+        return None
+    texto = str(valor).strip().lower()
+    for opt in campo.opciones:
+        if not isinstance(opt, dict):
+            continue
+        if str(opt.get('valor', '')).strip().lower() != texto:
+            continue
+        ref = str(opt.get('celda_marca') or '').strip()
+        if not ref:
+            return None
+        return ref, str(opt.get('marca') or 'X')
+    return None
 
 
 def _replace_or_add_cell(root, new_cell, ref):

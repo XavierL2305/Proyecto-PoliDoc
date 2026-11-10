@@ -61,16 +61,24 @@
         <th>Destinatario</th>
         <th>Fecha</th>
         <th>Método</th>
-        <th>Estado</th>
+        <th>Constancia / Firma</th>
         <th>Distribuido por</th>
         <th>Observaciones</th>
-        {% if puede_revocar %}<th>Acciones</th>{% endif %}
+        <th>Acciones</th>
       </tr>
     </thead>
     <tbody>
       {% for dist in distribuciones %}
       <tr{% if dist.revocado %} style="opacity: 0.6;"{% endif %}>
-        <td><strong>{{ dist.usuario.get_full_name|default:dist.usuario.username }}</strong></td>
+        <td>
+          <strong>{{ dist.destinatario_nombre }}</strong>
+          {% if dist.es_externo %}
+            <span class="badge badge--impreso" style="margin-left:0.35rem;">Externo</span>
+            {% if dist.organizacion_externa %}
+            <div style="font-size: 0.72rem; color: var(--color-muted);">{{ dist.organizacion_externa }}</div>
+            {% endif %}
+          {% endif %}
+        </td>
         <td>{{ dist.fecha_distribucion|date:"d/m/Y H:i" }}</td>
         <td>
           <span class="badge badge--{{ dist.metodo }}">{{ dist.get_metodo_display }}</span>
@@ -88,26 +96,57 @@
             {% endif %}
           {% else %}
             <span class="badge badge--activa">Activa</span>
+            {% if dist.estado_firma == 'firmada' %}
+              <span class="badge badge--email" style="margin-left:0.25rem;">Firmada</span>
+            {% elif dist.estado_firma == 'pendiente' %}
+              <span class="badge badge--impreso" style="margin-left:0.25rem;">Firma pendiente</span>
+            {% elif dist.estado_firma == 'expirada' %}
+              <span class="badge badge--revocada" style="margin-left:0.25rem;">Firma expirada</span>
+            {% endif %}
+            <div style="font-size: 0.72rem; color: var(--color-muted); margin-top: 0.25rem;">
+              Constancia: {{ dist.get_constancia_display }}
+              {% if dist.adjunto_pdf_enviado %} · PDF adjunto{% endif %}
+              {% if dist.retiro_version_anterior %} · retiró versión anterior{% endif %}
+            </div>
           {% endif %}
         </td>
         <td>{{ dist.distribuido_por.get_full_name|default:dist.distribuido_por.username }}</td>
         <td>{{ dist.observaciones|default:"-" }}</td>
-        {% if puede_revocar %}
         <td>
-          {% if not dist.revocado %}
-          <form method="post" action="{% url 'documentos:revocar_distribucion' tipo=tipo documento_id=documento.uuid dist_id=dist.id %}" style="display:inline;" onsubmit="return confirm('¿Estás seguro de revocar esta distribución?')">
-            {% csrf_token %}
-            <button type="submit" class="btn btn--ghost btn--sm" style="color: var(--color-danger); font-size: 0.75rem;">
-              <i class="fa-solid fa-ban"></i> Revocar
-            </button>
-          </form>
-          {% endif %}
+          <div style="display:flex; flex-direction:column; gap:0.35rem; align-items:flex-start;">
+            {% if dist.usuario_id == request.user.id and dist.estado_firma == 'pendiente' and not dist.revocado %}
+            <a href="{% url 'documentos:firmar_distribucion' tipo=tipo documento_id=documento.uuid dist_id=dist.id %}"
+               class="btn btn--primary btn--sm" style="font-size: 0.75rem;">
+              <i class="fa-solid fa-signature"></i> Firmar
+            </a>
+            {% endif %}
+            {% if puede_revocar and not dist.revocado %}
+            <form method="post" action="{% url 'documentos:alternar_retiro_version' tipo=tipo documento_id=documento.uuid dist_id=dist.id %}" style="display:inline;">
+              {% csrf_token %}
+              <button type="submit" class="btn btn--ghost btn--sm" style="font-size: 0.72rem;">
+                <i class="fa-solid fa-rotate-left"></i>
+                {% if dist.retiro_version_anterior %}Desmarcar retiro{% else %}Marcar retiro{% endif %}
+              </button>
+            </form>
+            <form method="post" action="{% url 'documentos:revocar_distribucion' tipo=tipo documento_id=documento.uuid dist_id=dist.id %}" style="display:inline;" onsubmit="return confirm('¿Estás seguro de revocar esta distribución?')">
+              {% csrf_token %}
+              <button type="submit" class="btn btn--ghost btn--sm" style="color: var(--color-danger); font-size: 0.75rem;">
+                <i class="fa-solid fa-ban"></i> Revocar
+              </button>
+            </form>
+            {% endif %}
+            {% if dist.lote and puede_revocar or dist.lote and dist.usuario_id == request.user.id %}
+            <a href="{% url 'documentos:descargar_planilla_lote' tipo=tipo documento_id=documento.uuid lote=dist.lote %}"
+               class="btn btn--ghost btn--sm" style="font-size: 0.72rem;">
+              <i class="fa-solid fa-file-excel"></i> Planilla FOR-002
+            </a>
+            {% endif %}
+          </div>
         </td>
-        {% endif %}
       </tr>
       {% empty %}
       <tr>
-        <td colspan="{% if puede_revocar %}7{% else %}6{% endif %}" style="text-align: center; padding: 2rem; color: var(--color-muted);">
+        <td colspan="7" style="text-align: center; padding: 2rem; color: var(--color-muted);">
           Este documento aún no ha sido distribuido.
         </td>
       </tr>

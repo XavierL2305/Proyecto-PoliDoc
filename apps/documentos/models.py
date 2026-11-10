@@ -1166,13 +1166,42 @@ class DistribucionDocumento(models.Model):
         ('impreso', 'Impreso'),
     ]
 
+    CONSTANCIA_CHOICES = [
+        ('pendiente', 'Pendiente'),
+        ('sistema', 'Sistema'),
+        ('email', 'Email'),
+        ('impreso', 'Impreso'),
+    ]
+
+    ESTADO_FIRMA_CHOICES = [
+        ('no_aplica', 'No aplica'),
+        ('pendiente', 'Pendiente de firma'),
+        ('firmada', 'Firmada'),
+        ('expirada', 'Invitación expirada'),
+    ]
+
     documento = models.ForeignKey(
         Documento, on_delete=models.CASCADE, related_name='distribuciones',
         null=True, blank=True
     )
+    #: ``None`` cuando el destinatario es EXTERNO (no tiene cuenta en POLIDOC).
     usuario = models.ForeignKey(
         User, on_delete=models.CASCADE, related_name='documentos_recibidos',
+        null=True, blank=True,
         verbose_name='Usuario destinatario'
+    )
+    #: Datos del destinatario externo (mutuamente excluyente con ``usuario``).
+    nombre_externo = models.CharField(
+        max_length=200, blank=True, default='', verbose_name='Nombre (externo)'
+    )
+    cargo_externo = models.CharField(
+        max_length=200, blank=True, default='', verbose_name='Cargo (externo)'
+    )
+    email_externo = models.EmailField(
+        blank=True, default='', verbose_name='Correo (externo)'
+    )
+    organizacion_externa = models.CharField(
+        max_length=200, blank=True, default='', verbose_name='Organización (externa)'
     )
     fecha_distribucion = models.DateTimeField(auto_now_add=True)
     metodo = models.CharField(max_length=20, choices=METODO_CHOICES, default='sistema')
@@ -1181,6 +1210,41 @@ class DistribucionDocumento(models.Model):
         verbose_name='Distribuido por'
     )
     observaciones = models.TextField(blank=True, default='')
+    #: Agrupa las distribuciones que comparten UNA planilla SGC-FOR-002
+    #: (una planilla por lote de a lo sumo 33 destinatarios).
+    lote = models.UUIDField(
+        null=True, blank=True, db_index=True, verbose_name='Lote de planilla',
+        help_text='Identificador del lote que comparte planilla SGC-FOR-002.'
+    )
+    #: Cómo se emitió la constancia de distribución (FOR-002).
+    constancia = models.CharField(
+        max_length=20, choices=CONSTANCIA_CHOICES, default='pendiente',
+        verbose_name='Constancia'
+    )
+    fecha_entrega = models.DateTimeField(
+        null=True, blank=True, verbose_name='Fecha de entrega',
+        help_text='Momento en que se confirmó la entrega al destinatario.'
+    )
+    #: Estado de la firma conforme del destinatario en la planilla FOR-002.
+    estado_firma = models.CharField(
+        max_length=20, choices=ESTADO_FIRMA_CHOICES, default='no_aplica',
+        verbose_name='Estado de firma'
+    )
+    #: El destinatario retiró la versión anterior del documento (FOR-002).
+    retiro_version_anterior = models.BooleanField(
+        default=False, verbose_name='Retiró versión anterior'
+    )
+    #: True si el PDF/documento se adjuntó al correo de distribución.
+    #: Un adjunto ya enviado no se puede revocar, por eso queda registrado.
+    adjunto_pdf_enviado = models.BooleanField(
+        default=False, verbose_name='Adjunto enviado',
+        help_text='True si el archivo se adjuntó al correo de distribución.'
+    )
+    motivo_sin_adjunto = models.CharField(
+        max_length=200, blank=True, default='',
+        verbose_name='Motivo sin adjunto',
+        help_text='Por qué no se adjuntó el archivo (política de clasificación).'
+    )
     enviado = models.BooleanField(
         default=False, verbose_name='Email enviado',
         help_text='True si el correo de distribución se envió correctamente.'
@@ -1197,7 +1261,8 @@ class DistribucionDocumento(models.Model):
     fecha_revocacion = models.DateTimeField(null=True, blank=True, verbose_name='Fecha de revocación')
     revocado_por = models.ForeignKey(
         User, on_delete=models.SET_NULL, null=True, blank=True,
-        related_name='distribuciones_revocadas', verbose_name='Revocado por'
+        related_name='distribuciones_revocadas',
+        verbose_name='Revocado por'
     )
     motivo_revocacion = models.TextField(blank=True, default='', verbose_name='Motivo de revocación')
     email_revocacion_enviado = models.BooleanField(
@@ -1206,16 +1271,51 @@ class DistribucionDocumento(models.Model):
     )
     error_revocacion = models.TextField(
         blank=True, default='', verbose_name='Error de revocación',
-        help_text='Detalle si falló el envío del correo de revocación.'
+        help_text='Detalle si falló el envío de la revocación.'
     )
 
     class Meta:
         verbose_name = 'Distribución de Documento'
         verbose_name_plural = 'Distribuciones de Documentos'
         ordering = ['-fecha_distribucion']
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(usuario__isnull=False, nombre_externo='')
+                    | models.Q(usuario__isnull=True, nombre_externo__gt='')
+                ),
+                name='dist_destino_interno_o_externo',
+            ),
+        ]
 
     def __str__(self):
-        return f"Distribución {self.documento.codigo} a {self.usuario.username}"
+        if self.usuario_id:
+            return f"Distribución {self.documento.codigo} a {self.usuario.username}"
+        return f"Distribución {self.documento.codigo} a {self.nombre_externo}"
+
+    @property
+    def es_externo(self):
+        """True cuando el destinatario no tiene cuenta en POLIDOC."""
+        return self.usuario_id is None
+
+    @property
+    def destinatario_nombre(self):
+        """Nombre visible del destinatario (interno o externo)."""
+        if self.usuario_id:
+            return self.usuario.get_full_name() or self.usuario.username
+        return self.nombre_externo
+
+    @property
+    def destinatario_email(self):
+        """Correo del destinatario (interno o externo), o vacío."""
+        if self.usuario_id:
+            return self.usuario.email or ''
+        return self.email_externo or ''
+
+    @property
+    def firma_pendiente(self):
+        """True si la distribución espera la firma conforme del destinatario."""
+        return self.estado_firma == 'pendiente'
 
 
 class SolicitudAprobacionDocumento(models.Model):
@@ -2166,6 +2266,47 @@ class FormatoPublicacion(models.Model):
         return f"{self.formato.codigo} → {self.get_tipo_display()} ({self.fecha:%d/%m/%Y})"
 
 
+class FormatoRespuesta(models.Model):
+    """Respuestas de un formato para un origen que NO es ``SolicitudCambio``.
+
+    Se usa para la planilla SGC-FOR-002 generada desde la distribución: una
+    fila por lote (``origen_tipo='distribucion'``, ``origen_id=<uuid del lote>``).
+    El par ``(origen_tipo, origen_id)`` es único, de modo que regenerar la
+    planilla de un lote actualiza la misma fila en lugar de duplicarla.
+    """
+
+    formato = models.ForeignKey(
+        Formato, on_delete=models.CASCADE, related_name='respuestas',
+        verbose_name='Formato'
+    )
+    origen_tipo = models.CharField(
+        max_length=30, verbose_name='Tipo de origen',
+        help_text="Ej. 'distribucion'."
+    )
+    origen_id = models.CharField(
+        max_length=64, verbose_name='Id de origen',
+        help_text="Ej. uuid del lote de distribución."
+    )
+    respuestas = models.JSONField(
+        default=dict, blank=True, verbose_name='Respuestas'
+    )
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Respuesta de Formato'
+        verbose_name_plural = 'Respuestas de Formatos'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['origen_tipo', 'origen_id'],
+                name='formato_resp_origen_unico',
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.formato.codigo} ← {self.origen_tipo}:{self.origen_id}"
+
+
 class ResumenIAUso(models.Model):
     """Contador diario de resúmenes IA generados por usuario."""
 
@@ -2218,3 +2359,209 @@ class ConversionPDFDiagnostico(models.Model):
 
     def __str__(self):
         return f"{self.origen} → {self.get_estado_display()}"
+
+
+# =============================================================================
+# FIRMA ELECTRÓNICA DE DISTRIBUCIÓN (SES) — SGC-FOR-002
+# =============================================================================
+#
+# Alcance: SOLO la firma de la distribución (planilla FOR-002). Las firmas de
+# aprobación de documentos/planillas (FOR-001/FOR-005) son otro flujo y no se
+# tocan aquí.
+#
+# * Interna: OTP por correo + PIN local (``FirmaCredencial``). El PIN se
+#   guarda con ``make_password`` y JAMÁS se re-valida contra AD (riesgo de
+#   bloqueo de cuenta real).
+# * Externa: invitación tokenizada (``InvitacionFirma``), 7 días, un solo uso.
+#   Solo se guarda el HASH del token: si la BD se filtra no se puede firmar.
+#
+# La firma interna es ASÍNCRONA: no bloquea el cierre de la distribución. El
+# FOR-002 simplemente muestra la fila como ``pendiente`` hasta firmar.
+
+class FirmaCredencial(models.Model):
+    """PIN local de firma electrónica de un usuario interno."""
+
+    usuario = models.OneToOneField(
+        User, on_delete=models.CASCADE, related_name='firma_credencial',
+        verbose_name='Usuario'
+    )
+    pin_hash = models.CharField(
+        max_length=128, verbose_name='Hash del PIN',
+        help_text='PIN hasheado con make_password; nunca en texto plano.'
+    )
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+    intentos_fallidos = models.PositiveSmallIntegerField(
+        default=0, verbose_name='Intentos fallidos'
+    )
+    bloqueado_hasta = models.DateTimeField(
+        null=True, blank=True, verbose_name='Bloqueado hasta',
+        help_text='Bloqueo temporal tras intentos fallidos de PIN.'
+    )
+
+    class Meta:
+        verbose_name = 'Credencial de Firma'
+        verbose_name_plural = 'Credenciales de Firma'
+
+    def __str__(self):
+        return f"PIN de {self.usuario.username}"
+
+    @property
+    def esta_bloqueada(self):
+        from django.utils import timezone
+        if not self.bloqueado_hasta:
+            return False
+        if self.bloqueado_hasta <= timezone.now():
+            return False
+        return True
+
+
+class FirmaElectronica(models.Model):
+    """Firma electrónica de UNA distribución por UN firmante.
+
+    ``firmante_clave`` normaliza internos (``user:<id>``) y externos
+    (``email:<correo>``) para que la unicidad (distribución + firmante) aplique
+    igual a los dos casos (un externo no puede firmar dos veces la misma
+    distribución).
+    """
+
+    TIPO_CHOICES = [
+        ('interna', 'Interna (OTP + PIN)'),
+        ('externa', 'Externa (invitación)'),
+    ]
+    ESTADO_CHOICES = [
+        ('pendiente', 'Pendiente'),
+        ('firmada', 'Firmada'),
+        ('expirada', 'Expirada'),
+        ('rechazada', 'Rechazada'),
+    ]
+
+    distribucion = models.ForeignKey(
+        DistribucionDocumento, on_delete=models.CASCADE, related_name='firmas',
+        verbose_name='Distribución'
+    )
+    tipo = models.CharField(
+        max_length=10, choices=TIPO_CHOICES, verbose_name='Tipo de firma'
+    )
+    #: Clave única del firmante dentro de la distribución (ver docstring).
+    firmante_clave = models.CharField(
+        max_length=220, verbose_name='Clave de firmante'
+    )
+    #: Interno: el usuario que firma. Externo: ``None``.
+    firmante = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='firmas_electronicas',
+        null=True, blank=True, verbose_name='Usuario firmante'
+    )
+    firmante_nombre = models.CharField(
+        max_length=200, blank=True, default='', verbose_name='Nombre del firmante'
+    )
+    firmante_email = models.EmailField(
+        blank=True, default='', verbose_name='Correo del firmante'
+    )
+    firmante_cargo = models.CharField(
+        max_length=200, blank=True, default='', verbose_name='Cargo del firmante'
+    )
+    estado = models.CharField(
+        max_length=20, choices=ESTADO_CHOICES, default='pendiente',
+        verbose_name='Estado'
+    )
+    #: OTP vigente (hash) para firmas internas.
+    otp_hash = models.CharField(
+        max_length=128, blank=True, default='', verbose_name='Hash del OTP'
+    )
+    otp_expira = models.DateTimeField(
+        null=True, blank=True, verbose_name='OTP expira en'
+    )
+    otp_intentos = models.PositiveSmallIntegerField(
+        default=0, verbose_name='Intentos de OTP'
+    )
+    fecha_firma = models.DateTimeField(
+        null=True, blank=True, verbose_name='Firmada en'
+    )
+    #: SHA-256 de lo firmado (XLSX de la planilla FOR-002 del lote).
+    hash_contenido = models.CharField(
+        max_length=64, blank=True, default='', verbose_name='Hash del contenido'
+    )
+    algoritmo = models.CharField(
+        max_length=30, default='sha256', verbose_name='Algoritmo'
+    )
+    ip_address = models.GenericIPAddressField(
+        null=True, blank=True, verbose_name='IP'
+    )
+    user_agent = models.TextField(blank=True, default='', verbose_name='User-Agent')
+    datos = models.JSONField(
+        default=dict, blank=True, verbose_name='Datos de la firma',
+        help_text='Extras: consentimiento, método, etc.'
+    )
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Firma Electrónica'
+        verbose_name_plural = 'Firmas Electrónicas'
+        ordering = ['-creado']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['distribucion', 'firmante_clave'],
+                name='firma_dist_firmante_unico',
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.get_tipo_display()} {self.firmante_nombre or self.firmante_clave} ({self.estado})"
+
+    @staticmethod
+    def clave_interna(usuario):
+        """Clave de firmante para un usuario interno."""
+        return f'user:{usuario.pk}'
+
+    @staticmethod
+    def clave_externa(email):
+        """Clave de firmante para un externo (correo normalizado)."""
+        return f'email:{(email or "").strip().lower()}'
+
+
+class InvitacionFirma(models.Model):
+    """Invitación tokenizada para firmar una distribución (uso externo).
+
+    El token vive 7 días y es de UN SOLO USO: al usarse se marca ``usado`` y
+    la firma queda ``firmada``. Solo se persiste su SHA-256.
+    """
+
+    firma = models.ForeignKey(
+        FirmaElectronica, on_delete=models.CASCADE, related_name='invitaciones',
+        verbose_name='Firma'
+    )
+    token_hash = models.CharField(
+        max_length=64, unique=True, verbose_name='Hash del token',
+        help_text='SHA-256 del token; el token en claro solo va en el correo.'
+    )
+    creado = models.DateTimeField(auto_now_add=True)
+    expira = models.DateTimeField(verbose_name='Expira en')
+    usado = models.BooleanField(default=False, verbose_name='Usado')
+    fecha_uso = models.DateTimeField(
+        null=True, blank=True, verbose_name='Usada en'
+    )
+    email_enviado = models.BooleanField(
+        default=False, verbose_name='Email enviado'
+    )
+    error_envio = models.TextField(
+        blank=True, default='', verbose_name='Error de envío'
+    )
+
+    class Meta:
+        verbose_name = 'Invitación de Firma'
+        verbose_name_plural = 'Invitaciones de Firma'
+        ordering = ['-creado']
+
+    def __str__(self):
+        estado = 'usada' if self.usado else f'vence {self.expira:%d/%m/%Y}'
+        return f"Invitación {self.firma_id} ({estado})"
+
+    @property
+    def esta_vigente(self):
+        """True si la invitación sigue usable (no usada y no vencida)."""
+        from django.utils import timezone
+        if self.usado:
+            return False
+        return self.expira > timezone.now()

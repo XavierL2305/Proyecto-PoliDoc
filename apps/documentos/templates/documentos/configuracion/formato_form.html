@@ -31,6 +31,8 @@
   .form-label { display: block; font-size: 0.875rem; font-weight: 500; color: var(--color-text); margin-bottom: 0.5rem; }
   .checkbox-row { display: flex; gap: 1.5rem; flex-wrap: wrap; }
   .checkbox-item { display: flex; align-items: center; gap: 0.5rem; }
+  .help-text { font-size: 0.75rem; color: var(--color-muted); margin-top: 0.35rem; }
+  .help-text a { color: var(--color-primary); text-decoration: underline; }
   @media (max-width: 768px) { .form-row { grid-template-columns: 1fr; } }
 </style>
 {% endblock %}
@@ -81,7 +83,16 @@
       </div>
       <div class="form-group form-group-full">
         <label class="form-label">Plantilla Excel (.xlsx)</label>
-        {% include 'documentos/_file_upload_field.html' with field=form.plantilla_xlsx hint='Solo .xlsx' prefijo_actual='Plantilla actual:' %}
+        {% include 'documentos/_file_upload_field.html' with field=form.plantilla_xlsx hint='Solo .xlsx — máximo 10MB' prefijo_actual='Plantilla actual:' %}
+        {% if formato.plantilla_xlsx %}
+        <p class="help-text" style="margin-top:0.5rem;">
+          <a href="{{ formato.plantilla_xlsx.url }}" target="_blank" rel="noopener">
+            <i class="fa-solid fa-download"></i> Descargar plantilla actual
+          </a>
+          · Para cambiar palabras impresas: descárgala, edítala en Excel y súbela aquí;
+          si mueves celdas o filas, ajusta el mapeo en el Constructor.
+        </p>
+        {% endif %}
       </div>
       <div class="form-group form-group-full">
         <label class="form-label">Aplica para:</label>

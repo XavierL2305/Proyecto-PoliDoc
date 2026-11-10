@@ -47,6 +47,22 @@
 {% endblock %}
 
 {% block app_content %}
+      {% if firmas_pendientes %}
+      <div style="margin-bottom: 1.25rem; padding: 1rem 1.25rem; border-radius: var(--radius);
+                  background: var(--color-warning-light); color: var(--color-warning);
+                  display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+        <i class="fa-solid fa-signature"></i>
+        <span style="font-size: 0.875rem; font-weight: 500;">
+          Tienes {{ firmas_pendientes|length }} distribución(es) pendiente(s) de firma conforme (SGC-FOR-002).
+        </span>
+        {% for dist in firmas_pendientes %}
+        <a href="{% url 'documentos:firmar_distribucion' tipo=tipo documento_id=documento.uuid dist_id=dist.id %}"
+           class="btn btn--primary btn--sm">
+          <i class="fa-solid fa-signature"></i> Firmar
+        </a>
+        {% endfor %}
+      </div>
+      {% endif %}
       <div class="page-header">
         <div>
           <h1>{{ documento.nombre }}</h1>
@@ -770,10 +786,18 @@
               <div class="dist-list">
                 {% for dist in distribuciones %}
                 <div class="dist-item{% if dist.revocado %} dist-item--revocada{% endif %}">
-                  <div class="dist-avatar">{{ dist.usuario.username|first|upper }}</div>
+                  <div class="dist-avatar">{{ dist.destinatario_nombre|first|upper }}</div>
                   <div class="dist-info">
                     <div class="dist-name">
-                      {{ dist.usuario.get_full_name|default:dist.usuario.username }}
+                      {{ dist.destinatario_nombre }}
+                      {% if dist.es_externo %}
+                        <span class="badge badge--impreso" style="margin-left:0.25rem;">Externo</span>
+                      {% endif %}
+                      {% if dist.estado_firma == 'firmada' %}
+                        <span class="badge badge--email" style="margin-left:0.25rem;">Firmada</span>
+                      {% elif dist.estado_firma == 'pendiente' %}
+                        <span class="badge badge--warning" style="margin-left:0.25rem;">Firma pendiente</span>
+                      {% endif %}
                       {% if dist.revocado %}
                         <span class="badge badge--revocada">Revocada</span>
                       {% endif %}
@@ -789,7 +813,7 @@
                     {% endif %}
                   </div>
                   {% if not dist.revocado and puede_revocar %}
-                  <button class="btn btn--ghost btn--sm" style="color: var(--color-danger); font-size: 0.75rem;" data-dist-id="{{ dist.id }}" data-dist-nombre="{{ dist.usuario.get_full_name|default:dist.usuario.username|escapejs }}" onclick="abrirModalRevocar(this.dataset.distId, this.dataset.distNombre)">
+                  <button class="btn btn--ghost btn--sm" style="color: var(--color-danger); font-size: 0.75rem;" data-dist-id="{{ dist.id }}" data-dist-nombre="{{ dist.destinatario_nombre|escapejs }}" onclick="abrirModalRevocar(this.dataset.distId, this.dataset.distNombre)">
                     <i class="fa-solid fa-ban"></i> Revocar
                   </button>
                   {% endif %}

@@ -55,6 +55,9 @@
           {% if formato.aplica_creacion %}<span class="badge badge--success" style="font-size:0.65rem;">Creación</span>{% endif %}
           {% if formato.aplica_modificacion %}<span class="badge badge--success" style="font-size:0.65rem;">Modificación</span>{% endif %}
           {% if formato.aplica_eliminacion %}<span class="badge badge--success" style="font-size:0.65rem;">Eliminación</span>{% endif %}
+          {% if not formato.aplica_creacion and not formato.aplica_modificacion and not formato.aplica_eliminacion %}
+          <span class="badge" style="font-size:0.65rem;background:var(--color-info-light);color:var(--color-info);" data-tooltip="Se llena y exporta desde su propio flujo (no desde Crear/Editar documento).">Planilla automática</span>
+          {% endif %}
         </td>
         <td>
           {% if formato.activo %}

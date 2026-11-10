@@ -26,6 +26,7 @@
   .repeater-table th { font-size: 0.75rem; font-weight: 500; color: var(--color-text); text-align: left; padding: 0.25rem 0.5rem; }
   .repeater-table td { padding: 0.25rem 0.5rem; }
   .repeater-table input.form-input { font-size: 0.8125rem; padding: 0.375rem 0.5rem; }
+  .repeater-table select.form-input { font-size: 0.8125rem; padding: 0.375rem 0.5rem; }
   .btn-icon { background: none; border: none; cursor: pointer; color: var(--color-muted); padding: 0.25rem 0.5rem; border-radius: var(--radius-sm); font-size: 0.875rem; }
   .btn-icon:hover { color: var(--color-danger); background: var(--color-bg-alt); }
   .btn-add { font-size: 0.8125rem; padding: 0.25rem 0.75rem; }
@@ -115,16 +116,13 @@
               <th>Valor</th>
               <th class="adv-col" style="display:none;">Celda Excel</th>
               <th class="adv-col" style="display:none;">Shape</th>
+              <th class="adv-col" style="display:none;">Celda marca (X)</th>
               <th style="width:2rem;"></th>
             </tr>
           </thead>
           <tbody id="opciones-body"></tbody>
         </table>
         <button type="button" class="btn btn--ghost btn--sm btn-add" onclick="addOpcionRow()">+ Agregar opción</button>
-        <label class="toggle-avanzado">
-          <input type="checkbox" id="toggle-avanzado" onchange="toggleAvanzado(this.checked)">
-          Mostrar mapeo Excel (avanzado)
-        </label>
       </div>
 
       <!-- Editor de tabla -->
@@ -142,22 +140,43 @@
             <span class="help-text">Última fila reservada para datos.</span>
           </div>
         </div>
+        <div class="form-group" style="margin-bottom:0.75rem;max-width:50%;">
+          <label class="form-label">Máx. filas (export)</label>
+          <input type="number" class="form-input" id="tabla-max-filas" value="6" min="1">
+          <span class="help-text">Filas disponibles en la plantilla. Se ajusta solo al cambiar fila inicio/fin.</span>
+        </div>
         <table class="repeater-table" id="tabla-columns-table">
           <thead>
             <tr>
               <th>Etiqueta *</th>
               <th>Clave *</th>
-              <th class="adv-col" style="display:none;">Celda (columna)</th>
+              <th>Tipo</th>
+              <th class="th-col-celda">Celda (columna)</th>
+              <th class="th-col-sino">Celda SI</th>
+              <th class="th-col-sino">Celda NO</th>
               <th style="width:2rem;"></th>
             </tr>
           </thead>
           <tbody id="tabla-columns-body"></tbody>
         </table>
         <button type="button" class="btn btn--ghost btn--sm btn-add" onclick="addColumnaRow()">+ Agregar columna</button>
+        <p class="help-text" style="margin-top:0.5rem;">"Marca si/no" escribe una X en la celda SI o NO según el valor (casilla de doble columna, p. ej. retiro de versión: G/H).</p>
       </div>
 
-      <input type="hidden" name="opciones" id="opciones-hidden" value="{{ form.instance.opciones|to_json }}">
-      <input type="hidden" name="config_tabla" id="config_tabla-hidden" value="{{ form.instance.config_tabla|to_json }}">
+      <div id="avanzado-wrap" class="form-group form-group-full" style="display:none;">
+        <label class="toggle-avanzado">
+          <input type="checkbox" id="toggle-avanzado" onchange="toggleAvanzado(this.checked)">
+          Mostrar mapeo Excel (avanzado)
+        </label>
+      </div>
+
+      {# Tras un error de validación se re-renderiza el form BOUND: se repite #}
+      {# lo que se envió (form.data) y no la instancia guardada, para no #}
+      {# perder el mapeo que venía editando. En GET no hay data → instancia. #}
+      <input type="hidden" name="opciones" id="opciones-hidden"
+             value="{% if form.data.opciones %}{{ form.data.opciones }}{% else %}{{ form.instance.opciones|to_json }}{% endif %}">
+      <input type="hidden" name="config_tabla" id="config_tabla-hidden"
+             value="{% if form.data.config_tabla %}{{ form.data.config_tabla }}{% else %}{{ form.instance.config_tabla|to_json }}{% endif %}">
     </div>
   </form>
   <div class="form-card-footer">
@@ -173,11 +192,23 @@
   var tablaSection = document.getElementById('tabla-section');
   var opcionesHidden = document.getElementById('opciones-hidden');
   var configTablaHidden = document.getElementById('config_tabla-hidden');
+  var avanzadoWrap = document.getElementById('avanzado-wrap');
+  var filaInicioInput = document.getElementById('tabla-fila-inicio');
+  var filaFinInput = document.getElementById('tabla-fila-fin');
+  var maxFilasInput = document.getElementById('tabla-max-filas');
+
+  /** config_tabla original: se conservan sus claves extra al guardar. */
+  var configOriginal = {};
+  /** Si el usuario tocó "Máx. filas" a mano, deja de autoajustarse. */
+  var maxFilasTocado = false;
 
   function showHideSections() {
     var val = tipoSelect ? tipoSelect.value : '';
-    if (opcionesSection) opcionesSection.style.display = (val === 'select' || val === 'checkbox_grupo') ? 'block' : 'none';
-    if (tablaSection) tablaSection.style.display = val === 'tabla' ? 'block' : 'none';
+    var esOpciones = val === 'select' || val === 'checkbox_grupo';
+    var esTabla = val === 'tabla';
+    if (opcionesSection) opcionesSection.style.display = esOpciones ? 'block' : 'none';
+    if (tablaSection) tablaSection.style.display = esTabla ? 'block' : 'none';
+    if (avanzadoWrap) avanzadoWrap.style.display = (esOpciones || esTabla) ? 'block' : 'none';
   }
 
   if (tipoSelect) {
@@ -185,23 +216,76 @@
     showHideSections();
   }
 
+  // --- Visibilidad: mapeo Excel avanzado y columnas si/no ---------------
+  function sincronizar() {
+    var chk = document.getElementById('toggle-avanzado');
+    var av = !!(chk && chk.checked);
+
+    var advCols = document.querySelectorAll('.adv-col');
+    for (var i = 0; i < advCols.length; i++) {
+      advCols[i].style.display = av ? '' : 'none';
+    }
+
+    var hayNormal = false, haySiNo = false;
+    var filas = document.querySelectorAll('#tabla-columns-body tr');
+    for (var j = 0; j < filas.length; j++) {
+      var sel = filas[j].querySelector('.col-tipo');
+      var esSiNo = !!sel && sel.value === 'si_no';
+      hayNormal = hayNormal || !esSiNo;
+      haySiNo = haySiNo || esSiNo;
+      var celdaCell = filas[j].querySelector('.col-celda-cell');
+      if (celdaCell) celdaCell.style.display = (av && !esSiNo) ? '' : 'none';
+      var siNos = filas[j].querySelectorAll('.col-sino');
+      for (var k = 0; k < siNos.length; k++) {
+        siNos[k].style.display = (av && esSiNo) ? '' : 'none';
+      }
+    }
+    var thCelda = document.querySelectorAll('.th-col-celda');
+    for (var m = 0; m < thCelda.length; m++) {
+      thCelda[m].style.display = (av && hayNormal) ? '' : 'none';
+    }
+    var thSiNo = document.querySelectorAll('.th-col-sino');
+    for (var n = 0; n < thSiNo.length; n++) {
+      thSiNo[n].style.display = (av && haySiNo) ? '' : 'none';
+    }
+  }
+  window.sincronizar = sincronizar;
+  window.toggleAvanzado = function() { sincronizar(); };
+
+  // --- Máx. filas (se ajusta con fila inicio/fin si no se tocó a mano) ---
+  function recalculaMaxFilas() {
+    if (maxFilasTocado || !maxFilasInput || !filaInicioInput || !filaFinInput) return;
+    var inicio = parseInt(filaInicioInput.value, 10) || 1;
+    var fin = parseInt(filaFinInput.value, 10) || inicio;
+    maxFilasInput.value = Math.max(1, fin - inicio + 1);
+  }
+  if (filaInicioInput) filaInicioInput.addEventListener('input', recalculaMaxFilas);
+  if (filaFinInput) filaFinInput.addEventListener('input', recalculaMaxFilas);
+  if (maxFilasInput) {
+    maxFilasInput.addEventListener('input', function() { maxFilasTocado = true; });
+  }
+
   // --- Opciones ---
   window.addOpcionRow = function(data) {
     var tbody = document.getElementById('opciones-body');
     if (!tbody) return;
+    data = (data && typeof data === 'object') ? data : {};
     var row = document.createElement('tr');
-    var etiqueta = (data && data.etiqueta) || '';
-    var valor = (data && data.valor) || '';
-    var celda = (data && data.celda) || '';
-    var shape = (data && data.shape) || '';
+    row.__orig = data;
+    var etiqueta = data.etiqueta || data.valor || '';
+    var valor = data.valor || '';
+    var celda = data.celda || '';
+    var shape = data.shape || '';
+    var celdaMarca = data.celda_marca || '';
     row.innerHTML =
       '<td><input type="text" class="form-input opt-etag" placeholder="Ej. Auditoría" value="' + escHtml(etiqueta) + '"></td>' +
       '<td><input type="text" class="form-input opt-val" placeholder="(opcional)" value="' + escHtml(valor) + '"></td>' +
       '<td class="adv-col" style="display:none;"><input type="text" class="form-input opt-celda" placeholder="A12" value="' + escHtml(celda) + '"></td>' +
       '<td class="adv-col" style="display:none;"><input type="text" class="form-input opt-shape" placeholder="Rectángulo 19" value="' + escHtml(shape) + '"></td>' +
-      '<td><button type="button" class="btn-icon" onclick="this.closest(\'tr\').remove()" title="Eliminar">✕</button></td>';
+      '<td class="adv-col" style="display:none;"><input type="text" class="form-input opt-celda-marca" placeholder="C12" value="' + escHtml(celdaMarca) + '" title="Marca X en la celda"></td>' +
+      '<td><button type="button" class="btn-icon" onclick="this.closest(\'tr\').remove(); sincronizar();" title="Eliminar">✕</button></td>';
     tbody.appendChild(row);
-    syncAvanzadoVisibility();
+    sincronizar();
   };
 
   if (opcionesHidden && opcionesHidden.value) {
@@ -210,111 +294,163 @@
       if (Array.isArray(arr)) {
         arr.forEach(function(item) {
           if (typeof item === 'string') {
-            addOpcionRow({etiqueta: item, valor: item, celda: '', shape: ''});
-          } else {
-            addOpcionRow({etiqueta: item.etiqueta || item.valor || '', valor: item.valor || '', celda: item.celda || '', shape: item.shape || ''});
+            addOpcionRow({etiqueta: item, valor: item});
+          } else if (item) {
+            addOpcionRow(item);
           }
         });
       }
     } catch(e) {}
   }
 
-  // --- Tabla ---
+  // --- Columnas de tabla ---
   window.addColumnaRow = function(data) {
     var tbody = document.getElementById('tabla-columns-body');
     if (!tbody) return;
+    data = (data && typeof data === 'object') ? data : {};
     var row = document.createElement('tr');
-    var etiqueta = (data && data.etiqueta) || '';
-    var clave = (data && data.clave) || '';
-    var celda = (data && data.celda) || '';
+    row.__orig = data;
+    var etiqueta = data.etiqueta || '';
+    var clave = data.clave || '';
+    var celda = data.celda || '';
+    var tipo = data.tipo === 'si_no' ? 'si_no' : '';
     row.innerHTML =
       '<td><input type="text" class="form-input col-etag" placeholder="Ej. Actividad" value="' + escHtml(etiqueta) + '"></td>' +
       '<td><input type="text" class="form-input col-clave" placeholder="Ej. actividad" value="' + escHtml(clave) + '"></td>' +
-      '<td class="adv-col" style="display:none;"><input type="text" class="form-input col-celda" placeholder="A" value="' + escHtml(celda) + '"></td>' +
-      '<td><button type="button" class="btn-icon" onclick="this.closest(\'tr\').remove()" title="Eliminar">✕</button></td>';
+      '<td><select class="form-input col-tipo" onchange="sincronizar()">' +
+        '<option value="">Valor normal</option>' +
+        '<option value="si_no">Marca si/no</option>' +
+      '</select></td>' +
+      '<td class="col-celda-cell" style="display:none;"><input type="text" class="form-input col-celda" placeholder="A" value="' + escHtml(celda) + '"></td>' +
+      '<td class="col-sino" style="display:none;"><input type="text" class="form-input col-celda-si" placeholder="G" value="' + escHtml(data.celda_si || '') + '" title="Celda cuando el valor es sí"></td>' +
+      '<td class="col-sino" style="display:none;"><input type="text" class="form-input col-celda-no" placeholder="H" value="' + escHtml(data.celda_no || '') + '" title="Celda cuando el valor es no"></td>' +
+      '<td><button type="button" class="btn-icon" onclick="this.closest(\'tr\').remove(); sincronizar()" title="Eliminar">✕</button></td>';
+    row.querySelector('.col-tipo').value = tipo;
     tbody.appendChild(row);
-    syncAvanzadoVisibility();
+    sincronizar();
   };
 
   if (configTablaHidden && configTablaHidden.value) {
     try {
       var obj = JSON.parse(configTablaHidden.value);
-      if (obj) {
-        if (obj.fila_inicio) document.getElementById('tabla-fila-inicio').value = obj.fila_inicio;
-        if (obj.fila_fin) document.getElementById('tabla-fila-fin').value = obj.fila_fin;
-        var cols = obj.columnas || obj;
-        if (Array.isArray(cols)) {
-          cols.forEach(function(col) {
-            addColumnaRow({etiqueta: col.etiqueta || '', clave: col.clave || '', celda: col.celda || ''});
-          });
+      if (Array.isArray(obj)) {
+        obj = {columnas: obj};
+      }
+      if (obj && typeof obj === 'object') {
+        configOriginal = obj;
+        if (obj.fila_inicio && filaInicioInput) filaInicioInput.value = obj.fila_inicio;
+        if (obj.fila_fin && filaFinInput) filaFinInput.value = obj.fila_fin;
+        var cols = obj.columnas || [];
+        if (Array.isArray(cols)) cols.forEach(addColumnaRow);
+        var maxCfg = parseInt(obj.max_filas, 10);
+        var inicio = parseInt(filaInicioInput.value, 10) || 1;
+        var fin = parseInt(filaFinInput.value, 10) || inicio;
+        if (maxCfg > 0) {
+          maxFilasInput.value = maxCfg;
+          maxFilasTocado = maxCfg !== (fin - inicio + 1);
+        } else {
+          recalculaMaxFilas();
         }
       }
     } catch(e) {}
   }
 
-  // --- Toggle avanzado ---
-  window.toggleAvanzado = function(checked) {
-    syncAvanzadoVisibility();
-  };
-
-  function syncAvanzadoVisibility() {
-    var show = document.getElementById('toggle-avanzado') && document.getElementById('toggle-avanzado').checked;
-    var advCols = document.querySelectorAll('.adv-col');
-    for (var i = 0; i < advCols.length; i++) {
-      advCols[i].style.display = show ? '' : 'none';
-    }
-  }
-
+  // Mapeo Excel ya declarado → mostrar el bloque avanzado por defecto.
   var hiddenVal = opcionesHidden ? opcionesHidden.value : '';
   var tablaHiddenVal = configTablaHidden ? configTablaHidden.value : '';
   if (hiddenVal.indexOf('"celda"') !== -1 || hiddenVal.indexOf('"shape"') !== -1 ||
-      tablaHiddenVal.indexOf('"fila_inicio"') !== -1 || tablaHiddenVal.indexOf('"fila_fin"') !== -1) {
+      hiddenVal.indexOf('"celda_marca"') !== -1 ||
+      tablaHiddenVal.indexOf('"fila_inicio"') !== -1 ||
+      tablaHiddenVal.indexOf('"celda_si"') !== -1) {
     var chk = document.getElementById('toggle-avanzado');
-    if (chk) { chk.checked = true; syncAvanzadoVisibility(); }
+    if (chk) chk.checked = true;
+  }
+  sincronizar();
+
+  // --- Al guardar: construir los JSON de los campos ocultos -------------
+  function asignar(obj, clave, valor) {
+    if (valor) obj[clave] = valor;
+    else delete obj[clave];
   }
 
-  // --- On submit, build hidden JSON ---
+  function clavesExtra(orig, conocidas) {
+    return Object.keys(orig || {}).filter(function(k) {
+      return conocidas.indexOf(k) === -1;
+    });
+  }
+
   var form = document.getElementById('campo-form');
   if (form) {
     form.addEventListener('submit', function() {
-      var val = tipoSelect ? tipoSelect.value : '';
-      if (val === 'select' || val === 'checkbox_grupo') {
-        var rows = document.querySelectorAll('#opciones-body tr');
+      var tipo = tipoSelect ? tipoSelect.value : '';
+
+      if (tipo === 'select' || tipo === 'checkbox_grupo') {
         var opts = [];
-        var hasAdvanced = false;
-        rows.forEach(function(row) {
+        var comoObjetos = false;
+        document.querySelectorAll('#opciones-body tr').forEach(function(row) {
           var etag = row.querySelector('.opt-etag').value.trim();
           if (!etag) return;
-          var val = row.querySelector('.opt-val').value.trim() || etag;
+          var valorOpt = row.querySelector('.opt-val').value.trim() || etag;
           var celda = row.querySelector('.opt-celda').value.trim();
           var shape = row.querySelector('.opt-shape').value.trim();
-          if (celda || shape) hasAdvanced = true;
-          opts.push({etiqueta: etag, valor: val, celda: celda, shape: shape});
+          var celdaMarca = row.querySelector('.opt-celda-marca').value.trim();
+          var orig = row.__orig || {};
+          var obj = Object.assign({}, orig);
+          obj.etiqueta = etag;
+          obj.valor = valorOpt;
+          asignar(obj, 'celda', celda);
+          asignar(obj, 'shape', shape);
+          asignar(obj, 'celda_marca', celdaMarca);
+          var extras = clavesExtra(orig, ['etiqueta', 'valor', 'celda', 'shape', 'celda_marca']);
+          if (celda || shape || celdaMarca || valorOpt !== etag || extras.length) {
+            comoObjetos = true;
+          }
+          opts.push(obj);
         });
-        if (!hasAdvanced) {
+        if (!comoObjetos) {
           opts = opts.map(function(o) { return o.etiqueta; });
         }
         opcionesHidden.value = JSON.stringify(opts);
       }
-      if (val === 'tabla') {
-        var filaInicio = parseInt(document.getElementById('tabla-fila-inicio').value) || 36;
-        var filaFin = parseInt(document.getElementById('tabla-fila-fin').value) || 41;
-        var colRows = document.querySelectorAll('#tabla-columns-body tr');
+
+      if (tipo === 'tabla') {
+        var filaInicio = parseInt(filaInicioInput.value, 10) || 36;
+        var filaFin = parseInt(filaFinInput.value, 10) || 41;
+        var maxFilas = parseInt(maxFilasInput.value, 10) || Math.max(1, filaFin - filaInicio + 1);
         var cols = [];
-        colRows.forEach(function(row) {
+        document.querySelectorAll('#tabla-columns-body tr').forEach(function(row) {
           var etag = row.querySelector('.col-etag').value.trim();
           var clave = row.querySelector('.col-clave').value.trim();
           if (!etag && !clave) return;
-          var celda = row.querySelector('.col-celda').value.trim();
-          cols.push({etiqueta: etag, clave: clave, celda: celda});
+          var obj = Object.assign({}, row.__orig || {});
+          obj.etiqueta = etag;
+          obj.clave = clave;
+          var colTipo = row.querySelector('.col-tipo').value;
+          if (colTipo === 'si_no') {
+            obj.tipo = 'si_no';
+            asignar(obj, 'celda_si', row.querySelector('.col-celda-si').value.trim());
+            asignar(obj, 'celda_no', row.querySelector('.col-celda-no').value.trim());
+            delete obj.celda;
+          } else {
+            delete obj.tipo;
+            delete obj.celda_si;
+            delete obj.celda_no;
+            asignar(obj, 'celda', row.querySelector('.col-celda').value.trim());
+          }
+          cols.push(obj);
         });
-        configTablaHidden.value = JSON.stringify({fila_inicio: filaInicio, fila_fin: filaFin, columnas: cols});
+        var config = Object.assign({}, configOriginal);
+        config.fila_inicio = filaInicio;
+        config.fila_fin = filaFin;
+        config.max_filas = maxFilas;
+        config.columnas = cols;
+        configTablaHidden.value = JSON.stringify(config);
       }
     });
   }
 
   function escHtml(s) {
-    return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 })();
 </script>

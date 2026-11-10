@@ -1,0 +1,144 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Firma de distribución - POLIDOC{% endblock %}
+
+{% block extra_css %}
+<style>
+  .firma-wrap {
+    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    padding: 2rem 1rem;
+  }
+  .firma-card {
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg); max-width: 560px; width: 100%;
+    box-shadow: var(--shadow-lg);
+  }
+  .firma-header { padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--color-border); }
+  .firma-header h1 { font-size: 1.05rem; font-weight: 600; margin: 0; color: var(--color-text); }
+  .firma-body { padding: 1.5rem; }
+  .detail-row {
+    display: flex; justify-content: space-between; gap: 1rem;
+    padding: 0.6rem 0; border-bottom: 1px solid var(--color-border);
+  }
+  .detail-row:last-child { border-bottom: none; }
+  .detail-label { font-size: 0.85rem; color: var(--color-muted); font-weight: 500; }
+  .detail-value { font-size: 0.85rem; color: var(--color-text); font-weight: 500; text-align: right; }
+  .firma-footer {
+    padding: 1rem 1.5rem; border-top: 1px solid var(--color-border);
+    display: flex; justify-content: flex-end; gap: 0.75rem; flex-wrap: wrap;
+  }
+  .consent {
+    display: flex; gap: 0.6rem; align-items: flex-start;
+    margin-top: 1.25rem; padding: 0.9rem;
+    background: var(--color-info-light); color: var(--color-info-dark);
+    border-radius: var(--radius); font-size: 0.82rem;
+  }
+  .consent input { margin-top: 0.2rem; }
+  .alerta {
+    padding: 0.9rem 1rem; border-radius: var(--radius);
+    font-size: 0.86rem; margin-bottom: 1rem;
+  }
+  .alerta--error { background: var(--color-danger-light); color: var(--color-danger); }
+  .alerta--ok { background: var(--color-success-light); color: var(--color-success); }
+  .alerta--warn { background: var(--color-warning-light); color: var(--color-warning); }
+  .brand { font-weight: 700; color: var(--color-primary); margin-bottom: 1rem; font-size: 0.8rem; letter-spacing: 0.05em; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="firma-wrap">
+  <div class="firma-card">
+    <div class="firma-header">
+      <div class="brand">POLIDOC</div>
+      <h1><i class="fa-solid fa-signature"></i> Firma de conformidad de distribución</h1>
+    </div>
+
+    {% if invalida %}
+    <div class="firma-body">
+      <div class="alerta alerta--error">
+        El enlace de firma no es válido. Verifica que lo hayas copiado completo
+        o solicita una nueva invitación al emisor del documento.
+      </div>
+    </div>
+
+    {% elif expirada %}
+    <div class="firma-body">
+      <div class="alerta alerta--warn">
+        Esta invitación de firma expiró o ya fue utilizada. Solicita una nueva
+        al emisor del documento.
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Documento</span>
+        <span class="detail-value">{{ documento.codigo }} - {{ documento.nombre }}</span>
+      </div>
+    </div>
+
+    {% elif firmada %}
+    <div class="firma-body">
+      <div class="alerta alerta--ok">
+        <strong>Firma registrada.</strong> Gracias, {{ firma.firmante_nombre }}.
+        Tu conformidad quedó registrada en la planilla SGC-FOR-002 el
+        {{ firma.fecha_firma|date:"d/m/Y H:i" }}.
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Documento</span>
+        <span class="detail-value">{{ documento.codigo }} - {{ documento.nombre }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Firmante</span>
+        <span class="detail-value">{{ firma.firmante_nombre }}</span>
+      </div>
+    </div>
+
+    {% else %}
+    <form method="post">
+      {% csrf_token %}
+      <div class="firma-body">
+        {% if error %}
+        <div class="alerta alerta--error">{{ error }}</div>
+        {% endif %}
+        <div class="detail-row">
+          <span class="detail-label">Documento</span>
+          <span class="detail-value">{{ documento.codigo }} - {{ documento.nombre }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Versión</span>
+          <span class="detail-value">{{ documento.version_actual }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Firmante</span>
+          <span class="detail-value">{{ firma.firmante_nombre }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Correo</span>
+          <span class="detail-value">{{ firma.firmante_email }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Organización</span>
+          <span class="detail-value">{{ distribucion.organizacion_externa|default:"—" }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Vigencia del enlace</span>
+          <span class="detail-value">{{ invitacion.expira|date:"d/m/Y H:i" }}</span>
+        </div>
+
+        <label class="consent">
+          <input type="checkbox" name="consentimiento" required>
+          <span>
+            Acepto firmar electrónicamente la conformidad de esta distribución
+            y que quede registrada en POLIDOC con fecha, hora y datos del
+            dispositivo.
+          </span>
+        </label>
+      </div>
+      <div class="firma-footer">
+        <button type="submit" class="btn btn--primary">
+          <i class="fa-solid fa-signature"></i> Firmar conformidad
+        </button>
+      </div>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

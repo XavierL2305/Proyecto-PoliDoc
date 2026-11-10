@@ -1,3 +1,5 @@
+import logging
+
 from django import forms
 from django.contrib.auth.models import User
 from .models import (
@@ -6,6 +8,8 @@ from .models import (
     Formato, SeccionFormato, CampoFormato, SolicitudCambio,
 )
 from .icons import ICONOS_DISPONIBLES, ICONO_POR_DEFECTO
+
+logger = logging.getLogger(__name__)
 
 class PlantillaForm(forms.ModelForm):
     """Formulario para subir una Plantilla (documento en blanco)."""
@@ -455,10 +459,23 @@ class DistribucionDocumentoForm(forms.Form):
         queryset=User.objects.filter(is_active=True).order_by('first_name', 'last_name', 'username'),
         widget=forms.HiddenInput(), label='Destinatarios', required=False
     )
+    #: JSON ``[{nombre, email, cargo, organizacion}]`` de destinatarios sin
+    #: cuenta en POLIDOC (SGC-FOR-002). Se llena con el editor de la vista.
+    externos = forms.CharField(
+        widget=forms.HiddenInput(), label='Destinatarios externos',
+        required=False, initial='[]'
+    )
     metodo = forms.ChoiceField(
         choices=[('sistema', 'Sistema'), ('email', 'Email'), ('impreso', 'Impreso')],
         widget=forms.RadioSelect(attrs={'class': 'form-radio'}),
         label='Método de distribución', initial='sistema'
+    )
+    #: Adjuntar el archivo al correo (apagado por defecto; la política de
+    #: clasificación puede vetarlo y queda registrado).
+    adjuntar_pdf = forms.BooleanField(
+        required=False, initial=False,
+        label='Adjuntar archivo al correo',
+        widget=forms.CheckboxInput(attrs={'class': 'form-checkbox'}),
     )
     observaciones = forms.CharField(
         widget=forms.Textarea(attrs={'class': 'form-input', 'rows': 3, 'placeholder': ' '}),
@@ -468,6 +485,58 @@ class DistribucionDocumentoForm(forms.Form):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.usuarios_list = User.objects.filter(is_active=True).order_by('first_name', 'last_name', 'username')
+
+    def clean_externos(self):
+        """Parsea y valida el JSON de destinatarios externos.
+
+        Cada externo requiere nombre y correo válido (el correo es la única
+        vía para enviarle la invitación de firma SGC-FOR-002).
+        """
+        import json
+
+        crudo = (self.data.get('externos') or '').strip()
+        if not crudo:
+            self.externos_parsed = []
+            return []
+        try:
+            datos = json.loads(crudo)
+        except (ValueError, TypeError):
+            raise forms.ValidationError('Los destinatarios externos no son JSON válido.')
+        if not isinstance(datos, list):
+            raise forms.ValidationError('Los destinatarios externos deben ser una lista.')
+
+        from .services.distribucion import DestinatarioExterno
+        validados = []
+        errores = []
+        for i, item in enumerate(datos, start=1):
+            if not isinstance(item, dict):
+                errores.append(f'Externo {i}: formato inválido.')
+                continue
+            nombre = str(item.get('nombre') or '').strip()
+            email = str(item.get('email') or '').strip()
+            cargo = str(item.get('cargo') or '').strip()
+            organizacion = str(item.get('organizacion') or '').strip()
+            if not nombre:
+                errores.append(f'Externo {i}: el nombre es obligatorio.')
+                continue
+            if not email:
+                errores.append(f'Externo {i} ({nombre}): el correo es obligatorio.')
+                continue
+            from django.core.validators import validate_email
+            from django.core.exceptions import ValidationError as DjangoValidationError
+            try:
+                validate_email(email)
+            except DjangoValidationError:
+                errores.append(f'Externo {i} ({nombre}): el correo "{email}" no es válido.')
+                continue
+            validados.append(DestinatarioExterno(
+                nombre=nombre, email=email, cargo=cargo,
+                organizacion=organizacion,
+            ))
+        if errores:
+            raise forms.ValidationError(errores)
+        self.externos_parsed = validados
+        return validados
 
 
 class DepartamentoForm(forms.ModelForm):
@@ -521,6 +590,44 @@ class FormatoForm(forms.ModelForm):
     def clean_instructivo_html(self):
         from .sanitizers import sanitizar_html
         return sanitizar_html(self.cleaned_data.get('instructivo_html', ''))
+
+    def save(self, commit=True):
+        """Al reemplazar la plantilla se invalida (y borra) el PDF de preview.
+
+        ``convertir_formato_a_pdf_sync`` es idempotente: no regenera el PDF si
+        ya existe ``plantilla_pdf``. Sin este reset la vista previa seguiría
+        mostrando el XLSX anterior y el constructor mostraría textos viejos.
+        """
+        pdf_anterior = ''
+        storage = None
+        if 'plantilla_xlsx' in self.changed_data and self.instance.plantilla_pdf:
+            pdf_anterior = self.instance.plantilla_pdf.name or ''
+            storage = self.instance.plantilla_pdf.storage
+            self.instance.plantilla_pdf = ''
+
+        instancia = super().save(commit=commit)
+
+        if pdf_anterior and storage:
+            try:
+                storage.delete(pdf_anterior)
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    'No se pudo borrar el preview PDF anterior (%s) del formato %s',
+                    pdf_anterior, instancia.codigo, exc_info=True,
+                )
+            # Si no hay worker de Celery, la regeneración encolada no llega:
+            # se convierte en modo síncrono para que el Constructor muestre la
+            # plantilla nueva sin pasar por "Regenerar PDF".
+            if commit and instancia.plantilla_xlsx and not instancia.plantilla_pdf:
+                from .tasks import convertir_formato_a_pdf_sync
+                try:
+                    convertir_formato_a_pdf_sync(instancia)
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        'No se pudo generar el preview PDF de %s',
+                        instancia.codigo, exc_info=True,
+                    )
+        return instancia
 
 
 class SeccionFormatoForm(forms.ModelForm):

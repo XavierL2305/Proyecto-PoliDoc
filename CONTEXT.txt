@@ -1,7 +1,7 @@
 ===================================================================
 PROYECTO: POLIDOC (Gestión Documental - Policlínica Táchira)
 ===================================================================
-Última actualización: 2026-11-06
+Última actualización: 2026-11-09
 
 1. ALCANCE DEL SISTEMA
 -------------------------------------------------------------------
@@ -1785,8 +1785,14 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
                               aprobación simplificada (jefe/delegado, sin GG),
                               modificación FOR-005, eliminación FOR-001 y
                               `plantilla_origen` obligatorio al crear Documento.
-        migrations/        0001–0056; última: 0056
-                            (0056 repara Documento.tipo_archivo según la
+        migrations/        0001–0058; última: 0058
+                            (0058 añade la firma electrónica de distribución
+                            —FirmaCredencial, FirmaElectronica, InvitacionFirma—
+                            y FormatoRespuesta, además de los campos de
+                            destinatario externo/constancia/adjunto en
+                            DistribucionDocumento; ver §30. La 0057 añade
+                            SecuenciaCodigo; la 0056 repara
+                            Documento.tipo_archivo según la
                             extensión real del archivo; la 0055 añade
                             Documento.es_plantilla + plantilla_origen para el
                             apartado Plantillas; ver §5. La 0054 ajustó
@@ -2423,6 +2429,15 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
       `(formato, origen_cambio, num_solicitud)`. Migración 0029 hizo backfill
       desde `respuestas`. Migración 0040 añade `planilla_xlsx` / `planilla_pdf`
       (archivo rellenado generado al aprobar; ver §20.7).
+    - FormatoRespuesta  respuestas (JSON) para un origen que NO es
+                       SolicitudCambio: se usa para la planilla SGC-FOR-002 de
+                       un lote de distribución (origen_tipo='distribucion',
+                       origen_id=<uuid del lote>; único por par). Ver §29/§30.
+    - DistribucionDocumento admite destinatarios EXTERNOS (usuario NULL +
+      nombre/cargo/email/organización), lote (UUID que comparte planilla),
+      constancia, fecha_entrega, estado_firma, retiro_version_anterior,
+      adjunto_pdf_enviado y motivo_sin_adjunto. Las firmas viven en
+      FirmaElectronica/InvitacionFirma y el PIN local en FirmaCredencial (§30).
     - Tipos de campo: texto, textarea, fecha, select, checkbox_grupo, tabla.
     - Orígenes auto (CampoFormato.origen): nombre_solicitante, fecha_solicitud,
       num_solicitud, evaluado_por_*, autorizado_por_*, resolucion, operacion,
@@ -2487,9 +2502,18 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
     - En modo solo lectura la ayuda ya NO se usa como valor de un campo vacío.
 
   24.6 EXPORTACIÓN FIEL (XLSX/PDF)
+    - exportar_xlsx(solicitud) es un wrapper de
+      exportar_xlsx_formato(formato, respuestas), que permite exportar formatos
+      sin SolicitudCambio (p. ej. la planilla FOR-002 por lote).
     - exportar_xlsx()/exportar_pdf() en services/exportacion.py; se edita el XML
       directamente (openpyxl + lxml) porque openpyxl destruye shapes y logo.
     - Checkbox = <xdr:sp> en drawing1.xml; fill verde #00A651.
+    - Tablas: config_tabla admite `max_filas` (tope de filas; por defecto 6,
+      FOR-002 usa 33) y columnas tipo `si_no` con `celda_si`/`celda_no`
+      (escribe una X en la celda SI o NO; ver `_escribir_columna_tabla`).
+    - Select con marca: una opción con `celda_marca` escribe una X en esa
+      celda en vez del texto (p. ej. ORIGEN EXT/INT del FOR-002 en C12/D12).
+      Las opciones con solo `celda`/`shape` (FOR-005) no cambian.
 
   24.7 ESTRUCTURA DE DATOS (opciones / config_tabla)
     - CampoFormato.opciones (JSON):
@@ -2502,35 +2526,48 @@ POST /documentos/api/<tipo>/<uuid>/aprobar-creacion/ → Aprobar creación de do
         ]
       * "etiqueta" = texto visible; "valor" = valor guardado; "celda" =
         coordenada en el XLSX para exportación; "shape" = nombre del
-        <xdr:sp> en drawing1.xml para checkbox.
-      * Si no hay celda/shape → se guarda como lista de strings (simple).
+        <xdr:sp> en drawing1.xml para checkbox; "celda_marca" = celda donde
+        se escribe una X en vez del texto (opcional "marca", default 'X').
+      * Si no hay celda/shape/celda_marca → se guarda como lista de strings
+        (simple). Ver `_marca_de_opcion`.
     - CampoFormato.config_tabla (JSON):
       * Estructura: {
           "fila_inicio": 36,
           "fila_fin": 41,
+          "max_filas": 6,
           "columnas": [
-            {"etiqueta": "Actividad", "clave": "actividad", "celda": "A"},
-            {"etiqueta": "Responsable", "clave": "responsable", "celda": "B"},
-            {"etiqueta": "Plazo", "clave": "plazo", "celda": "C"}
+            {"rol": "nombre", "etiqueta": "Nombre", "clave": "nombre",
+             "celda": "A"},
+            {"rol": "retiro", "etiqueta": "Retiro", "clave": "retiro",
+             "tipo": "si_no", "celda_si": "G", "celda_no": "H"}
           ]
         }
       * "fila_inicio"/"fila_fin" = rango de filas reservadas en el XLSX.
+      * "max_filas" = tope de filas exportadas y de destinatarios por lote
+        (default 6; FOR-002 = 33). Se autoajusta con fila_inicio/fin.
       * "celda" de cada columna = letra de columna (A, B, C...) donde se
         escribe; la fila se calcula fila_inicio + i.
+      * "rol" = dato semántico que llena la columna (nombre, cargo, fecha,
+        retiro, firma); lo usa `_fila_destinatario`. Si falta se usa la
+        "clave" como rol. "tipo": "si_no" + "celda_si"/"celda_no" escribe
+        una X según el valor (ver `_escribir_columna_tabla`).
 
   24.8 CONSTRUCTOR VISUAL (campo_form.html)
     - Reemplaza los textareas JSON anteriores por un editor de filas (repeater).
     - Opciones (select/checkbox_grupo): tabla con columnas
-      Etiqueta | Valor | Celda Excel | Shape.
-      Botón "+ Agregar opción". Las columnas Celda/Shape están ocultas tras
+      Etiqueta | Valor | Celda Excel | Shape | Celda marca (X).
+      Botón "+ Agregar opción". Las columnas de mapeo están ocultas tras
       un toggle "Mostrar mapeo Excel (avanzado)".
       Se auto-activa si el campo ya tiene datos de mapeo.
-    - Tabla: inputs Fila inicio / Fila fin + tabla de columnas con
-      Etiqueta | Clave | Celda (columna).
-      Botón "+ Agregar columna".
-    - Al guardar: si no hay celda/shape → lista de strings; si hay → lista
-      de dicts con {valor, etiqueta, celda, shape}. La lógica de
-      normalización está en el JS del template (sin cambios Python).
+    - Tabla: inputs Fila inicio / Fila fin / Máx. filas + tabla de columnas
+      con Etiqueta | Clave | Tipo | Celda (columna) | Celda SI | Celda NO.
+      "Tipo" (Valor normal / Marca si/no) decide qué celdas de mapeo se
+      muestran. Botón "+ Agregar columna".
+    - Al guardar: si no hay mapeo → lista de strings; si hay → lista de
+      dicts con {valor, etiqueta, celda, shape, celda_marca}. En tabla, el
+      JSON se reconstruye en MERGE con el original: las claves que la UI
+      no expone (p. ej. `rol`) se conservan. La lógica está en el JS del
+      template (sin cambios Python); el servidor solo persiste el JSON.
     - Preview (formato_preview.html): usa opt_etiqueta/opt_valor para
       mostrar etiquetas en vez de repr de dicts. Tabla renderiza las
       columnas reales de config_tabla.
@@ -2869,3 +2906,161 @@ configuración corte el acceso (400 DisallowedHost / CSRF).
       (bind a 127.0.0.1 o firewall) y exigir tráfico vía nginx.
       Si la red de Docker se recrea (docker compose down), re-chequear
       el gateway con docker network inspect y actualizar .env.
+
+
+29. INTEGRACIÓN DE FORMATOS SGC Y PLANILLA FOR-002 (CONTROL DE DISTRIBUCIÓN)
+===================================================================
+
+Objetivo: el flujo de distribución emite la planilla SGC-FOR-002 (control
+de distribución) sin capturar datos a mano. El comando
+`integrar_formatos_sgc --solo=002` conecta la plantilla XLSX de
+`documentacion/` con el motor de formularios; `--apply` escribe (el
+default es `--dry-run`). Opciones: `--plantilla=<ruta>` usa otro XLSX de
+origen (p. ej. en CI, donde `documentacion/` no está versionado),
+`--forzar-plantilla` reemplaza el archivo en MEDIA y
+`--forzar-estructura` recrea secciones/campos (borra ediciones de la UI).
+
+  29.1 ALCANCE IMPLEMENTADO
+    - SOLO SGC-FOR-002. Los demás SGC-FOR-003…018 quedan pendientes (el
+      comando los omite con aviso). No hay catálogo/menú de "Formatos SGC":
+      cada FOR se genera desde su flujo. `Formato.requiere_firma` NO existe
+      todavía; la firma se decide por la existencia de la plantilla FOR-002.
+    - For-002 no aplica a los flujos de aprobación
+      (`aplica_creacion/modificacion/eliminacion=False`); en la lista de
+      formatos aparece el badge "Planilla automática".
+
+  29.2 LOTE Y PLANILLA
+    - FILAS_POR_PLANILLA = 33 (filas 19-51 de la plantilla) es el DEFAULT:
+      `filas_por_planilla()` lee `max_filas` de la tabla configurada en el
+      Constructor y gobierna el tamaño de los lotes. Si un envío supera ese
+      número de destinatarios se divide en lotes; cada lote comparte un UUID
+      (`DistribucionDocumento.lote`) y UNA `FormatoRespuesta`
+      (origen_tipo='distribucion', origen_id=<uuid>). La UI avisa
+      "Se generaron N planillas…".
+    - `services/distribucion.py`:
+        crear_distribuciones()  crea copias (internas/externas), auditoría,
+                                notificaciones, firmas pendientes, invitaciones
+                                y la(s) planilla(s). Los correos se envían
+                                FUERA de la transacción.
+        dividir_en_lotes()      sublistas de hasta `tamano` (33 por defecto).
+        generar_planilla_lote() crea/actualiza la FormatoRespuesta (regenera la
+                                columna FIRMA al firmar).
+        exportar_planilla_lote()XLSX on-demand (sin caché en disco).
+        politica_adjunto_pdf()  restringido: nunca; confidencial: solo admin o
+                                jefe efectivo (con registro); interno/público:
+                                permitido.
+
+  29.3 MAPEO DE LA PLANTILLA (verificado sobre el XLSX real)
+    - Etiquetas en filas 10-11; valores en la fila 12:
+        A12 tipo_informacion · C12/D12 marca EXT/INT · E12 num_identificacion
+        · F12 título · I12 edición · J12 versión · K12 fecha de vigencia.
+      Origen EXT/INT = "INT" por defecto (documentos propios); se marca con
+      una X (opción `celda_marca`). Ver §24.6.
+    - Tabla: cabecera 17-18, datos 19-51 (33 filas). Columnas: A nombre,
+      C cargo, E fecha, G/H retiro de la versión anterior (si/no, desde
+      `retiro_version_anterior`), I firma conforme (nombre cuando está
+      firmada). El cargo interno se compone como "Rol — Departamento".
+
+  29.4 CORREO Y ADJUNTO
+    - `adjuntar_pdf` es un checkbox APAGADO por defecto (todos los envíos);
+      la política de clasificación se aplica SIEMPRE y queda registrada en
+      `adjunto_pdf_enviado` / `motivo_sin_adjunto`.
+    - Envío a externos: además del correo de distribución (método email), se
+      envía la invitación de firma si el formato FOR-002 está activo.
+
+  29.5 CRITERIOS DE ACEPTACIÓN (def/ux/xlsx/pdf/test)
+    - def: modelos + migración 0058; sin cambios en el flujo de aprobaciones.
+    - ux:  distribuir_documento.html permite destinatarios externos y adjunto;
+           historial muestra externos, estado de firma, planilla y retiro;
+           detalle avisa de firmas pendientes.
+    - xlsx: FOR-002 con cabecera fila 12 y 33 filas de tabla; regenerable.
+    - pdf:  no aplica (la planilla se descarga en XLSX).
+    - test: documentos.tests_distribucion_sgc002 (lotes, política, externos,
+           XLSX, firma interna/externa, vistas y comando);
+           documentos.tests_configuracion_formatos (edición segura del
+           Constructor, renombrar claves, max_filas, reemplazo de plantilla,
+           comando no destructivo).
+
+  29.6 EDICIÓN DESDE EL CONSTRUCTOR (solo administrador)
+    - Palabras impresas: viven dentro del XLSX. Se descargan desde
+      "Editar Info" (enlace "Descargar plantilla actual") o desde el
+      Constructor ("Plantilla XLSX"), se editan en Excel y se re-suben.
+      Al reemplazarla, `FormatoForm.save` borra el PDF de preview viejo y
+      lo regenera (síncrono si no hay worker de Celery), porque
+      `convertir_formato_a_pdf_sync` es idempotente y no lo haría solo.
+      Si cambia la posición de celdas/filas, se ajusta el mapeo en el
+      Constructor.
+    - Estructura: `campo_form.html` edita `fila_inicio`, `fila_fin`,
+      `max_filas` (autoajustado con las filas salvo que se edite a mano),
+      columnas con `Tipo` (Valor normal / Marca si/no → `celda_si`/
+      `celda_no`) y opciones con `Celda marca (X)`. El JSON se reconstruye
+      HACIENDO MERGE con el original: las claves que la UI no expone
+      (`rol`, `marca`, `totales`…) se conservan. El toggle "Mostrar mapeo
+      Excel" quedó fuera de la sección de opciones para que también sirva
+      al editar una tabla.
+    - Auto-llenado dirigido POR EL FORMATO, no por claves fijas
+      (`_respuestas_lote`): cabecera por `origen` (mapear_valores_auto),
+      ORIGEN EXT/INT en el `select` que declare `celda_marca`, tabla en el
+      campo `tipo='tabla'`. Cada columna se llena por su `rol`
+      (nombre/cargo/fecha/retiro/firma) con fallback a la `clave`, así que
+      renombrar claves o etiquetas en la UI NO rompe la planilla.
+    - Comando: la estructura existente se CONSERVA (ediciones de la UI)
+      salvo `--forzar-estructura`; `_asegurar_roles` agrega el `rol` que
+      falte sin tocar nada más.
+    - No se editan textos del XLSX dentro del navegador (decisión).
+    - Re-render ante error de validación: los inputs ocultos repiten
+      `form.data` cuando el form está bound (y la instancia en GET), para
+      no perder el mapeo que venía editando.
+    - CI: `documentacion/` NO está versionado (gitignored) y ahí vive el
+      XLSX real del FOR-002; los tests nuevos usan `--plantilla` con un
+      XLSX sintético para correr sin ese archivo. `tests_distribucion_sgc002`
+      todavía depende del XLSX real (pendiente: `skipUnless` o forzar el
+      archivo en CI).
+
+
+30. FIRMA ELECTRÓNICA DE DISTRIBUCIÓN (SES)
+===================================================================
+
+Alcance: firma de CONFORMIDAD de la distribución (columna FIRMA CONFORME
+del FOR-002). NO cubre la firma de aprobaciones 001/005 (diferido).
+
+  30.1 MODELOS (migración 0058)
+    - FirmaCredencial   PIN local por usuario (make_password). intentos_fallidos
+                        + bloqueado_hasta (bloqueo temporal). NUNCA re-autentica
+                        contra AD: los fallos no cuentan para el lockout de AD.
+    - FirmaElectronica  una por distribución y firmante
+                        (firmante_clave: 'user:<id>' interno / 'email:<correo>'
+                        externo; constraint firma_dist_firmante_unico). Guarda
+                        estado (pendiente/firmada/expirada/rechazada),
+                        otp_hash/otp_expira/otp_intentos, fecha_firma,
+                        hash_contenido (SHA-256 del XLSX del lote), algoritmo,
+                        ip_address, user_agent y datos (JSON).
+    - InvitacionFirma    token hasheado (SHA-256, único), vigencia 7 días, un
+                        solo uso (usado/fecha_uso), email_enviado/error_envio.
+
+  30.2 FLUJOS
+    - Interna (services/firmas.py): PIN + OTP de 6 dígitos al correo
+      (10 min, 5 intentos). PIN: 4-12 dígitos, 5 intentos → bloqueo 15 min.
+      Todo o nada dentro de transaction.atomic.
+    - Externa: enlace público `/documentos/firmar/<token>/` (sin sesión),
+      exige aceptar el consentimiento. Invitación vencida/usada → error y,
+      si procede, la firma y la distribución quedan 'expirada'.
+    - Al firmar: se recalcula el SHA-256 de la planilla, se audita
+      (registrar_log_iso, accion_tipo='firma_distribucion') y se regenera la
+      planilla del lote para reflejar la columna FIRMA.
+
+  30.3 URLS Y VISTAS
+    - GET/POST documentos:<tipo>/<uuid>/distribucion/<id>/firmar/ (interna)
+    - GET/POST documentos:firmar/<token>/ (externa, pública)
+    - GET documentos:<tipo>/<uuid>/distribucion/planilla/<lote>/ (XLSX)
+    - POST documentos:<tipo>/<uuid>/distribucion/<id>/retiro-version/
+      (alterna retiro_version_anterior y regenera la planilla)
+    - Plantillas: firmar_distribucion.html (interna, base_app),
+      firmar_invitacion.html (externa, base.html).
+
+  30.4 NORMATIVA Y PENDIENTES
+    - ISO 9001:2015 §7.5.3 (información documentada), ISO/IEC 27001:2022
+      A.5.12/A.5.13/A.5.14, ISO 15489-1; Venezuela: Ley sobre Mensajes de
+      Datos y Firmas Electrónicas (2001), SUSCERTE.
+    - PENDIENTE: validar con jurídico el texto de consentimiento; SMTP real
+      (en demo Mailpit/consola); revisión de UX de firma masiva.

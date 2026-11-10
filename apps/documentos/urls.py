@@ -106,6 +106,10 @@ urlpatterns = [
     path('<str:tipo>/<uuid:documento_id>/distribuir/', views.distribuir_documento, name='distribuir_documento'),
     path('<str:tipo>/<uuid:documento_id>/historial-distribucion/', views.historial_distribucion, name='historial_distribucion'),
     path('<str:tipo>/<uuid:documento_id>/distribucion/<int:dist_id>/revocar/', views.revocar_distribucion, name='revocar_distribucion'),
+    path('<str:tipo>/<uuid:documento_id>/distribucion/<int:dist_id>/firmar/', views.firmar_distribucion, name='firmar_distribucion'),
+    path('<str:tipo>/<uuid:documento_id>/distribucion/<int:dist_id>/retiro-version/', views.alternar_retiro_version, name='alternar_retiro_version'),
+    path('<str:tipo>/<uuid:documento_id>/distribucion/planilla/<uuid:lote>/', views.descargar_planilla_lote, name='descargar_planilla_lote'),
+    path('firmar/<str:token>/', views.firmar_invitacion, name='firmar_invitacion'),
 
     # Transferir propiedad
     path('<str:tipo>/<uuid:documento_id>/transferir/', views.transferir_propiedad, name='transferir_propiedad'),

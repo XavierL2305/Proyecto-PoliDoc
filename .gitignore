@@ -51,3 +51,7 @@ celerybeat.pid
 .idea/
 .DS_Store
 Thumbs.db
+
+# --- Documentación fuente (XLSX SGC-FOR-002…018) ---
+# Se usan localmente con `manage.py integrar_formatos_sgc`; no se versionan.
+/documentacion/

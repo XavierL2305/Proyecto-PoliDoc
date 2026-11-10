@@ -69,6 +69,11 @@
     <a href="{% url 'documentos:formato_preview' formato_id=formato.id %}" class="btn btn--ghost btn--sm">
       <i class="fa-solid fa-eye"></i> Preview
     </a>
+    {% if formato.plantilla_xlsx %}
+    <a href="{{ formato.plantilla_xlsx.url }}" class="btn btn--ghost btn--sm" download>
+      <i class="fa-solid fa-file-excel"></i> Plantilla XLSX
+    </a>
+    {% endif %}
     <a href="{% url 'documentos:formatos_lista' %}" class="btn btn--ghost btn--sm">
       <i class="fa-solid fa-arrow-left"></i> Volver
     </a>
