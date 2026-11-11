@@ -207,6 +207,10 @@
         {% endif %}
         {% endif %}
 
+        {% if documento %}
+        {% include 'documentos/_tabla_for_003.html' %}
+        {% endif %}
+
         <div class="form-card">
           <div class="form-card-footer">
             <a href="{% if documento %}{% url 'documentos:detalle' tipo=tipo_documento documento_id=documento.uuid %}{% else %}{% url 'documentos:mis_documentos' %}{% endif %}" class="btn btn--ghost">Cancelar</a>

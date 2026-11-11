@@ -69,6 +69,7 @@ urlpatterns = [
     path('planilla-cambios/<uuid:planilla_uuid>/', views.detalle_planilla, name='detalle_planilla'),
     path('planilla-cambios/<uuid:planilla_uuid>/aprobar/', views.aprobar_planilla, name='aprobar_planilla'),
     path('planilla-cambios/<uuid:planilla_uuid>/enviar/', views.enviar_planilla, name='enviar_planilla'),
+    path('planilla-cambios/<uuid:planilla_uuid>/for-003/<str:formato>/', views.planilla_for_003, name='planilla_for_003'),
 
     # Delegación de jefatura (vacaciones): alta, listado y revocación.
     path('delegaciones/', views.delegaciones_jefatura, name='delegaciones_jefatura'),
@@ -96,6 +97,7 @@ urlpatterns = [
     path('<str:tipo>/<uuid:documento_id>/editar/', views.editar_documento, name='editar'),
     path('<str:tipo>/<uuid:documento_id>/eliminar/', views.eliminar_documento, name='eliminar'),
     path('<str:tipo>/<uuid:documento_id>/descargar/', views.descargar_archivo, name='descargar_archivo'),
+    path('<str:tipo>/<uuid:documento_id>/for-003/<str:formato>/', views.documento_for_003, name='documento_for_003'),
     path('<str:tipo>/<uuid:documento_id>/ver-archivo/', views.ver_archivo, name='ver_archivo'),
     path('<str:tipo>/<uuid:documento_id>/estado-conversion/', views.estado_conversion, name='estado_conversion'),
     path('<str:tipo>/<uuid:documento_id>/resumen-ia/', views.resumen_ia, name='resumen_ia'),

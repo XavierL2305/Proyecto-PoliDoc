@@ -1,0 +1,191 @@
+{% if for_003_editable or for_003_historico %}
+<div class="form-card">
+  <div class="form-card-header">
+    <h3><i class="fa-solid fa-clock-rotate-left" style="margin-right:0.5rem;"></i>
+      SGC-FOR-003 — Tabla de cambios y modificaciones
+    </h3>
+    <p style="font-size:0.8125rem;color:var(--color-muted);margin:0.35rem 0 0;">
+      Una fila por página o ítem modificado. La versión, fecha, realizado por
+      y autorizado por se completan automáticamente desde el flujo.
+    </p>
+  </div>
+  <div class="form-card-body">
+
+    {% if for_003_historico %}
+    <div style="margin-bottom:1rem;">
+      <span class="detail-label">Histórico autorizado</span>
+      <div class="formato-tabla-container">
+        <table class="formato-tabla">
+          <thead>
+            <tr>
+              <th>Nº página</th>
+              <th>Versión</th>
+              <th>Descripción del cambio</th>
+              <th>Fecha</th>
+              <th>Realizado por</th>
+              <th>Autorizado por</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for fila in for_003_historico %}
+            <tr>
+              <td>{{ fila.numero_pagina|default:"—" }}</td>
+              <td>{{ fila.version }}</td>
+              <td>{{ fila.descripcion }}</td>
+              <td>{{ fila.fecha }}</td>
+              <td>{{ fila.realizado_por }}</td>
+              <td>{{ fila.autorizado_por|default:"—" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if for_003_editable %}
+    <span class="detail-label">Cambios de esta modificación</span>
+    <div class="formato-tabla-container" id="for003-editor">
+      <table class="formato-tabla">
+        <thead>
+          <tr>
+            <th style="width:30px;">#</th>
+            <th>Nº página</th>
+            <th>Versión</th>
+            <th>Descripción del cambio</th>
+            <th>Fecha</th>
+            <th>Realizado por</th>
+            <th>Autorizado por</th>
+            <th style="width:30px;"></th>
+          </tr>
+        </thead>
+        <tbody class="tabla-body"></tbody>
+      </table>
+      <div class="formato-tabla-footer">
+        <button type="button" class="btn btn--ghost btn--sm" id="for003-add">
+          <i class="fa-solid fa-plus"></i> Agregar fila
+        </button>
+      </div>
+    </div>
+    <input type="hidden" name="cambios_for_003" id="cambios_for_003" value="[]">
+    {% endif %}
+  </div>
+</div>
+
+{{ for_003_borrador|json_script:"for003-borrador" }}
+{{ for_003_auto|json_script:"for003-auto" }}
+{% if for_003_editable %}
+<script>
+(function () {
+  'use strict';
+  var tbody = document.querySelector('#for003-editor .tabla-body');
+  if (!tbody) return;
+  var hidden = document.getElementById('cambios_for_003');
+  var auto = JSON.parse(document.getElementById('for003-auto').textContent || '{}');
+  var stored = JSON.parse(document.getElementById('for003-borrador').textContent || '[]');
+  var existente = {{ for_003_existente|yesno:"true,false" }};
+
+  function celdaTexto(texto) {
+    var td = document.createElement('td');
+    td.textContent = texto || '—';
+    td.style.fontSize = '0.8rem';
+    td.style.color = 'var(--color-muted)';
+    return td;
+  }
+
+  function celdaInput(valor, marcador, col) {
+    var td = document.createElement('td');
+    var inp = document.createElement('input');
+    inp.type = 'text';
+    inp.autocomplete = 'off';
+    inp.dataset.col = col;
+    inp.className = 'form-input';
+    inp.style.fontSize = '0.8rem';
+    if (marcador) inp.placeholder = marcador;
+    inp.value = valor || '';
+    td.appendChild(inp);
+    return td;
+  }
+
+  function renumber() {
+    tbody.querySelectorAll('tr').forEach(function (tr, i) {
+      var num = tr.querySelector('.row-num');
+      if (num) num.textContent = i + 1;
+    });
+  }
+
+  function buildRow(data) {
+    data = data || {};
+    var tr = document.createElement('tr');
+
+    var num = document.createElement('td');
+    num.className = 'row-num';
+    tr.appendChild(num);
+
+    tr.appendChild(celdaInput(
+      data.numero_pagina, 'Ej. 3 o 3-4', 'numero_pagina',
+    ));
+    tr.appendChild(celdaTexto(data.version || auto.version));
+    tr.appendChild(celdaInput(
+      data.descripcion, 'Describa el cambio realizado', 'descripcion',
+    ));
+    tr.appendChild(celdaTexto(data.fecha || auto.fecha));
+    tr.appendChild(celdaTexto(data.realizado_por || auto.realizado_por));
+    tr.appendChild(celdaTexto(data.autorizado_por || 'Pendiente'));
+
+    var tdBtn = document.createElement('td');
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn-remove-row';
+    btn.setAttribute('aria-label', 'Quitar fila');
+    btn.innerHTML = '&times;';
+    btn.addEventListener('click', function () {
+      tr.remove();
+      renumber();
+      sync();
+    });
+    tdBtn.appendChild(btn);
+    tr.appendChild(tdBtn);
+
+    tbody.appendChild(tr);
+    renumber();
+    sync();
+  }
+
+  function sync() {
+    var filas = [];
+    tbody.querySelectorAll('tr').forEach(function (tr) {
+      var pagina = tr.querySelector('[data-col="numero_pagina"]');
+      var descripcion = tr.querySelector('[data-col="descripcion"]');
+      var fila = {
+        numero_pagina: pagina ? pagina.value.trim() : '',
+        descripcion: descripcion ? descripcion.value.trim() : '',
+      };
+      if (fila.numero_pagina || fila.descripcion) filas.push(fila);
+    });
+    if (hidden) hidden.value = JSON.stringify(filas);
+    return filas;
+  }
+
+  var agregar = document.getElementById('for003-add');
+  if (agregar) {
+    agregar.addEventListener('click', function () {
+      buildRow({});
+      var primera = tbody.querySelector('tr:last-child input');
+      if (primera) primera.focus();
+    });
+  }
+
+  var form = tbody.closest('form');
+  if (form) form.addEventListener('submit', sync);
+
+  if (stored && stored.length) {
+    stored.forEach(buildRow);
+  } else if (!existente) {
+    buildRow({});
+  }
+  sync();
+})();
+</script>
+{% endif %}
+{% endif %}

@@ -1712,9 +1712,17 @@ def detalle_documento(request, tipo, documento_id):
     ).order_by('codigo')
     puede_crear_registro = puede_editar_documento(request.user, documento)
 
+    from .services import for_003 as svc_for_003
+
+    cambios_for_003 = [
+        svc_for_003.fila_a_dict(f)
+        for f in svc_for_003.filas_historicas(documento)
+    ]
+
     return render(request, 'documentos/detalle.html', {
         'documento': documento,
         'planilla_borrador': planilla_borrador,
+        'cambios_for_003': cambios_for_003,
         'tipo': tipo,
         'codigos_relacionados': codigos_relacionados,
         'versiones': versiones,
@@ -3351,6 +3359,25 @@ def crear_planilla(request):
             messages.error(request, 'No tienes permisos para editar este documento.')
             return redirect('documentos:detalle', tipo=documento.tipo_id, documento_id=documento.uuid)
 
+    # Auto-reanudar el borrador propio del documento: evita duplicados y
+    # pérdida de lo ya escrito (FOR-005 y filas FOR-003) al entrar de nuevo.
+    if (request.method == 'GET' and documento is not None
+            and planilla_existente is None and not planilla_uuid):
+        borrador = PlanillaCambios.objects.filter(
+            documento=documento, estado='borrador', responsable=request.user,
+        ).first()
+        if borrador is not None:
+            from urllib.parse import urlencode
+
+            consulta = urlencode({
+                'tipo': tipo_doc,
+                'doc_uuid': documento.uuid,
+                'planilla_uuid': borrador.uuid,
+            })
+            return redirect(
+                f"{reverse('documentos:crear_planilla')}?{consulta}"
+            )
+
     respuestas_formato = {}
 
     if request.method == 'POST':
@@ -3379,7 +3406,21 @@ def crear_planilla(request):
                 for err in errores_formato:
                     messages.error(request, err)
 
-        if form.is_valid() and not errores_formato:
+        from .services import for_003 as svc_for_003
+
+        try:
+            cambios_crudos = json.loads(
+                request.POST.get('cambios_for_003') or '[]'
+            )
+        except (TypeError, ValueError):
+            cambios_crudos = []
+        cambios_for_003, errores_for_003 = svc_for_003.parsear_filas(
+            cambios_crudos, parcial=(accion == 'borrador'),
+        )
+        for err in errores_for_003:
+            messages.error(request, err)
+
+        if form.is_valid() and not errores_formato and not errores_for_003:
             if formato_dinamico:
                 respuestas_formato['descripcion_cambio'] = (
                     form.cleaned_data.get('descripcion_propuesta') or ''
@@ -3431,6 +3472,8 @@ def crear_planilla(request):
             if accion == 'borrador':
                 planilla.estado = 'borrador'
                 planilla.save()
+                with transaction.atomic():
+                    svc_for_003.guardar_filas(planilla, cambios_for_003)
                 form.save_m2m()
                 _procesar_asociados_planilla(
                     planilla, request, permitir_asociados, documento, request.user
@@ -3439,6 +3482,8 @@ def crear_planilla(request):
                 return redirect('documentos:detalle_planilla', planilla_uuid=planilla.uuid)
             else:
                 planilla.save()
+                with transaction.atomic():
+                    svc_for_003.guardar_filas(planilla, cambios_for_003)
                 if planilla.solicitud_cambio:
                     _autollenar_envio(planilla.solicitud_cambio, request.user)
                 form.save_m2m()
@@ -3567,9 +3612,47 @@ def crear_planilla(request):
                 planilla_existente.solicitud_cambio.formato or formato_dinamico
             )
 
+    from .services import for_003 as svc_for_003
+
+    if request.method == 'POST' and 'cambios_for_003' in locals():
+        for_003_borrador = list(cambios_for_003)
+        for_003_existente = True
+    elif planilla_existente is not None:
+        for_003_borrador = [
+            svc_for_003.fila_a_dict(f)
+            for f in svc_for_003.filas_de_planilla(planilla_existente)
+        ]
+        for_003_existente = True
+    else:
+        for_003_borrador = []
+        for_003_existente = False
+
+    for_003_historico = (
+        [svc_for_003.fila_a_dict(f) for f in svc_for_003.filas_historicas(documento)]
+        if documento else []
+    )
+    for_003_auto = {
+        'version': proxima_version,
+        'fecha': timezone.localdate().strftime('%d/%m/%Y'),
+        'realizado_por': (
+            request.user.get_full_name() or request.user.username
+        ),
+        'descripcion': '',
+        'numero_pagina': '',
+        'autorizado_por': '',
+    }
+    for_003_editable = documento is not None and (
+        planilla_existente is None or planilla_existente.estado == 'borrador'
+    )
+
     return render(request, 'documentos/formulario_planilla.html', {
         'form': form,
         'planilla_existente': planilla_existente,
+        'for_003_borrador': for_003_borrador,
+        'for_003_historico': for_003_historico,
+        'for_003_auto': for_003_auto,
+        'for_003_existente': for_003_existente,
+        'for_003_editable': for_003_editable,
         'titulo': (
             f'Retomar planilla {planilla_existente.codigo}'
             if planilla_existente else
@@ -3632,8 +3715,16 @@ def detalle_planilla(request, planilla_uuid):
             if evaluador_aprobado:
                 espera_msg = 'Evaluado — pendiente de autorización por Gerencia General'
 
+    from .services import for_003 as svc_for_003
+
+    cambios_for_003 = [
+        svc_for_003.fila_a_dict(f)
+        for f in svc_for_003.filas_de_planilla(planilla)
+    ]
+
     return render(request, 'documentos/detalle_planilla.html', {
         'planilla': planilla, 'aprobaciones': aprobaciones,
+        'cambios_for_003': cambios_for_003,
         'documento': documento, 'departamentos_afectados': departamentos_afectados,
         'documentos_relacionados': documentos_relacionados,
         'solicitud_cambio': solicitud_cambio,
@@ -3642,6 +3733,85 @@ def detalle_planilla(request, planilla_uuid):
         'espera_msg': espera_msg,
         'mi_aprobacion_pendiente': mi_aprobacion_pendiente,
     })
+
+
+@login_required(login_url='/login/')
+def planilla_for_003(request, planilla_uuid, formato):
+    """Descarga (generando si hace falta) el FOR-003 de una planilla aprobada."""
+    from .permissions import puede_ver_documento
+    from .services import for_003 as svc_for_003
+
+    planilla = get_object_or_404(PlanillaCambios, uuid=planilla_uuid)
+    documento = planilla.documento
+    if documento is None or not puede_ver_documento(request.user, documento):
+        raise Http404
+    if formato not in ('xlsx', 'pdf'):
+        raise Http404
+    if planilla.tipo_cambio != 'modificacion':
+        messages.error(request, 'El FOR-003 solo aplica a modificaciones.')
+        return redirect('documentos:detalle_planilla', planilla_uuid=planilla.uuid)
+    if planilla.estado != 'aprobado':
+        messages.warning(request, 'El FOR-003 se genera al aprobar la planilla.')
+        return redirect('documentos:detalle_planilla', planilla_uuid=planilla.uuid)
+
+    resultado = svc_for_003.generar_y_guardar(planilla)
+    if not resultado.get('success'):
+        messages.error(request, resultado.get('error', 'No se pudo generar el FOR-003.'))
+        return redirect('documentos:detalle_planilla', planilla_uuid=planilla.uuid)
+
+    if formato == 'xlsx':
+        nombre = svc_for_003.nombre_archivo(planilla, 'xlsx')
+        return FileResponse(
+            planilla.for_003_xlsx.open('rb'), as_attachment=True,
+            filename=nombre,
+        )
+    if not planilla.for_003_pdf:
+        svc_for_003.generar_y_guardar(planilla, forzar=True)
+    if not planilla.for_003_pdf:
+        messages.error(request, 'No se pudo generar el PDF del FOR-003 (LibreOffice).')
+        return redirect('documentos:detalle_planilla', planilla_uuid=planilla.uuid)
+    nombre = svc_for_003.nombre_archivo(planilla, 'pdf')
+    return FileResponse(
+        planilla.for_003_pdf.open('rb'), as_attachment=True, filename=nombre,
+    )
+
+
+@login_required(login_url='/login/')
+def documento_for_003(request, tipo, documento_id, formato):
+    """Descarga la Tabla de cambios acumulada (FOR-003) de un documento."""
+    from .permissions import puede_ver_documento
+    from .services import for_003 as svc_for_003
+
+    documento = get_documento(tipo, documento_id)
+    if documento is None or not puede_ver_documento(request.user, documento):
+        raise Http404
+    if formato not in ('xlsx', 'pdf'):
+        raise Http404
+
+    filas = list(svc_for_003.filas_historicas(documento))
+    formato_obj = svc_for_003.formato_for_003()
+    if not filas or formato_obj is None:
+        messages.error(
+            request,
+            'El documento no tiene cambios autorizados para exportar.',
+        )
+        return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
+    try:
+        if formato == 'xlsx':
+            datos = svc_for_003.generar_xlsx(formato_obj, filas)
+        else:
+            datos = svc_for_003.generar_pdf(formato_obj, filas)
+    except ValueError as exc:
+        messages.error(request, str(exc))
+        return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
+    if not datos:
+        messages.error(request, 'No se pudo generar el PDF del FOR-003.')
+        return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
+
+    nombre = f"SGC-FOR-003_{documento.codigo.replace(' ', '_')}.{formato}"
+    return FileResponse(
+        io.BytesIO(datos), as_attachment=True, filename=nombre,
+    )
 
 
 @login_required(login_url='/login/')

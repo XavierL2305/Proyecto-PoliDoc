@@ -71,6 +71,26 @@ FOR_002_TABLA = {
 
 FOR_002_XLSX = 'SGC-FOR-002 Control de Dist Doc.xlsx'
 
+#: SGC-FOR-003 — Tabla de cambios y modificaciones (P1).
+#: Se genera desde la planilla de modificación (multifila), no desde el flujo
+#: de aprobación: ``aplica_*`` queda en False (badge "Planilla automática").
+FOR_003_XLSX = 'SGC-FOR-003 Tabla de Cam y Mod.xlsx'
+FOR_003_TABLA = {
+    'fila_inicio': 12,
+    'fila_fin': 23,
+    'max_filas': 12,
+    'columnas': [
+        {'clave': 'numero_pagina', 'etiqueta': 'Nº de página modificada',
+         'celda': 'A'},
+        {'clave': 'version', 'etiqueta': 'Versión', 'celda': 'B'},
+        {'clave': 'descripcion', 'etiqueta': 'Descripción del cambio',
+         'celda': 'C'},
+        {'clave': 'fecha', 'etiqueta': 'Fecha', 'celda': 'F'},
+        {'clave': 'realizado_por', 'etiqueta': 'Realizado por', 'celda': 'G'},
+        {'clave': 'autorizado_por', 'etiqueta': 'Autorizado por', 'celda': 'I'},
+    ],
+}
+
 #: Celda del sello de firma electrónica (debajo de la tabla de 33 filas).
 FOR_002_SELLO_CELDA = 'A52'
 
@@ -125,7 +145,10 @@ class Command(BaseCommand):
             + ('APPLY (escribe)' if aplicar else 'DRY-RUN (no escribe)')
         ))
 
-        implementados = {'SGC-FOR-002': self._integrar_for_002}
+        implementados = {
+            'SGC-FOR-002': self._integrar_for_002,
+            'SGC-FOR-003': self._integrar_for_003,
+        }
         for codigo in codigos:
             if codigo not in implementados:
                 self.stdout.write(self.style.WARNING(
@@ -146,7 +169,7 @@ class Command(BaseCommand):
 
     def _codigos(self, crudo):
         crudo = (crudo or '').strip()
-        implementados = ['SGC-FOR-002']
+        implementados = ['SGC-FOR-002', 'SGC-FOR-003']
         if not crudo:
             return implementados
         resultado = []
@@ -339,3 +362,107 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.SUCCESS(
                     f'  Columnas de "{campo.clave}": agregado campo "rol".'
                 ))
+
+    # ------------------------------------------------------------------
+    # SGC-FOR-003
+    # ------------------------------------------------------------------
+
+    def _integrar_for_003(self, aplicar, forzar, forzar_estructura=False,
+                          plantilla=''):
+        self.stdout.write(self.style.HTTP_INFO(
+            '\n=== SGC-FOR-003 — Tabla de cambios y modificaciones ==='
+        ))
+
+        origen = plantilla or self._ruta_plantilla(FOR_003_XLSX)
+        if not os.path.exists(origen):
+            raise CommandError(
+                f'No se encontró la plantilla del FOR-003: {origen}\n'
+                + (
+                    'Revisa la ruta indicada con --plantilla.'
+                    if plantilla else
+                    'Coloca el XLSX en documentacion/ o indica su ruta con '
+                    '--plantilla.'
+                )
+            )
+
+        existente = Formato.objects.filter(codigo='SGC-FOR-003').first()
+        estado = 'ACTUALIZAR' if existente else 'CREAR'
+        self.stdout.write(f'Formato: {estado} (plantilla {os.path.basename(origen)})')
+        self.stdout.write(
+            f'  Tabla: {FOR_003_TABLA["max_filas"]} filas '
+            f'({FOR_003_TABLA["fila_inicio"]}-{FOR_003_TABLA["fila_fin"]})'
+        )
+
+        if not aplicar:
+            self.stdout.write(self.style.WARNING(
+                '  [dry-run] No se modificó la base de datos. '
+                'Repite con --apply para escribir.'
+            ))
+            return
+
+        formato, _creado = Formato.objects.update_or_create(
+            codigo='SGC-FOR-003',
+            defaults={
+                'nombre': 'Tabla de Cambios y Modificaciones',
+                'version': '1',
+                'edicion': '1',
+                # Se genera desde la planilla de modificación.
+                'aplica_creacion': False,
+                'aplica_modificacion': False,
+                'aplica_eliminacion': False,
+                'activo': True,
+                'instructivo_html': '',
+            },
+        )
+
+        if forzar or not formato.plantilla_xlsx:
+            destino = self._destino_media('SGC-FOR-003')
+            os.makedirs(os.path.dirname(destino), exist_ok=True)
+            shutil.copy2(origen, destino)
+            formato.plantilla_xlsx = os.path.relpath(destino, settings.MEDIA_ROOT)
+            formato.save(update_fields=['plantilla_xlsx'])
+            self.stdout.write(self.style.SUCCESS(
+                f'  Plantilla copiada a MEDIA: {formato.plantilla_xlsx}'
+            ))
+        else:
+            self.stdout.write(
+                '  Plantilla ya existe; no se sobrescribe (usa --forzar-plantilla).'
+            )
+
+        self._recrear_estructura_003(formato, forzar=forzar_estructura)
+        self.stdout.write(self.style.SUCCESS(
+            '  Estructura y metadatos de SGC-FOR-003 listos.'
+        ))
+
+    def _recrear_estructura_003(self, formato, forzar=False):
+        """Una sección con la tabla multifila (columnas y rango del XLSX)."""
+        if not forzar and CampoFormato.objects.filter(
+            seccion__formato=formato, clave='cambios',
+        ).exists():
+            self.stdout.write('  Estructura existente conservada.')
+            return
+
+        if forzar:
+            formato.secciones.all().delete()
+
+        seccion, _ = SeccionFormato.objects.update_or_create(
+            formato=formato, titulo='Cambios y modificaciones',
+            defaults={'orden': 1},
+        )
+        CampoFormato.objects.update_or_create(
+            seccion=seccion, clave='cambios',
+            defaults={
+                'etiqueta': 'Tabla de cambios y modificaciones',
+                'tipo': 'tabla',
+                'origen': 'usuario',
+                'celda_excel': 'A12',
+                'requerido': True,
+                'orden': 1,
+                'config_tabla': FOR_003_TABLA,
+                'ayuda': (
+                    'Una fila por página o ítem modificado. La versión, '
+                    'fecha, realizado por y autorizado por se completan '
+                    'automáticamente desde la planilla.'
+                ),
+            },
+        )

@@ -170,6 +170,12 @@ def resolver_aprobacion_planilla(aprobacion, usuario, *, aprobada,
                 usuario=usuario, planilla=planilla, documento=doc,
                 cambios=cambios, observaciones=observaciones,
             )
+            # SGC-FOR-003: autoriza las filas capturadas en la modificación y
+            # programa la Tabla de cambios acumulada (XLSX/PDF).
+            if planilla.tipo_cambio == 'modificacion' and not es_plantilla:
+                from .for_003 import autorizar_y_programar
+
+                autorizar_y_programar(planilla, usuario, firma=firma)
         return {
             'planilla': planilla, 'documento': doc,
             'cambios': cambios, 'es_final': True,

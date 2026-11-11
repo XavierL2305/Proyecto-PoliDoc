@@ -78,3 +78,65 @@ def leer_celda(xlsx_bytes, ref):
     else:
         nodo = celda.find(f'{_NS_SS}v')
     return nodo.text if nodo is not None else None
+
+
+# ---------------------------------------------------------------------------
+# SGC-FOR-003 — Tabla de cambios y modificaciones
+# ---------------------------------------------------------------------------
+
+ARCHIVO_REAL_SGC003 = 'SGC-FOR-003 Tabla de Cam y Mod.xlsx'
+
+
+def ruta_plantilla_real_003(base):
+    """Ruta absoluta al XLSX oficial del FOR-003 (o ``None``)."""
+    ruta = os.path.join(str(base), 'documentacion', ARCHIVO_REAL_SGC003)
+    return ruta if os.path.exists(ruta) else None
+
+
+def crear_plantilla_for_003(ruta):
+    """XLSX mínimo con el layout del FOR-003 (tabla en filas 12-23).
+
+    Reproduce merges y cabeceras del formato oficial para que la generación
+    escriba en las mismas referencias (A/B/C/F/G/I).
+    """
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'SGC-FOR-003'
+
+    ws['C1'] = 'TABLA DE CAMBIOS Y MODIFICACIONES'
+    ws.merge_cells('C1:J2')
+    ws['C3'] = 'INFORMACION DOCUMENTADA'
+    ws.merge_cells('C3:J3')
+    ws['C4'] = '7.5.3.2 CONTROL DE LOS CAMBIOS'
+    ws.merge_cells('C4:J5')
+
+    for rango, texto in (
+        ('A6:B7', 'Nº DE IDENTIFICACION: SGC - FOR - 003'),
+        ('C6:D7', 'VERSION: 1'),
+        ('E6:F7', 'EDICION: 1'),
+        ('G6:H7', 'FECHA DE VIGENCIA: 18/03/2025'),
+        ('I6:J7', 'PAGINA: 1 DE 1'),
+        ('A8:J8', 'PROCEDIMIENTO DE CONTROL DE DOCUMENTOS'),
+        ('A10:A11', 'Nº DE PAGINA MODIFICADA'),
+        ('B10:B11', 'VERSIÒN'),
+        ('C10:E11', 'DESCRIPCION DEL CAMBIO'),
+        ('F10:F11', 'FECHA'),
+        ('G10:H11', 'REALIZADO POR'),
+        ('I10:J11', 'AUTORIZADO POR'),
+    ):
+        if ':' in rango:
+            ws.merge_cells(rango)
+        ws[rango.split(':')[0]] = texto
+
+    for fila in range(12, 24):
+        ws.merge_cells(f'C{fila}:E{fila}')
+        ws.merge_cells(f'G{fila}:H{fila}')
+        ws.merge_cells(f'I{fila}:J{fila}')
+
+    # La plantilla real incluye el instructivo en otra hoja.
+    idl = wb.create_sheet('SGC-IDL-009')
+    idl['B1'] = 'INSTRUCTIVO DE LLENADO PARA EL FORMULARIO'
+
+    os.makedirs(os.path.dirname(ruta), exist_ok=True)
+    wb.save(ruta)
+    return ruta

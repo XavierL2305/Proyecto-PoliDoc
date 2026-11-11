@@ -1061,6 +1061,18 @@ class PlanillaCambios(models.Model):
         verbose_name='PDF del Archivo Propuesto',
         help_text='PDF generado automáticamente del archivo propuesto para vista previa'
     )
+    #: Snapshot de la Tabla de cambios y modificaciones (SGC-FOR-003)
+    #: generado al aprobar la planilla (incluye todo el histórico del documento).
+    for_003_xlsx = models.FileField(
+        upload_to='planillas_cambios/for_003/%Y/%m/', blank=True, null=True,
+        verbose_name='FOR-003 XLSX generado',
+        help_text='Tabla de cambios acumulada del documento (hoja(s) SGC-FOR-003).',
+    )
+    for_003_pdf = models.FileField(
+        upload_to='planillas_cambios/for_003/%Y/%m/', blank=True, null=True,
+        verbose_name='FOR-003 PDF generado',
+        help_text='PDF de la Tabla de cambios (si LibreOffice está disponible).',
+    )
     solicitud_cambio = models.ForeignKey(
         'SolicitudCambio', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='planillas_cambios', verbose_name='Solicitud de Cambio asociada'
@@ -1145,6 +1157,80 @@ class AprobacionPlanilla(models.Model):
         ).exclude(estado__in=('rechazada', 'cancelada')).exclude(
             pk=self.pk,
         ).exists()
+
+
+class CambioDocumento(models.Model):
+    """Fila de la Tabla de cambios y modificaciones (SGC-FOR-003).
+
+    Cada modificación aporta una o más filas (multifila). Las filas de una
+    planilla en borrador se editan/reemplazan; al aprobar la planilla se
+    **autorizan** (nombre + fecha + firma SES) y pasan al histórico del
+    documento. Las filas de planillas rechazadas quedan como evidencia pero
+    no se incluyen en la tabla generada.
+    """
+
+    documento = models.ForeignKey(
+        Documento, on_delete=models.CASCADE,
+        related_name='cambios_for_003', verbose_name='Documento',
+    )
+    planilla = models.ForeignKey(
+        PlanillaCambios, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='cambios_for_003', verbose_name='Planilla de cambios',
+    )
+    numero_pagina = models.CharField(
+        max_length=50, blank=True, default='',
+        verbose_name='Nº de página modificada',
+        help_text='Página(s) del documento afectadas por el cambio.',
+    )
+    version = models.CharField(
+        max_length=20, verbose_name='Versión',
+        help_text='Versión resultante del documento.',
+    )
+    descripcion = models.TextField(
+        verbose_name='Descripción del cambio',
+    )
+    fecha = models.DateField(
+        default=timezone.localdate, verbose_name='Fecha del cambio',
+    )
+    realizado_por = models.ForeignKey(
+        User, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='cambios_for_003_realizados', verbose_name='Realizado por',
+    )
+    autorizado_por = models.ForeignKey(
+        User, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='cambios_for_003_autorizados', verbose_name='Autorizado por',
+    )
+    fecha_autorizacion = models.DateTimeField(
+        null=True, blank=True, verbose_name='Autorizado en',
+    )
+    firma_autorizacion = models.ForeignKey(
+        'FirmaElectronica', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='cambios_for_003_autorizados',
+        verbose_name='Firma SES de la autorización',
+    )
+    orden = models.PositiveIntegerField(default=0, verbose_name='Orden')
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Cambio de Documento (SGC-FOR-003)'
+        verbose_name_plural = 'Cambios de Documento (SGC-FOR-003)'
+        ordering = ['fecha', 'orden', 'id']
+        indexes = [
+            models.Index(
+                fields=['documento', 'fecha'], name='cambio_doc_fecha_idx',
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f'{self.documento.codigo} v{self.version} '
+            f'(pág. {self.numero_pagina or "—"})'
+        )
+
+    @property
+    def esta_autorizado(self):
+        return self.autorizado_por_id is not None
 
 
 class DocumentoAsociadoPlanilla(models.Model):

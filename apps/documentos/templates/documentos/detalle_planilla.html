@@ -154,6 +154,55 @@
       </div>
       {% endif %}
 
+      {% if cambios_for_003 %}
+      <div class="detail-card">
+        <div class="detail-header" style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;">
+          <h3>SGC-FOR-003 — Tabla de cambios y modificaciones</h3>
+          {% if planilla.estado == 'aprobado' %}
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+            <a class="btn btn--ghost btn--sm"
+               href="{% url 'documentos:planilla_for_003' planilla_uuid=planilla.uuid formato='xlsx' %}">XLSX</a>
+            <a class="btn btn--ghost btn--sm"
+               href="{% url 'documentos:planilla_for_003' planilla_uuid=planilla.uuid formato='pdf' %}">PDF</a>
+          </div>
+          {% endif %}
+        </div>
+        <div class="detail-body">
+          <div style="overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;font-size:0.8rem;">
+              <thead>
+                <tr style="color:var(--color-muted);text-align:left;">
+                  <th style="padding:0.4rem 0.3rem;">Nº página</th>
+                  <th style="padding:0.4rem 0.3rem;">Versión</th>
+                  <th style="padding:0.4rem 0.3rem;">Descripción</th>
+                  <th style="padding:0.4rem 0.3rem;">Fecha</th>
+                  <th style="padding:0.4rem 0.3rem;">Realizado por</th>
+                  <th style="padding:0.4rem 0.3rem;">Autorizado por</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for fila in cambios_for_003 %}
+                <tr style="border-top:1px solid var(--color-border);">
+                  <td style="padding:0.45rem 0.3rem;">{{ fila.numero_pagina|default:"—" }}</td>
+                  <td style="padding:0.45rem 0.3rem;">{{ fila.version }}</td>
+                  <td style="padding:0.45rem 0.3rem;">{{ fila.descripcion }}</td>
+                  <td style="padding:0.45rem 0.3rem;">{{ fila.fecha }}</td>
+                  <td style="padding:0.45rem 0.3rem;">{{ fila.realizado_por }}</td>
+                  <td style="padding:0.45rem 0.3rem;">{{ fila.autorizado_por|default:"Pendiente" }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% if planilla.estado != 'aprobado' %}
+          <p style="font-size:0.78rem;color:var(--color-muted);margin:0.75rem 0 0;">
+            Las filas se autorizan y la planilla FOR-003 se genera al aprobar esta modificación.
+          </p>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+
       {% if planilla.responsables_propuestos.all %}
       <div class="detail-card">
         <div class="detail-header"><h3>Responsables Propuestos (áreas)</h3></div>

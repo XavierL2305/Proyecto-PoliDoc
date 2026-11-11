@@ -2949,10 +2949,13 @@ origen (p. ej. en CI, donde `documentacion/` no está versionado),
 `--forzar-estructura` recrea secciones/campos (borra ediciones de la UI).
 
   29.1 ALCANCE IMPLEMENTADO
-    - SOLO SGC-FOR-002. Los demás SGC-FOR-003…018 quedan pendientes (el
-      comando los omite con aviso). No hay catálogo/menú de "Formatos SGC":
-      cada FOR se genera desde su flujo. `Formato.requiere_firma` NO existe
-      todavía; la firma se decide por la existencia de la plantilla FOR-002.
+    - SGC-FOR-002 (Control de Distribución) y SGC-FOR-003 (Tabla de cambios
+      y modificaciones, §29.7). Los demás SGC-FOR-004…018 quedan pendientes
+      (el comando los omite con aviso). No hay catálogo/menú de "Formatos
+      SGC": cada FOR se genera desde su flujo (el FOR-003 sí aparece en
+      Configuración → Formatos con badge "Planilla automática").
+      `Formato.requiere_firma` NO existe todavía; la firma se decide por la
+      existencia de la plantilla FOR-002.
     - For-002 no aplica a los flujos de aprobación
       (`aplica_creacion/modificacion/eliminacion=False`); en la lista de
       formatos aparece el badge "Planilla automática".
@@ -3046,6 +3049,35 @@ origen (p. ej. en CI, donde `documentacion/` no está versionado),
       archivo en CI).
 
 
+  29.7 SGC-FOR-003 — TABLA DE CAMBIOS Y MODIFICACIONES (migración 0063)
+    - Formato `SGC-FOR-003` "Tabla de Cambios y Modificaciones" (v1/e1),
+      `aplica_*=False` → badge "Planilla automática" en Configuración →
+      Formatos. La plantilla oficial se copia a MEDIA con
+      `integrar_formatos_sgc --solo=003 --apply`.
+    - Modelo `CambioDocumento`: filas multifila por documento (Nº página,
+      versión, descripción, fecha, realizado por, autorizado por, firma SES).
+      Las filas de una planilla en borrador se editan y se reemplazan; al
+      aprobar se autorizan con el autorizador final y pasan al histórico.
+      Las de planillas rechazadas quedan como evidencia pero NO se incluyen.
+    - UI: tarjeta SGC-FOR-003 en la planilla de modificación (FOR-005) con
+      histórico autorizado read-only + filas nuevas editables. Autocompleta
+      versión/fecha/realizado y deja "Pendiente" el autorizado. El borrador
+      persiste y al reingresar se precargan las filas; si se entra sin
+      `planilla_uuid`, el sistema reanuda el borrador propio del documento.
+    - Generación (`services/for_003.py`): XLSX con la plantilla oficial
+      (filas 12-23; A/B/C/F/G/I respetando merges C:E, G:H, I:J), sello SES
+      impreso debajo de la tabla (fila 25) y `PAGINA k DE n`. Si supera 12
+      cambios se agregan hojas `SGC-FOR-003 (2)`… (la hoja del instructivo
+      SGC-IDL-009 se conserva intacta). PDF vía LibreOffice.
+    - Al aprobar el paso final, `resolver_aprobacion_planilla` autoriza y
+      programa la generación (Celery con fallback en línea); se guarda en
+      `PlanillaCambios.for_003_xlsx/pdf`. Descargas: desde el detalle de la
+      planilla y desde la ficha del documento (histórico acumulado, generado
+      al vuelo si falta).
+    - Tests: `tests_for_003` (20) con plantilla sintética (incluye hoja
+      instructivo) para CI, sin depender de `documentacion/`.
+
+-------------------------------------------------------------------
 30. FIRMA ELECTRÓNICA DE DISTRIBUCIÓN (SES)
 ===================================================================
 
@@ -3326,6 +3358,9 @@ alternativas en docs/adr/0001-modelo-documento-formato-registro.md.
     - Distribución/acuse de registros (migración 0062) + enlace seguro de
       descarga, acuse escaneado, constancia, avisos/banner y WhatsApp
       opcional desactivado (§33.4).
+    - SGC-FOR-003 Tabla de cambios y modificaciones (migración 0063):
+      multifila en la planilla, autorización SES, XLSX/PDF multi-hoja y
+      descargas desde planilla y ficha (§29.7).
     - Pendiente de P1: campaña de revisión masiva (§34) y validación legal
       de los textos de aviso.
   35.4 P2

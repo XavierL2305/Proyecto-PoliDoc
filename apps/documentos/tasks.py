@@ -593,3 +593,35 @@ def generar_planillas_pendientes(self):
             revisadas, generadas, errores,
         )
     return {'revisadas': revisadas, 'generadas': generadas, 'errores': errores}
+
+
+@shared_task(bind=True, max_retries=1)
+def generar_for_003_planilla(self, planilla_id):
+    """Genera el XLSX/PDF de la Tabla de cambios (SGC-FOR-003) de una planilla.
+
+    Se dispara al autorizar una modificación. Nunca lanza: si falla, la
+    descarga del FOR-003 genera al vuelo (fallback del servicio).
+    """
+    from django.core.exceptions import ObjectDoesNotExist
+
+    try:
+        from .models import PlanillaCambios
+        from .services.for_003 import generar_y_guardar
+
+        planilla = PlanillaCambios.objects.get(pk=planilla_id)
+        resultado = generar_y_guardar(planilla, forzar=True)
+        if resultado.get('success'):
+            logger.info(
+                'FOR-003 generado para planilla %s', planilla.codigo,
+            )
+        else:
+            logger.warning(
+                'FOR-003 no generado para planilla %s: %s',
+                planilla.codigo, resultado.get('error'),
+            )
+        return resultado
+    except ObjectDoesNotExist:
+        return {'success': False, 'error': 'Planilla inexistente'}
+    except Exception as exc:  # noqa: BLE001
+        logger.error('Error generando FOR-003: %s', exc)
+        return {'success': False, 'error': str(exc)}
