@@ -107,6 +107,9 @@ class Command(BaseCommand):
                     {'clave': 'autorizado_por_fecha', 'etiqueta': 'Autorizado por (Fecha)',
                      'tipo': 'fecha', 'origen': 'autorizado_por_fecha',
                      'celda_excel': 'A28', 'incluir_etiqueta': True},
+                    {'clave': 'sello_firma', 'etiqueta': 'Sello de firma electrónica',
+                     'tipo': 'sello', 'origen': 'sello_firma',
+                     'celda_excel': 'A29'},
                 ],
             },
         ]

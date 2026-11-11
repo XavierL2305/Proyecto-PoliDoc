@@ -13,8 +13,9 @@ Reglas (idénticas a las del flujo en vivo):
 
 - Un solo paso (jefe → GG): el mismo aprobador firma ambos bloques.
 - Dos pasos: el evaluador firma Evaluado y el autorizador Autorizado.
-- Resolución: ``Rechazado`` si el paso que resolvió rechazó; ``Aceptado``
-  si se aprobó.
+- Resolución: ``Aceptado`` solo si el paso final aprobó. Un rechazo no
+  reconstruye nada: los bloques de firma quedan en blanco (trazabilidad en
+  auditoría y observaciones).
 
 Usa la fecha real de la respuesta (``fecha_respuesta``/``fecha_aprobacion``),
 solo rellena campos vacíos (con ``--force`` sobrescribe) y descarta el
@@ -125,9 +126,14 @@ class Command(BaseCommand):
         return self._reconstruir(pasos, fecha_attr='fecha_respuesta')
 
     def _reconstruir(self, pasos, fecha_attr):
-        """Reglas de firmas: un paso firma ambos; dos pasos, cada cual lo suyo."""
-        evaluado = next((p for p in pasos if p.rol_aprobador == 'evaluador'), None)
-        autorizado = next((p for p in pasos if p.rol_aprobador == 'autorizador'), None)
+        """Solo los pasos aprobados aportan firmas (el rechazo va en blanco)."""
+        aprobados = [p for p in pasos if p.estado == 'aprobada']
+        evaluado = next(
+            (p for p in aprobados if p.rol_aprobador == 'evaluador'), None,
+        )
+        autorizado = next(
+            (p for p in aprobados if p.rol_aprobador == 'autorizador'), None,
+        )
         valores = {}
         if evaluado and evaluado.aprobador:
             valores.update(_valores_evaluacion(
@@ -139,11 +145,8 @@ class Command(BaseCommand):
             if not evaluado:
                 # Un solo paso (jefe → GG): el mismo firma ambos bloques.
                 valores.update(_valores_evaluacion(autorizado.aprobador, fecha))
-        resuelta = autorizado or evaluado
-        if resuelta:
-            valores['resolucion'] = (
-                'Rechazado' if resuelta.estado == 'rechazada' else 'Aceptado'
-            )
+        if autorizado and autorizado.es_final:
+            valores['resolucion'] = 'Aceptado'
         return valores
 
     # ------------------------------------------------------------------

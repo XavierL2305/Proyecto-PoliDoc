@@ -11,10 +11,8 @@ from .permissions import (
     puede_transferir, documentos_usuario,
     puede_ver_documento, q_documentos_visibles
 )
-from .services.aprobacion_flujo import resolver_solicitud_documento
 from .services.aprobaciones import (
-    notificar_planilla_resuelta, resolver_aprobacion_planilla,
-    tomar_paso_esperando,
+    notificar_planilla_resuelta, tomar_paso_esperando,
 )
 from .cache_utils import tipos_activos
 from .jefatura import aprobadores_que_repr, es_delegado_vigente
@@ -584,6 +582,36 @@ def solicitudes_aprobacion_pendientes(request):
     return JsonResponse({'solicitudes': lista, 'total': len(lista)})
 
 
+def _firmar_paso(objeto, request, *, aprobada, observaciones):
+    """Firma un paso de aprobación con PIN y lo resuelve (motor único).
+
+    La resolución (``resolver_*``) ocurre dentro de ``firmar`` por el gancho
+    ``despues`` del spec, en la misma transacción. Devuelve
+    ``(firma, respuesta_error)``.
+    """
+    from .services.firmas import ErrorFirma, firmar, obtener_credencial
+
+    data = json.loads(request.body) if request.body else {}
+    try:
+        firma = firmar(
+            objeto,
+            usuario=request.user,
+            pin=data.get('pin', ''),
+            request=request,
+            metodo='pin',
+            crear=True,
+            datos={'aprobada': aprobada, 'observaciones': observaciones},
+            contexto={'request': request},
+        )
+    except ErrorFirma as exc:
+        return None, JsonResponse({
+            'success': False,
+            'mensaje': str(exc),
+            'requiere_pin': obtener_credencial(request.user) is None,
+        }, status=400)
+    return firma, None
+
+
 @login_required(login_url='/login/')
 @transaction.atomic
 def aprobar_creacion_documento(request, tipo, documento_id):
@@ -617,10 +645,24 @@ def aprobar_creacion_documento(request, tipo, documento_id):
         return JsonResponse({'success': False, 'mensaje': 'Solicitud no encontrada'}, status=404)
     data = json.loads(request.body) if request.body else {}
     observaciones = data.get('observaciones', '')
-    resultado = resolver_solicitud_documento(
-        request, solicitud, aprobada=True, observaciones=observaciones,
-    )
-    return JsonResponse({'success': True, 'mensaje': resultado['mensaje']})
+    if doc.es_plantilla:
+        # Plantillas: sin firma SES ni PIN (§31.6).
+        from .services.aprobacion_flujo import resolver_solicitud_documento
+
+        resultado = resolver_solicitud_documento(
+            request, solicitud, aprobada=True, observaciones=observaciones,
+        )
+    else:
+        firma, error = _firmar_paso(
+            solicitud, request, aprobada=True, observaciones=observaciones,
+        )
+        if error:
+            return error
+        resultado = getattr(firma, 'resultado', {}) or {}
+    return JsonResponse({
+        'success': True,
+        'mensaje': resultado.get('mensaje', 'Aprobación registrada'),
+    })
 
 
 @login_required(login_url='/login/')
@@ -657,10 +699,17 @@ def rechazar_creacion_documento(request, tipo, documento_id):
     motivo = data.get('motivo', '')
     if not motivo:
         return JsonResponse({'success': False, 'mensaje': 'El motivo de rechazo es requerido'}, status=400)
+    # El rechazo NO se firma (no pide PIN): solo devuelve el documento a
+    # correcciones. La trazabilidad queda en auditoría y observaciones.
+    from .services.aprobacion_flujo import resolver_solicitud_documento
+
     resultado = resolver_solicitud_documento(
         request, solicitud, aprobada=False, observaciones=motivo,
     )
-    return JsonResponse({'success': True, 'mensaje': resultado['mensaje']})
+    return JsonResponse({
+        'success': True,
+        'mensaje': resultado.get('mensaje', 'Solicitud rechazada'),
+    })
 
 
 # =====================================================================
@@ -730,10 +779,23 @@ def aprobar_planilla(request, planilla_uuid):
         return JsonResponse({'success': False, 'mensaje': 'Planilla no encontrada'}, status=404)
     data = json.loads(request.body) if request.body else {}
     observaciones = data.get('observaciones', '')
-    resultado = resolver_aprobacion_planilla(
-        aprobacion, user, aprobada=True, observaciones=observaciones,
-    )
-    if resultado['es_final']:
+    documento = getattr(planilla, 'documento', None)
+    if getattr(documento, 'es_plantilla', False):
+        # Plantillas: sin firma SES ni PIN (§31.6).
+        from .services.aprobaciones import resolver_aprobacion_planilla
+
+        resultado = resolver_aprobacion_planilla(
+            aprobacion, user, aprobada=True, observaciones=observaciones,
+            firma=None,
+        )
+    else:
+        firma, error = _firmar_paso(
+            aprobacion, request, aprobada=True, observaciones=observaciones,
+        )
+        if error:
+            return error
+        resultado = getattr(firma, 'resultado', {}) or {}
+    if resultado.get('es_final'):
         notificar_planilla_resuelta(planilla, True, observaciones)
         return JsonResponse({
             'success': True,
@@ -785,6 +847,9 @@ def rechazar_planilla(request, planilla_uuid):
     motivo = data.get('motivo', '')
     if not motivo:
         return JsonResponse({'success': False, 'mensaje': 'El motivo de rechazo es requerido'}, status=400)
+    # El rechazo NO se firma (no pide PIN).
+    from .services.aprobaciones import resolver_aprobacion_planilla
+
     resolver_aprobacion_planilla(
         aprobacion, user, aprobada=False, observaciones=motivo,
     )

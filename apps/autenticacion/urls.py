@@ -10,6 +10,7 @@ urlpatterns = [
     path('inicio/', views.dashboard_view, name='dashboard'),
     path('perfil/', views.perfil_usuario, name='perfil'),
     path('perfil/eliminar-foto/', views.eliminar_foto_perfil, name='eliminar_foto_perfil'),
+    path('perfil/pin/', views.firmar_pin_perfil, name='perfil_pin'),
 
     # Gestión de usuarios (Admin)
     path('usuarios/', views.gestionar_usuarios, name='gestionar_usuarios'),

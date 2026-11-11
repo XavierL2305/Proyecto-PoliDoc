@@ -71,6 +71,9 @@ FOR_002_TABLA = {
 
 FOR_002_XLSX = 'SGC-FOR-002 Control de Dist Doc.xlsx'
 
+#: Celda del sello de firma electrónica (debajo de la tabla de 33 filas).
+FOR_002_SELLO_CELDA = 'A52'
+
 
 class Command(BaseCommand):
     help = (
@@ -250,6 +253,7 @@ class Command(BaseCommand):
                 'para recrearla desde la especificación).'
             ))
             self._asegurar_roles(formato)
+            self._asegurar_sello(formato)
             return
 
         formato.secciones.all().delete()
@@ -283,6 +287,29 @@ class Command(BaseCommand):
             etiqueta='Destinatarios', tipo='tabla', origen='usuario',
             requerido=False, orden=0,
             config_tabla=copy.deepcopy(FOR_002_TABLA),
+        )
+        # Sello de evidencia SES debajo de la tabla (una línea por firma).
+        CampoFormato.objects.create(
+            seccion=seccion_tabla, clave='sello_firma',
+            etiqueta='Sello de firma electrónica', tipo='sello',
+            origen='sello_firma', celda_excel=FOR_002_SELLO_CELDA,
+            requerido=False, orden=1,
+        )
+
+    def _asegurar_sello(self, formato):
+        """Agrega el campo ``sello`` si la estructura previa no lo tenía."""
+        if CampoFormato.objects.filter(
+            seccion__formato=formato, tipo='sello',
+        ).exists():
+            return
+        seccion = formato.secciones.order_by('-orden').first()
+        if seccion is None:
+            return
+        CampoFormato.objects.create(
+            seccion=seccion, clave='sello_firma',
+            etiqueta='Sello de firma electrónica', tipo='sello',
+            origen='sello_firma', celda_excel=FOR_002_SELLO_CELDA,
+            requerido=False, orden=99,
         )
 
     def _asegurar_roles(self, formato):

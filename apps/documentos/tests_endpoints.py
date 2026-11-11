@@ -307,18 +307,20 @@ class APIAprobarCreacionTest(BaseDocumentosTest):
 
     def test_aprobar_creacion(self):
         self.client.login(username='jefe_ti', password='testpass123')
+        self.crear_pin_firma(self.user_jefe_ti)
         resp = self.client.post(
             f'/documentos/api/procedimientos_generales/{self.doc_en_revision.uuid}/aprobar-creacion/',
-            data=json.dumps({'observaciones': 'Aprobado'}),
+            data=json.dumps({'observaciones': 'Aprobado', 'pin': '1234'}),
             content_type='application/json',
         )
         self.assertEqual(resp.status_code, 200)
 
     def test_rechazar_creacion_con_motivo(self):
         self.client.login(username='jefe_ti', password='testpass123')
+        self.crear_pin_firma(self.user_jefe_ti)
         resp = self.client.post(
             f'/documentos/api/procedimientos_generales/{self.doc_en_revision.uuid}/rechazar-creacion/',
-            data=json.dumps({'motivo': 'No cumple estándares'}),
+            data=json.dumps({'motivo': 'No cumple estándares', 'pin': '1234'}),
             content_type='application/json',
         )
         self.assertEqual(resp.status_code, 200)
@@ -359,10 +361,15 @@ class APIAprobarCambioEstadoTest(BaseDocumentosTest):
         self.client = Client()
 
     def _aprobar(self, doc, username, observaciones=''):
+        from django.contrib.auth.models import User
+
         self.client.login(username=username, password='testpass123')
+        self.crear_pin_firma(User.objects.get(username=username))
         return self.client.post(
             f'/documentos/api/{doc.tipo_id}/{doc.uuid}/aprobar-creacion/',
-            data=json.dumps({'observaciones': observaciones}),
+            data=json.dumps({
+                'observaciones': observaciones, 'pin': '1234',
+            }),
             content_type='application/json',
         )
 
@@ -419,9 +426,10 @@ class APIAprobarCambioEstadoTest(BaseDocumentosTest):
     def test_rechazar_inhabilitar_no_marca_obsoleto(self):
         self._solicitar(self.doc_activo, 'inhabilitar', 'jefe_ti')
         self.client.login(username='jefe_gg', password='testpass123')
+        self.crear_pin_firma(self.user_jefe_gg)
         resp = self.client.post(
             f'/documentos/api/{self.doc_activo.tipo_id}/{self.doc_activo.uuid}/rechazar-creacion/',
-            data=json.dumps({'motivo': 'Se mantiene vigente'}),
+            data=json.dumps({'motivo': 'Se mantiene vigente', 'pin': '1234'}),
             content_type='application/json',
         )
         self.assertEqual(resp.status_code, 200)
@@ -506,9 +514,10 @@ class APIAprobarPlanillaTest(BaseDocumentosTest):
 
     def test_aprobar_planilla(self):
         self.client.login(username='jefe_ti', password='testpass123')
+        self.crear_pin_firma(self.user_jefe_ti)
         resp = self.client.post(
             f'/documentos/api/planilla/{self.planilla.uuid}/aprobar/',
-            data=json.dumps({'observaciones': 'Aprobado'}),
+            data=json.dumps({'observaciones': 'Aprobado', 'pin': '1234'}),
             content_type='application/json',
         )
         self.assertEqual(resp.status_code, 200)
@@ -519,9 +528,10 @@ class APIAprobarPlanillaTest(BaseDocumentosTest):
         self.planilla.afecta_todos = True
         self.planilla.save(update_fields=['afecta_todos'])
         self.client.login(username='jefe_ti', password='testpass123')
+        self.crear_pin_firma(self.user_jefe_ti)
         resp = self.client.post(
             f'/documentos/api/planilla/{self.planilla.uuid}/aprobar/',
-            data=json.dumps({'observaciones': 'ok'}),
+            data=json.dumps({'observaciones': 'ok', 'pin': '1234'}),
             content_type='application/json',
         )
         self.assertEqual(resp.status_code, 200)
@@ -530,9 +540,10 @@ class APIAprobarPlanillaTest(BaseDocumentosTest):
 
     def test_rechazar_planilla_con_motivo(self):
         self.client.login(username='jefe_ti', password='testpass123')
+        self.crear_pin_firma(self.user_jefe_ti)
         resp = self.client.post(
             f'/documentos/api/planilla/{self.planilla.uuid}/rechazar/',
-            data=json.dumps({'motivo': 'No aplica'}),
+            data=json.dumps({'motivo': 'No aplica', 'pin': '1234'}),
             content_type='application/json',
         )
         self.assertEqual(resp.status_code, 200)
@@ -1088,10 +1099,11 @@ class VerificacionCambioEstadoTest(BaseDocumentosTest):
         )
         mock_log.reset_mock()
         self.client.login(username='jefe_gg', password='testpass123')
+        self.crear_pin_firma(self.user_jefe_gg)
         resp = self.client.post(
             f'/documentos/api/{self.doc_activo.tipo_id}/'
             f'{self.doc_activo.uuid}/aprobar-creacion/',
-            data=json.dumps({'observaciones': 'aprobado'}),
+            data=json.dumps({'observaciones': 'aprobado', 'pin': '1234'}),
             content_type='application/json',
         )
         self.assertEqual(resp.status_code, 200)
@@ -1304,9 +1316,10 @@ class VistasPlanillaTest(BaseDocumentosTest):
             estado='pendiente',
         )
         self.client.login(username='jefe_ti', password='testpass123')
+        self.crear_pin_firma(self.user_jefe_ti)
         resp = self.client.post(
             f'/documentos/planilla-cambios/{self.planilla.uuid}/aprobar/',
-            data={'accion': 'aprobar'},
+            data={'accion': 'aprobar', 'pin': '1234'},
         )
         self.assertEqual(resp.status_code, 302)
 
@@ -2378,9 +2391,10 @@ class BandejaDepartamentoTest(BaseDocumentosTest):
             self.doc_en_revision, self.user_jefe_ti, self.user_trabajador,
         )
         self.client.login(username='jefe_ti', password='testpass123')
+        self.crear_pin_firma(self.user_jefe_ti)
         resp = self.client.post(
             f'/documentos/api/{self.doc_en_revision.tipo_id}/{self.doc_en_revision.uuid}/aprobar-creacion/',
-            data='{"observaciones": "OK"}',
+            data='{"observaciones": "OK", "pin": "1234"}',
             content_type='application/json',
         )
         self.assertEqual(resp.status_code, 200)

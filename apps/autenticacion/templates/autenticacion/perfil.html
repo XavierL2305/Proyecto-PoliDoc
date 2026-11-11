@@ -163,6 +163,42 @@
           </div>
         </div>
       </div>
+      <div class="profile-card" id="firma-electronica" style="margin-top: 1.5rem;">
+        <div class="profile-card-header">
+          <h3><i class="fa-solid fa-signature"></i> Firma electrónica</h3>
+          <p class="profile-card-subtitle">
+            PIN local para firmar aprobaciones y distribuciones. No es tu contraseña de red.
+          </p>
+        </div>
+        <div style="padding: 1rem 1.25rem 1.25rem;">
+          {% if credencial %}
+          <p style="font-size: .875rem; margin: 0 0 1rem;">
+            PIN configurado{% if credencial.esta_bloqueada %} — bloqueado temporalmente por intentos fallidos{% endif %}.
+          </p>
+          {% else %}
+          <p style="font-size: .875rem; margin: 0 0 1rem; color: var(--color-muted);">
+            Aún no tienes PIN de firma. Créalo para poder aprobar documentos.
+          </p>
+          {% endif %}
+          <form method="post" action="{% url 'autenticacion:perfil_pin' %}"
+                style="display:flex;flex-wrap:wrap;gap:.75rem;align-items:flex-end;max-width:620px;">
+            {% csrf_token %}
+            <div class="profile-form-group" style="flex:1 1 180px;margin:0;">
+              <label class="form-label">{% if credencial %}Nuevo PIN{% else %}PIN{% endif %}</label>
+              <input type="password" name="pin" inputmode="numeric" autocomplete="new-password"
+                    class="form-input" required minlength="4" maxlength="12" placeholder="4 a 12 dígitos">
+            </div>
+            <div class="profile-form-group" style="flex:1 1 180px;margin:0;">
+              <label class="form-label">Confirmar PIN</label>
+              <input type="password" name="pin2" inputmode="numeric" autocomplete="new-password"
+                    class="form-input" required minlength="4" maxlength="12">
+            </div>
+            <button type="submit" class="btn btn--primary">
+              {% if credencial %}Cambiar PIN{% else %}Crear PIN{% endif %}
+            </button>
+          </form>
+        </div>
+      </div>
     </div>
   </div>
 

@@ -1,0 +1,104 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Registros de formato - POLIDOC{% endblock %}
+
+{% block app_content %}
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
+  <div>
+    <h1 style="font-size:1.25rem;margin:0;">Registros de formato</h1>
+    <p style="color:var(--color-muted);font-size:.875rem;margin:.35rem 0 0;">
+      Instancias llenas de un formato. El código del formato se repite; cada
+      registro se distingue por su contexto y fecha.
+    </p>
+  </div>
+</div>
+
+<form method="get" class="form-card"
+      style="padding:1rem;margin-bottom:1rem;display:flex;gap:.75rem;flex-wrap:wrap;align-items:flex-end;">
+  <div class="form-group" style="margin:0;flex:1 1 240px;">
+    <label class="form-label">Formato</label>
+    <select name="formato" class="form-input">
+      <option value="">Todos</option>
+      {% for f in formatos %}
+      <option value="{{ f.id }}" {% if filtro_formato == f.id|stringformat:'s' %}selected{% endif %}>
+        {{ f.codigo }} — {{ f.nombre }}
+      </option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="form-group" style="margin:0;flex:0 1 180px;">
+    <label class="form-label">Estado</label>
+    <select name="estado" class="form-input">
+      <option value="">Todos</option>
+      {% for valor, etiqueta in estados %}
+      <option value="{{ valor }}" {% if filtro_estado == valor %}selected{% endif %}>{{ etiqueta }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="form-group" style="margin:0;flex:1 1 220px;">
+    <label class="form-label">Buscar</label>
+    <input type="text" name="q" value="{{ q }}" class="form-input"
+           placeholder="Título o código del formato">
+  </div>
+  <button type="submit" class="btn btn--primary">Filtrar</button>
+</form>
+
+<div class="form-card">
+  <div class="form-card-body" style="padding:0;">
+    {% if registros %}
+    <div style="overflow-x:auto;">
+      <table class="table" style="width:100%;">
+        <thead>
+          <tr>
+            <th>Código</th>
+            <th>Título</th>
+            <th>Contexto</th>
+            <th>Responsable</th>
+            <th>Fecha</th>
+            <th>Estado</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in registros %}
+          <tr>
+            <td><strong>{{ r.formato_codigo }}</strong></td>
+            <td>{{ r.titulo }}</td>
+            <td style="font-size:.8rem;color:var(--color-muted);">{{ r.contexto_tipo }}: {{ r.contexto_id|truncatechars:14 }}</td>
+            <td>{{ r.responsable.get_full_name|default:r.responsable.username }}</td>
+            <td>{{ r.fecha|date:"d/m/Y" }}</td>
+            <td>
+              <span class="badge badge--{% if r.estado == 'aprobado' %}success{% elif r.estado == 'rechazado' %}danger{% elif r.estado == 'en_revision' %}warning{% elif r.estado == 'obsoleto' %}secondary{% else %}info{% endif %}">
+                {{ r.get_estado_display }}
+              </span>
+            </td>
+            <td style="text-align:right;">
+              <a href="{% url 'documentos:registro_detalle' registro_uuid=r.uuid %}"
+                 class="btn btn--ghost btn--sm">Ver</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state" style="padding:2rem;text-align:center;color:var(--color-muted);">
+      <p>No hay registros{% if q or filtro_estado or filtro_formato %} con esos filtros{% endif %}.</p>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{% if page_obj.has_other_pages %}
+<div style="display:flex;gap:.5rem;justify-content:center;margin-top:1rem;">
+  {% if page_obj.has_previous %}
+  <a class="btn btn--ghost btn--sm" href="?page={{ page_obj.previous_page_number }}&formato={{ filtro_formato }}&estado={{ filtro_estado }}&q={{ q }}">Anterior</a>
+  {% endif %}
+  <span class="badge">Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</span>
+  {% if page_obj.has_next %}
+  <a class="btn btn--ghost btn--sm" href="?page={{ page_obj.next_page_number }}&formato={{ filtro_formato }}&estado={{ filtro_estado }}&q={{ q }}">Siguiente</a>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

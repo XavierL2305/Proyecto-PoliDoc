@@ -211,8 +211,11 @@ class PlanillaClasificacionAprobacionTest(BaseDocumentosTest):
 
     def test_aprobar_web_aplica_la_clasificacion(self):
         self.client.login(username='jefe_gg', password='testpass123')
+        self.crear_pin_firma(self.user_jefe_gg)
         url = reverse('documentos:aprobar_planilla', args=[self.planilla.uuid])
-        resp = self.client.post(url, {'accion': 'aprobar', 'observaciones': 'ok'})
+        resp = self.client.post(
+            url, {'accion': 'aprobar', 'observaciones': 'ok', 'pin': '1234'},
+        )
 
         self.assertEqual(resp.status_code, 302)
         self.planilla.refresh_from_db()
@@ -222,8 +225,11 @@ class PlanillaClasificacionAprobacionTest(BaseDocumentosTest):
 
     def test_rechazo_web_no_aplica_la_clasificacion(self):
         self.client.login(username='jefe_gg', password='testpass123')
+        self.crear_pin_firma(self.user_jefe_gg)
         url = reverse('documentos:aprobar_planilla', args=[self.planilla.uuid])
-        self.client.post(url, {'accion': 'rechazar', 'observaciones': 'No procede'})
+        self.client.post(
+            url, {'accion': 'rechazar', 'observaciones': 'No procede', 'pin': '1234'},
+        )
 
         self.doc_activo.refresh_from_db()
         self.assertEqual(self.doc_activo.clasificacion, 'interno')
@@ -247,9 +253,10 @@ class PlanillaClasificacionAPITest(BaseDocumentosTest):
 
     def test_aprobar_api_aplica_la_clasificacion(self):
         self.client.login(username='jefe_ti', password='testpass123')
+        self.crear_pin_firma(self.user_jefe_ti)
         resp = self.client.post(
             f'/documentos/api/planilla/{self.planilla.uuid}/aprobar/',
-            data=json.dumps({'observaciones': 'ok'}),
+            data=json.dumps({'observaciones': 'ok', 'pin': '1234'}),
             content_type='application/json',
         )
         self.assertEqual(resp.status_code, 200)
@@ -289,9 +296,12 @@ class PlanillaClasificacionAuditoriaTest(BaseDocumentosTest):
         client, store = _fake_mongo()
         self.client = Client()
         self.client.login(username='jefe_gg', password='testpass123')
+        self.crear_pin_firma(self.user_jefe_gg)
         url = reverse('documentos:aprobar_planilla', args=[planilla.uuid])
         with patch(MONGO_PATCH_TARGET, return_value=client):
-            self.client.post(url, {'accion': 'aprobar', 'observaciones': 'ok'})
+            self.client.post(
+                url, {'accion': 'aprobar', 'observaciones': 'ok', 'pin': '1234'},
+            )
             drenar_outbox()
 
         registros = _registros(store, 'audit_logs')

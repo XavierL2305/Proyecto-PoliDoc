@@ -1,0 +1,65 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}{% if edicion %}Editar{% else %}Nuevo{% endif %} registro - POLIDOC{% endblock %}
+
+{% block app_content %}
+<div class="form-card" style="max-width:900px;margin:0 auto;">
+  <div class="form-card-header">
+    <h3>
+      {% if edicion %}Editar{% else %}Nuevo{% endif %} registro ·
+      {{ formato.codigo }} — {{ formato.nombre }}
+    </h3>
+    <p style="font-size:.8rem;color:var(--color-muted);margin:.35rem 0 0;">
+      Edición {{ formato.edicion }} · versión {{ formato.version }}.
+      El código del formato se repite en cada registro.
+    </p>
+  </div>
+  <form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    <input type="hidden" name="formato" value="{{ formato.id }}">
+    <input type="hidden" name="contexto_tipo" value="{{ contexto_tipo }}">
+    <input type="hidden" name="contexto_id" value="{{ contexto_id }}">
+    <div class="form-card-body">
+      {% if documento_contexto %}
+      <div class="alert alert--info" style="margin-bottom:1rem;">
+        Contexto: <strong>{{ documento_contexto.codigo }}</strong> —
+        {{ documento_contexto.nombre }}.
+      </div>
+      {% endif %}
+
+      <div class="form-group">
+        <label class="form-label">Título <span style="color:var(--color-danger);">*</span></label>
+        {{ form.titulo }}
+        {% if form.titulo.errors %}<p class="form-error">{{ form.titulo.errors|join:', ' }}</p>{% endif %}
+      </div>
+      <div class="form-group">
+        <label class="form-label">Descripción</label>
+        {{ form.descripcion }}
+      </div>
+      <div style="display:flex;gap:1rem;flex-wrap:wrap;">
+        <div class="form-group" style="flex:1 1 200px;">
+          <label class="form-label">Fecha</label>
+          {{ form.fecha }}
+        </div>
+        <div class="form-group" style="flex:2 1 280px;">
+          <label class="form-label">Archivo (opcional)</label>
+          {{ form.archivo }}
+        </div>
+      </div>
+
+      <hr style="margin:1.25rem 0;">
+      {% include 'documentos/_formato_dinamico.html' with formato=formato respuestas=respuestas read_only=False %}
+    </div>
+    <div class="form-card-footer">
+      {% if edicion %}
+      <a class="btn btn--ghost"
+         href="{% url 'documentos:registro_detalle' registro_uuid=registro.uuid %}">Cancelar</a>
+      {% else %}
+      <a class="btn btn--ghost" href="{% url 'documentos:registros_lista' %}">Cancelar</a>
+      {% endif %}
+      <button type="submit" class="btn btn--primary">Guardar registro</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

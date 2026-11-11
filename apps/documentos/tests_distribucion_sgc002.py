@@ -154,7 +154,7 @@ class CrearDistribucionesTest(BaseSgc002Test):
         self.assertIsNotNone(dist.lote)
         self.assertEqual(dist.estado_firma, 'pendiente')
 
-        firma = FirmaElectronica.objects.get(distribucion=dist)
+        firma = FirmaElectronica.para(dist).get()
         self.assertEqual(firma.tipo, 'externa')
         self.assertEqual(firma.estado, 'pendiente')
         self.assertEqual(firma.firmante_email, 'proveedor@example.com')
@@ -287,7 +287,7 @@ class FirmaInternaTest(BaseSgc002Test):
         self.user_trabajador.save(update_fields=['email'])
         self._crear(internos=[self.user_trabajador], metodo='sistema')
         self.dist = DistribucionDocumento.objects.get(documento=self.doc_activo)
-        self.firma = FirmaElectronica.objects.get(distribucion=self.dist)
+        self.firma = FirmaElectronica.para(self.dist).get()
 
     def test_pin_y_firma_completa(self):
         svc_firmas.establecer_pin(self.user_trabajador, '1234', '1234')
@@ -358,7 +358,7 @@ class FirmaExternaTest(BaseSgc002Test):
         super().setUp()
         self._crear(externos=[self._externo()], metodo='sistema')
         self.dist = DistribucionDocumento.objects.get(documento=self.doc_activo)
-        self.firma = FirmaElectronica.objects.get(distribucion=self.dist)
+        self.firma = FirmaElectronica.para(self.dist).get()
 
     def _invitacion(self, token=None, expira=None):
         token = token or secrets.token_urlsafe(24)
@@ -436,7 +436,7 @@ class VistasSgc002Test(BaseSgc002Test):
         self.assertEqual(resp.status_code, 302)
         dist = DistribucionDocumento.objects.get(documento=self.doc_activo)
         self.assertEqual(dist.nombre_externo, 'Ente Externo')
-        self.assertTrue(FirmaElectronica.objects.filter(distribucion=dist).exists())
+        self.assertTrue(FirmaElectronica.para(dist).exists())
 
     def test_post_externo_email_invalido(self):
         import json
@@ -503,7 +503,7 @@ class VistasSgc002Test(BaseSgc002Test):
         self.assertTrue(hasattr(self.user_trabajador, 'firma_credencial'))
 
         # Firmar usando un OTP generado por el servicio.
-        firma = FirmaElectronica.objects.get(distribucion=dist)
+        firma = FirmaElectronica.para(dist).get()
         codigo = svc_firmas.generar_otp(firma)
         resp = self.client.post(reverse(
             'documentos:firmar_distribucion',
@@ -516,7 +516,7 @@ class VistasSgc002Test(BaseSgc002Test):
     def test_firmar_invitacion_publica(self):
         self._crear(externos=[self._externo()], metodo='sistema')
         dist = DistribucionDocumento.objects.get(documento=self.doc_activo)
-        firma = FirmaElectronica.objects.get(distribucion=dist)
+        firma = FirmaElectronica.para(dist).get()
         token = secrets.token_urlsafe(24)
         InvitacionFirma.objects.create(
             firma=firma,

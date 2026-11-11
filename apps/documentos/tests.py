@@ -3903,8 +3903,11 @@ class AprobarPlanillaWebTest(BaseDocumentosTest):
         """Regresión: el rechazo web dejaba la planilla en 'en_revision'."""
         from django.urls import reverse
         self.client.login(username='jefe_gg', password='testpass123')
+        self.crear_pin_firma(self.user_jefe_gg)
         url = reverse('documentos:aprobar_planilla', args=[self.planilla.uuid])
-        resp = self.client.post(url, {'accion': 'rechazar', 'observaciones': 'No procede'})
+        resp = self.client.post(
+            url, {'accion': 'rechazar', 'observaciones': 'No procede', 'pin': '1234'},
+        )
         self.assertEqual(resp.status_code, 302)
         self.planilla.refresh_from_db()
         self.aprobacion.refresh_from_db()

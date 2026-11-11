@@ -6,7 +6,7 @@ from .models import (
     AprobacionPlanilla, DocumentoAsociadoPlanilla,
     DistribucionDocumento, SolicitudAprobacionDocumento,
     ReferenciaDocumento, Formato, SeccionFormato, CampoFormato,
-    SolicitudCambio,
+    SolicitudCambio, RegistroFormato,
 )
 
 
@@ -127,8 +127,11 @@ class ReferenciaDocumentoAdmin(admin.ModelAdmin):
 
 @admin.register(Formato)
 class FormatoAdmin(admin.ModelAdmin):
-    list_display = ['codigo', 'nombre', 'version', 'edicion', 'fecha_vigencia', 'activo']
-    list_filter = ['activo']
+    list_display = [
+        'codigo', 'nombre', 'version', 'edicion', 'fecha_vigencia',
+        'activo', 'permite_registros',
+    ]
+    list_filter = ['activo', 'permite_registros']
     search_fields = ['codigo', 'nombre']
 
 
@@ -153,3 +156,14 @@ class SolicitudCambioAdmin(admin.ModelAdmin):
     search_fields = ['codigo', 'solicitante__username', 'documento__codigo']
     raw_id_fields = ['formato', 'documento', 'solicitante', 'departamento']
     readonly_fields = ['planilla_xlsx', 'planilla_pdf']
+
+
+@admin.register(RegistroFormato)
+class RegistroFormatoAdmin(admin.ModelAdmin):
+    list_display = [
+        'formato_codigo', 'titulo', 'contexto_tipo', 'contexto_id',
+        'responsable', 'estado', 'fecha',
+    ]
+    list_filter = ['estado', 'formato', 'contexto_tipo']
+    search_fields = ['formato_codigo', 'titulo', 'contexto_id']
+    readonly_fields = ['uuid', 'hash_integridad', 'creado', 'actualizado']

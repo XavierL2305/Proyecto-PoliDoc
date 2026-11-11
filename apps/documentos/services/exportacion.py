@@ -37,6 +37,25 @@ def _cell_col_idx(ref):
     return _col_to_idx(col)
 
 
+def _ref_desplazada(ref, offset):
+    """``'A29'`` + 1 → ``'A30'`` (para sellos multilínea)."""
+    ref = (ref or '').strip().upper()
+    if not offset:
+        return ref
+    col = ''
+    fila = ''
+    for ch in ref:
+        if ch.isalpha():
+            col += ch
+        elif ch.isdigit():
+            fila += ch
+        else:
+            break
+    if not col or not fila:
+        return ref
+    return f'{col}{int(fila) + offset}'
+
+
 def _build_inline_cell(ref, text, style='0'):
     """Build an inlineStr cell element."""
     cell = etree.Element(f'{{{NS["s"]}}}c')
@@ -111,8 +130,14 @@ def exportar_xlsx(solicitud):
         bytes: El contenido XLSX generado.
     """
     from ..models import respuestas_planilla_actual
+    from .firmas import firmas_de_solicitud, respuestas_con_sello
 
-    return exportar_xlsx_formato(solicitud.formato, respuestas_planilla_actual(solicitud))
+    respuestas = respuestas_planilla_actual(solicitud)
+    if solicitud.formato:
+        respuestas = respuestas_con_sello(
+            solicitud.formato, firmas_de_solicitud(solicitud), respuestas,
+        )
+    return exportar_xlsx_formato(solicitud.formato, respuestas)
 
 
 def exportar_xlsx_formato(formato, respuestas):
@@ -195,6 +220,15 @@ def _patch_sheet1(sheet_data, formato, respuestas, shared_strings):
                 full_text = str(valor)
             cell = _build_inline_cell(ref, full_text, style)
             _replace_or_add_cell(root, cell, ref)
+
+        elif campo.tipo == 'sello' and campo.celda_excel and valor:
+            ref_base = campo.celda_excel.strip().split(':')[0]
+            lineas = valor if isinstance(valor, (list, tuple)) else [valor]
+            for i, linea in enumerate(lineas):
+                ref = _ref_desplazada(ref_base, i)
+                style = _get_existing_style(root, ref)
+                cell = _build_inline_cell(ref, str(linea), style)
+                _replace_or_add_cell(root, cell, ref)
 
         elif campo.tipo == 'tabla' and valor:
             config = campo.config_tabla or {}

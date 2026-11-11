@@ -1,3 +1,4 @@
+import io
 import os
 import json
 import logging
@@ -10,6 +11,7 @@ from django.contrib import messages
 from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.http import FileResponse, Http404, JsonResponse
+from django.views.decorators.http import require_POST
 from django.urls import reverse
 from django.utils import timezone
 from django.db.models import Q, Count
@@ -22,12 +24,12 @@ from .models import (
     DocumentoAsociadoPlanilla, DistribucionDocumento, SolicitudAccesoDocumento,
     RenovacionVencimiento, ReferenciaDocumento, Formato, SeccionFormato, CampoFormato,
     SolicitudCambio, Periodo, FormatoPublicacion, respuestas_planilla_actual,
-    DelegacionJefatura,
+    DelegacionJefatura, RegistroFormato, FirmaElectronica,
 )
 from .forms import (
     DocumentoForm, PlantillaForm, SolicitudDescargaForm, PlanillaCambiosForm,
     AsignacionDocumentoForm, FiltroDocumentoForm, DistribucionDocumentoForm,
-    validar_respuestas, validar_respuestas_guardadas,
+    RegistroFormatoForm, validar_respuestas, validar_respuestas_guardadas,
 )
 from .icons import ICONOS_DISPONIBLES
 from .jefatura import es_jefe_efectivo
@@ -35,6 +37,7 @@ from .services.aprobaciones import (
     notificar_planilla_resuelta, resolver_aprobacion_planilla,
     tomar_paso_esperando,
 )
+from .services.firmas import ErrorFirma, firmar
 from .services.planillas import invalidar_planillas_documento
 from .services.vigencia import calcular_conteos_vigencia
 from .cache_utils import tipos_activos, periodos_activos, departamentos_activos
@@ -1696,6 +1699,18 @@ def detalle_documento(request, tipo, documento_id):
 
     ia_habilitada = ai.esta_habilitado()
 
+    # Registros del documento de contexto: si puede ver el documento, puede
+    # ver su evidencia. Evita una consulta extra de visibilidad por ficha.
+    registros_doc = list(
+        RegistroFormato.objects.filter(
+            contexto_tipo='documento', contexto_id=str(documento.uuid),
+        ).select_related('formato', 'responsable')[:20]
+    )
+    formatos_registro = Formato.objects.filter(
+        activo=True, permite_registros=True,
+    ).order_by('codigo')
+    puede_crear_registro = puede_editar_documento(request.user, documento)
+
     return render(request, 'documentos/detalle.html', {
         'documento': documento,
         'planilla_borrador': planilla_borrador,
@@ -1754,6 +1769,9 @@ def detalle_documento(request, tipo, documento_id):
         'ia_habilitada': ia_habilitada,
         'ia_usos_hoy': ai.consumo_hoy(request.user) if ia_habilitada else 0,
         'ia_limite': ai.limite_diario(),
+        'registros_doc': registros_doc,
+        'formatos_registro': formatos_registro,
+        'puede_crear_registro': puede_crear_registro,
     })
 
 
@@ -3663,29 +3681,48 @@ def aprobar_planilla(request, planilla_uuid):
         if not aprobacion:
             messages.error(request, 'No tienes una aprobación pendiente para esta planilla.')
             return redirect('documentos:detalle_planilla', planilla_uuid=planilla.uuid)
-        if accion == 'aprobar':
-            resultado = resolver_aprobacion_planilla(
-                aprobacion, request.user, aprobada=True,
-                observaciones=observaciones,
-            )
-            if resultado['es_final']:
-                notificar_planilla_resuelta(planilla, True, observaciones)
-                messages.success(
-                    request,
-                    'Planilla aprobada y cambios aplicados al documento.',
-                )
+        pin = request.POST.get('pin', '')
+        es_plantilla = bool(getattr(planilla.documento, 'es_plantilla', False))
+        try:
+            if accion == 'aprobar':
+                if es_plantilla:
+                    # Plantillas: sin firma SES ni PIN (§31.6).
+                    resultado = resolver_aprobacion_planilla(
+                        aprobacion, request.user, aprobada=True,
+                        observaciones=observaciones, firma=None,
+                    )
+                else:
+                    firma = firmar(
+                        aprobacion, usuario=request.user, pin=pin,
+                        request=request, metodo='pin', crear=True,
+                        datos={'aprobada': True, 'observaciones': observaciones},
+                        contexto={'request': request},
+                    )
+                    resultado = getattr(firma, 'resultado', {}) or {}
+                if resultado.get('es_final'):
+                    notificar_planilla_resuelta(planilla, True, observaciones)
+                    messages.success(
+                        request,
+                        'Planilla aprobada y cambios aplicados al documento.',
+                    )
+                else:
+                    messages.success(
+                        request,
+                        'Evaluación registrada. Pendiente de autorización final.',
+                    )
             else:
-                messages.success(
-                    request,
-                    'Evaluación registrada. Pendiente de autorización final.',
+                # El rechazo no se firma: no pide PIN ni imprime bloques.
+                resolver_aprobacion_planilla(
+                    aprobacion, request.user, aprobada=False,
+                    observaciones=observaciones,
                 )
-        else:
-            resolver_aprobacion_planilla(
-                aprobacion, request.user, aprobada=False,
-                observaciones=observaciones,
+                notificar_planilla_resuelta(planilla, False, observaciones)
+                messages.warning(request, 'Planilla rechazada.')
+        except ErrorFirma as exc:
+            messages.error(request, str(exc))
+            return redirect(
+                'documentos:aprobar_planilla', planilla_uuid=planilla.uuid,
             )
-            notificar_planilla_resuelta(planilla, False, observaciones)
-            messages.warning(request, 'Planilla rechazada.')
         from autenticacion.models import Notificacion
         Notificacion.objects.filter(
             usuario=request.user, tipo='solicitud_aprobacion',
@@ -3706,9 +3743,13 @@ def aprobar_planilla(request, planilla_uuid):
     elif planilla.archivo_propuesto:
         archivo_preview = planilla.archivo_propuesto
         es_pdf = str(archivo_preview.name).lower().endswith('.pdf')
+    from .services import firmas as _firmas
+
     return render(request, 'documentos/aprobar_planilla.html', {
         'planilla': planilla, 'documento': documento,
         'archivo_preview': archivo_preview, 'es_pdf': es_pdf,
+        'credencial': _firmas.obtener_credencial(request.user),
+        'es_plantilla': bool(getattr(documento, 'es_plantilla', False)),
     })
 
 
@@ -5000,7 +5041,7 @@ def firmar_invitacion(request, token):
         }, status=404)
 
     firma = invitacion.firma
-    distribucion = firma.distribucion
+    distribucion = firma.origen
     documento = distribucion.documento
 
     if not invitacion.esta_vigente:
@@ -5560,3 +5601,287 @@ def formato_regenerar_preview(request, formato_id):
 
 
 
+
+
+# =============================================================================
+# REGISTROS DE FORMATO (instancias llenas; el código del formato se repite)
+# =============================================================================
+
+def _contexto_registro(request):
+    tipo = (
+        request.GET.get('contexto_tipo')
+        or request.POST.get('contexto_tipo')
+        or 'documento'
+    ).strip()
+    ident = (
+        request.GET.get('contexto_id')
+        or request.POST.get('contexto_id')
+        or ''
+    ).strip()
+    return tipo, ident
+
+
+@login_required(login_url='/login/')
+def registros_lista(request):
+    """Listado global de registros visibles para el usuario."""
+    from .services import registros as svc
+
+    qs = svc.registros_visibles(request.user).select_related(
+        'formato', 'responsable', 'aprobador',
+    )
+    formato_id = request.GET.get('formato') or ''
+    estado = request.GET.get('estado') or ''
+    buscar = (request.GET.get('q') or '').strip()
+    if formato_id.isdigit():
+        qs = qs.filter(formato_id=int(formato_id))
+    if estado:
+        qs = qs.filter(estado=estado)
+    if buscar:
+        qs = qs.filter(
+            Q(titulo__icontains=buscar) | Q(formato_codigo__icontains=buscar),
+        )
+    page = Paginator(qs.order_by('-creado'), 20).get_page(
+        request.GET.get('page', 1),
+    )
+    return render(request, 'documentos/registros_lista.html', {
+        'registros': page,
+        'page_obj': page,
+        'formatos': Formato.objects.filter(
+            activo=True, permite_registros=True,
+        ).order_by('codigo'),
+        'filtro_formato': formato_id,
+        'filtro_estado': estado,
+        'q': buscar,
+        'estados': RegistroFormato.ESTADO_CHOICES,
+    })
+
+
+@login_required(login_url='/login/')
+def registro_crear(request):
+    """Crea un registro (formulario lleno) de un formato habilitado."""
+    from .services import registros as svc
+
+    formato_id = request.GET.get('formato') or request.POST.get('formato')
+    contexto_tipo, contexto_id = _contexto_registro(request)
+    documento_contexto = None
+    if contexto_tipo == 'documento' and contexto_id:
+        documento_contexto = get_object_or_404(Documento, uuid=contexto_id)
+        if (not puede_editar_documento(request.user, documento_contexto)
+                and not request.user.perfil.es_administrador):
+            messages.error(
+                request, 'No tienes permisos sobre el documento de contexto.',
+            )
+            return redirect('documentos:mis_documentos')
+
+    if not formato_id:
+        messages.error(request, 'Selecciona un formato que permita registros.')
+        return redirect('documentos:registros_lista')
+    formato = get_object_or_404(
+        Formato, pk=formato_id, activo=True, permite_registros=True,
+    )
+
+    respuestas = {}
+    if request.method == 'POST':
+        form = RegistroFormatoForm(request.POST, request.FILES)
+        respuestas, errores = validar_respuestas(
+            formato, request.POST, parcial=False,
+        )
+        if form.is_valid() and not errores:
+            registro = form.save(commit=False)
+            registro.formato = formato
+            registro.formato_codigo = formato.codigo
+            registro.formato_version = formato.version
+            registro.formato_edicion = formato.edicion
+            registro.contexto_tipo = contexto_tipo or 'documento'
+            registro.contexto_id = contexto_id
+            registro.responsable = request.user
+            registro.respuestas = respuestas
+            registro.save()
+            messages.success(request, 'Registro guardado correctamente.')
+            return redirect(
+                'documentos:registro_detalle', registro_uuid=registro.uuid,
+            )
+        for error in errores:
+            messages.error(request, error)
+    else:
+        form = RegistroFormatoForm()
+
+    return render(request, 'documentos/registro_form.html', {
+        'form': form,
+        'formato': formato,
+        'respuestas': respuestas,
+        'contexto_tipo': contexto_tipo,
+        'contexto_id': contexto_id,
+        'documento_contexto': documento_contexto,
+        'credencial': None,
+        'edicion': False,
+    })
+
+
+@login_required(login_url='/login/')
+def registro_editar(request, registro_uuid):
+    from .services import registros as svc
+
+    registro = get_object_or_404(
+        RegistroFormato.objects.select_related('formato'), uuid=registro_uuid,
+    )
+    if not svc.puede_editar_registro(request.user, registro):
+        messages.error(request, 'Este registro no se puede editar.')
+        return redirect(
+            'documentos:registro_detalle', registro_uuid=registro.uuid,
+        )
+
+    formato = registro.formato
+    respuestas = dict(registro.respuestas or {})
+    if request.method == 'POST':
+        form = RegistroFormatoForm(
+            request.POST, request.FILES, instance=registro,
+        )
+        nuevas, errores = validar_respuestas(formato, request.POST, parcial=False)
+        if form.is_valid() and not errores:
+            actualizado = form.save(commit=False)
+            actualizado.respuestas = nuevas
+            actualizado.estado = 'borrador'
+            actualizado.save()
+            messages.success(request, 'Registro actualizado.')
+            return redirect(
+                'documentos:registro_detalle', registro_uuid=registro.uuid,
+            )
+        for error in errores:
+            messages.error(request, error)
+    else:
+        form = RegistroFormatoForm(instance=registro)
+
+    return render(request, 'documentos/registro_form.html', {
+        'form': form,
+        'formato': formato,
+        'respuestas': respuestas,
+        'contexto_tipo': registro.contexto_tipo,
+        'contexto_id': registro.contexto_id,
+        'documento_contexto': svc.documento_de_contexto(registro),
+        'credencial': None,
+        'edicion': True,
+        'registro': registro,
+    })
+
+
+@login_required(login_url='/login/')
+def registro_detalle(request, registro_uuid):
+    from .services import firmas as svc_firmas
+    from .services import registros as svc
+
+    registro = get_object_or_404(
+        RegistroFormato.objects.select_related(
+            'formato', 'responsable', 'aprobador',
+        ),
+        uuid=registro_uuid,
+    )
+    if not svc.puede_ver_registro(request.user, registro):
+        messages.error(request, 'No tienes acceso a este registro.')
+        return redirect('documentos:registros_lista')
+
+    return render(request, 'documentos/registro_detalle.html', {
+        'registro': registro,
+        'formato': registro.formato,
+        'documento_contexto': svc.documento_de_contexto(registro),
+        'puede_editar': svc.puede_editar_registro(request.user, registro),
+        'puede_aprobar': svc.puede_aprobar_registro(request.user, registro),
+        'credencial': svc_firmas.obtener_credencial(request.user),
+        'firmas': FirmaElectronica.para(registro).order_by('-creado'),
+    })
+
+
+@login_required(login_url='/login/')
+@require_POST
+def registro_enviar(request, registro_uuid):
+    from .services import registros as svc
+
+    registro = get_object_or_404(RegistroFormato, uuid=registro_uuid)
+    try:
+        svc.enviar_a_revision(registro, request.user)
+        messages.success(request, 'Registro enviado a revisión.')
+    except (ValueError, PermissionError) as exc:
+        messages.error(request, str(exc))
+    return redirect('documentos:registro_detalle', registro_uuid=registro.uuid)
+
+
+@login_required(login_url='/login/')
+@require_POST
+def registro_aprobar(request, registro_uuid):
+    """Aprueba un registro con firma SES (PIN)."""
+    from .services import registros as svc
+
+    registro = get_object_or_404(RegistroFormato, uuid=registro_uuid)
+    if not svc.puede_aprobar_registro(request.user, registro):
+        messages.error(request, 'No puedes aprobar este registro.')
+        return redirect(
+            'documentos:registro_detalle', registro_uuid=registro.uuid,
+        )
+    try:
+        firmar(
+            registro, usuario=request.user,
+            pin=request.POST.get('pin', ''), request=request,
+            metodo='pin', crear=True,
+            datos={
+                'aprobada': True,
+                'observaciones': request.POST.get('observaciones', ''),
+            },
+        )
+        messages.success(request, 'Registro aprobado y firmado correctamente.')
+    except ErrorFirma as exc:
+        messages.error(request, str(exc))
+    return redirect('documentos:registro_detalle', registro_uuid=registro.uuid)
+
+
+@login_required(login_url='/login/')
+@require_POST
+def registro_rechazar(request, registro_uuid):
+    """Rechaza un registro SIN firma: vuelve a corrección."""
+    from .services import registros as svc
+
+    registro = get_object_or_404(RegistroFormato, uuid=registro_uuid)
+    try:
+        svc.rechazar_registro(
+            registro, request.user, request.POST.get('observaciones', ''),
+        )
+        messages.warning(request, 'Registro rechazado para corrección.')
+    except PermissionError as exc:
+        messages.error(request, str(exc))
+    return redirect('documentos:registro_detalle', registro_uuid=registro.uuid)
+
+
+@login_required(login_url='/login/')
+def registro_xlsx(request, registro_uuid):
+    from .services import registros as svc
+
+    registro = get_object_or_404(RegistroFormato, uuid=registro_uuid)
+    if not svc.puede_ver_registro(request.user, registro):
+        raise Http404
+    try:
+        contenido = svc.exportar_registro_xlsx(registro)
+    except ValueError as exc:
+        messages.error(request, str(exc))
+        return redirect(
+            'documentos:registro_detalle', registro_uuid=registro.uuid,
+        )
+    nombre = f'{registro.formato_codigo}_{registro.uuid.hex[:8]}.xlsx'
+    return FileResponse(
+        io.BytesIO(contenido), as_attachment=True, filename=nombre,
+    )
+
+
+@login_required(login_url='/login/')
+def registro_pdf(request, registro_uuid):
+    from .services import registros as svc
+
+    registro = get_object_or_404(RegistroFormato, uuid=registro_uuid)
+    if not svc.puede_ver_registro(request.user, registro):
+        raise Http404
+    ruta = svc.exportar_registro_pdf(registro)
+    if not ruta:
+        messages.error(request, 'No se pudo generar el PDF del registro.')
+        return redirect(
+            'documentos:registro_detalle', registro_uuid=registro.uuid,
+        )
+    nombre = f'{registro.formato_codigo}_{registro.uuid.hex[:8]}.pdf'
+    return FileResponse(open(ruta, 'rb'), as_attachment=True, filename=nombre)

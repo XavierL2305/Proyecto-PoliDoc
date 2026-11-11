@@ -520,9 +520,10 @@ class AprobacionPlanillaDelegadoTest(BaseDelegacionTest):
         return planilla
 
     def _aprobar(self, planilla):
+        self.crear_pin_firma(self.user_coordinador)
         return self.client.post(
             f'/documentos/api/planilla/{planilla.uuid}/aprobar/',
-            data=json.dumps({'observaciones': 'ok'}),
+            data=json.dumps({'observaciones': 'ok', 'pin': '1234'}),
             content_type='application/json',
         )
 

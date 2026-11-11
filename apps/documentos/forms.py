@@ -5,7 +5,7 @@ from django.contrib.auth.models import User
 from .models import (
     Documento, SolicitudDescarga, SolicitudAccesoDocumento,
     PlanillaCambios, AsignacionDocumento, Departamento, TipoDocumento, Periodo,
-    Formato, SeccionFormato, CampoFormato, SolicitudCambio,
+    Formato, SeccionFormato, CampoFormato, SolicitudCambio, RegistroFormato,
 )
 from .icons import ICONOS_DISPONIBLES, ICONO_POR_DEFECTO
 
@@ -574,7 +574,8 @@ class FormatoForm(forms.ModelForm):
         fields = [
             'codigo', 'nombre', 'version', 'edicion', 'fecha_vigencia',
             'procedimiento', 'instructivo_html', 'plantilla_xlsx',
-            'aplica_creacion', 'aplica_modificacion', 'aplica_eliminacion', 'activo',
+            'aplica_creacion', 'aplica_modificacion', 'aplica_eliminacion',
+            'permite_registros', 'activo',
         ]
         widgets = {
             'codigo': forms.TextInput(attrs={'class': 'form-input'}),
@@ -628,6 +629,25 @@ class FormatoForm(forms.ModelForm):
                         instancia.codigo, exc_info=True,
                     )
         return instancia
+
+
+class RegistroFormatoForm(forms.ModelForm):
+    """Datos propios de un registro; los campos del formato van aparte."""
+
+    class Meta:
+        model = RegistroFormato
+        fields = ['titulo', 'descripcion', 'fecha', 'archivo']
+        widgets = {
+            'titulo': forms.TextInput(attrs={
+                'class': 'form-input',
+                'placeholder': 'Ej. Plan de acción DPR-005',
+            }),
+            'descripcion': forms.Textarea(attrs={
+                'class': 'form-input', 'rows': 3, 'placeholder': ' ',
+            }),
+            'fecha': forms.DateInput(attrs={'class': 'form-input', 'type': 'date'}),
+            'archivo': forms.FileInput(attrs={'class': 'form-input'}),
+        }
 
 
 class SeccionFormatoForm(forms.ModelForm):

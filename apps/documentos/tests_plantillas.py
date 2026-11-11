@@ -28,10 +28,10 @@ from auditoria.models import AuditoriaOutbox
 from autenticacion.models import Notificacion
 from documentos.models import (
     AprobacionPlanilla, AsignacionDocumento, CampoFormato,
-    DelegacionJefatura, DistribucionDocumento, Documento, Formato,
-    PlanillaCambios, SeccionFormato, SecuenciaCodigo,
-    SolicitudAprobacionDocumento, SolicitudCambio, SolicitudDescarga,
-    TipoDocumento, tipo_archivo_desde_nombre,
+    DelegacionJefatura, DistribucionDocumento, Documento,
+    FirmaElectronica, Formato, PlanillaCambios, SeccionFormato,
+    SecuenciaCodigo, SolicitudAprobacionDocumento, SolicitudCambio,
+    SolicitudDescarga, TipoDocumento, tipo_archivo_desde_nombre,
 )
 from documentos.permissions import documentos_descargables, puede_descargar
 from documentos.services.aprobaciones import (
@@ -183,6 +183,15 @@ class CrearPlantillaTest(BaseDocumentosTest):
         self.assertTrue(resp.json()['success'])
         doc.refresh_from_db()
         self.assertEqual(doc.estado, 'activo')
+        self.assertFalse(
+            FirmaElectronica.objects.filter(
+                origen_tipo='solicitud_aprobacion_documento',
+                origen_id=str(SolicitudAprobacionDocumento.objects.get(
+                    documento=doc, accion_solicitud='creacion',
+                ).pk),
+            ).exists(),
+            'La aprobación de una plantilla no debe emitir firma SES',
+        )
 
     def test_admin_toma_plantilla_en_esperando_via_api(self):
         self.depto_ti.jefe = None
@@ -206,6 +215,7 @@ class CrearPlantillaTest(BaseDocumentosTest):
         )
         self.assertEqual(sol.estado, 'aprobada')
         self.assertEqual(sol.aprobador, self.user_admin)
+        self.assertFalse(FirmaElectronica.para(sol).exists())
 
     def test_mis_solicitudes_etiqueta_creacion_de_plantilla(self):
         self.client.login(username='trab01', password='testpass123')
@@ -651,6 +661,7 @@ class PlanillaPlantillaAdminTest(BaseDocumentosTest):
         )
 
     def _post(self, url, payload=None):
+        # Aprobar/rechazar plantillas no pide PIN ni emite firma SES.
         return self.client.post(
             url, data=json.dumps(payload or {}),
             content_type='application/json',
@@ -730,6 +741,10 @@ class PlanillaPlantillaAdminTest(BaseDocumentosTest):
         self.assertEqual(planilla.estado, 'aprobado')
         self.assertEqual(aprobacion.estado, 'aprobada')
         self.assertEqual(aprobacion.aprobador, self.user_admin)
+        self.assertFalse(
+            FirmaElectronica.para(aprobacion).exists(),
+            'La planilla de una plantilla no debe emitir firma SES',
+        )
 
 
 class TomaPasoRollbackTest(TransactionTestCase):

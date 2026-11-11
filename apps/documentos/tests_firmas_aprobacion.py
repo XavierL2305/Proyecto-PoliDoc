@@ -8,7 +8,7 @@ SGC-FOR-005 (planilla de cambios, ``AprobacionPlanilla``):
   bloques (Evaluado y Autorizado) y fija la Resolución.
 - **Dos pasos** (trabajador/coordinador → jefe directo evalúa → GG autoriza):
   el evaluador solo firma Evaluado; el autorizador firma Autorizado y la
-  Resolución. Si el evaluador rechaza, Autorizado queda vacío.
+  Resolución. Un rechazo no firma ni imprime bloques: quedan en blanco.
 
 Además valida que las fechas son las reales de la respuesta (no el momento
 de generar la planilla), que los XLSX/PDF cacheados se invalidan tras
@@ -121,16 +121,16 @@ class FirmasDocumentoPasoUnicoTest(BaseDocumentosTest):
             respuestas['autorizado_por_fecha'], fecha_esperada(self.paso.fecha_respuesta),
         )
 
-    def test_rechazar_llena_ambos_bloques_y_cancela_el_paso(self):
+    def test_rechazar_no_firma_y_cancela_el_paso(self):
         self.paso.rechazar(motivo='No aplica')
 
         self.solicitud.refresh_from_db()
         respuestas = self.solicitud.respuestas
-        self.assertEqual(respuestas['evaluado_por_nombre'], 'Jefe GG')
-        self.assertEqual(respuestas['autorizado_por_nombre'], 'Jefe GG')
-        self.assertEqual(
-            respuestas['evaluado_por_fecha'], fecha_esperada(self.paso.fecha_respuesta),
-        )
+        # Rechazo = sin firma: los bloques quedan en blanco.
+        self.assertNotIn('evaluado_por_nombre', respuestas)
+        self.assertNotIn('autorizado_por_nombre', respuestas)
+        self.assertNotIn('evaluado_por_fecha', respuestas)
+        self.assertNotIn('resolucion', respuestas)
 
 
 class FirmasDocumentoDosPasosTest(BaseDocumentosTest):
@@ -186,13 +186,14 @@ class FirmasDocumentoDosPasosTest(BaseDocumentosTest):
             respuestas['autorizado_por_fecha'], fecha_esperada(autorizador.fecha_respuesta),
         )
 
-    def test_rechazo_del_evaluador_deja_autorizado_vacio(self):
+    def test_rechazo_del_evaluador_deja_todo_en_blanco(self):
         self.paso_eval.rechazar(motivo='Insuficiente')
 
         self.solicitud.refresh_from_db()
         respuestas = self.solicitud.respuestas
-        self.assertEqual(respuestas['evaluado_por_nombre'], 'Jefe TI')
+        self.assertNotIn('evaluado_por_nombre', respuestas)
         self.assertNotIn('autorizado_por_nombre', respuestas)
+        self.assertNotIn('resolucion', respuestas)
 
 
 # =============================================================================
@@ -232,6 +233,8 @@ class BaseFirmasPlanillaTest(BaseDocumentosTest):
     def setUp(self):
         super().setUp()
         self.client = Client()
+        self.crear_pin_firma(self.user_jefe_ti)
+        self.crear_pin_firma(self.user_jefe_gg)
 
     def _pasos(self):
         return AprobacionPlanilla.objects.filter(planilla=self.planilla)
@@ -243,7 +246,7 @@ class BaseFirmasPlanillaTest(BaseDocumentosTest):
         self.client.login(username=username, password='testpass123')
         resp = self.client.post(
             reverse('documentos:aprobar_planilla', args=[self.planilla.uuid]),
-            {'accion': accion, 'observaciones': observaciones},
+            {'accion': accion, 'observaciones': observaciones, 'pin': '1234'},
         )
         self.assertEqual(resp.status_code, 302)
         self.client.logout()
@@ -287,9 +290,9 @@ class FirmasPlanillaDosPasosTest(BaseFirmasPlanillaTest):
         )
 
         respuestas = self._respuestas()
-        self.assertEqual(respuestas['evaluado_por_nombre'], 'Jefe TI')
-        self.assertEqual(respuestas['resolucion'], 'Rechazado')
+        self.assertNotIn('evaluado_por_nombre', respuestas)
         self.assertNotIn('autorizado_por_nombre', respuestas)
+        self.assertNotIn('resolucion', respuestas)
 
     def test_el_autorizador_que_rechaza_firma_su_bloque(self):
         self._aprobar_o_rechazar('jefe_ti')
@@ -298,15 +301,16 @@ class FirmasPlanillaDosPasosTest(BaseFirmasPlanillaTest):
         )
 
         respuestas = self._respuestas()
+        # La evaluación aprobada conserva su firma; el rechazo no imprime nada.
         self.assertEqual(respuestas['evaluado_por_nombre'], 'Jefe TI')
-        self.assertEqual(respuestas['autorizado_por_nombre'], 'Jefe GG')
-        self.assertEqual(respuestas['resolucion'], 'Rechazado')
+        self.assertNotIn('autorizado_por_nombre', respuestas)
+        self.assertNotIn('resolucion', respuestas)
 
     def test_mismo_comportamiento_por_api(self):
         self.client.login(username='jefe_ti', password='testpass123')
         resp = self.client.post(
             f'/documentos/api/planilla/{self.planilla.uuid}/aprobar/',
-            data=json.dumps({'observaciones': 'evaluado'}),
+            data=json.dumps({'observaciones': 'evaluado', 'pin': '1234'}),
             content_type='application/json',
         )
         self.client.logout()
@@ -338,13 +342,13 @@ class FirmasPlanillaPasoUnicoTest(BaseFirmasPlanillaTest):
             fecha_esperada(self._autorizador().fecha_aprobacion),
         )
 
-    def test_rechazar_llena_ambos_bloques(self):
+    def test_rechazar_deja_los_bloques_en_blanco(self):
         self._aprobar_o_rechazar('jefe_gg', accion='rechazar', observaciones='No')
 
         respuestas = self._respuestas()
-        self.assertEqual(respuestas['evaluado_por_nombre'], 'Jefe GG')
-        self.assertEqual(respuestas['autorizado_por_nombre'], 'Jefe GG')
-        self.assertEqual(respuestas['resolucion'], 'Rechazado')
+        self.assertNotIn('evaluado_por_nombre', respuestas)
+        self.assertNotIn('autorizado_por_nombre', respuestas)
+        self.assertNotIn('resolucion', respuestas)
 
 
 class InvalidacionPlanillaCacheadaTest(BaseFirmasPlanillaTest):
@@ -442,10 +446,8 @@ class RepararFirmasDocumentoTest(BaseDocumentosTest):
         call_command('reparar_planillas_evaluacion', stdout=io.StringIO())
 
         sol.refresh_from_db()
-        respuestas = sol.respuestas
-        self.assertEqual(respuestas['evaluado_por_nombre'], 'Jefe TI')
-        self.assertEqual(respuestas['resolucion'], 'Rechazado')
-        self.assertNotIn('autorizado_por_nombre', respuestas)
+        # El rechazo no firma: el comando no reconstruye nada.
+        self.assertEqual(sol.respuestas, {})
 
     def test_dry_run_no_escribe(self):
         self._historia(timezone.now())

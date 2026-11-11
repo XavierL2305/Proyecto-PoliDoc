@@ -337,25 +337,23 @@ def _crear_una_distribucion(*, documento, tipo_dest, obj, lote_id, metodo,
 
 def _crear_firma_pendiente(dist, tipo_dest, obj):
     """Registra la ``FirmaElectronica`` pendiente de la distribución."""
-    from ..models import FirmaElectronica
+    from .firmas import crear_firma
 
     if tipo_dest == 'interno':
-        FirmaElectronica.objects.create(
-            distribucion=dist, tipo='interna',
-            firmante_clave=FirmaElectronica.clave_interna(obj),
-            firmante=obj,
-            firmante_nombre=obj.get_full_name() or obj.username,
-            firmante_email=obj.email or '',
+        crear_firma(
+            dist, tipo='interna', usuario=obj,
             firmante_cargo=_cargo_de(obj),
         )
     else:
+        from ..models import FirmaElectronica
+
         email = (obj.email or '').strip()
         clave = (
             FirmaElectronica.clave_externa(email)
             if email else f'externo:{dist.pk}'
         )
-        FirmaElectronica.objects.create(
-            distribucion=dist, tipo='externa',
+        crear_firma(
+            dist, tipo='externa',
             firmante_clave=clave,
             firmante_nombre=obj.nombre,
             firmante_email=email,
@@ -601,7 +599,7 @@ def generar_planilla_lote(lote_id):
         tuple: ``(formato_respuesta, respuestas)`` o ``(None, None)`` si el
         formato SGC-FOR-002 no está activo o el lote no existe.
     """
-    from ..models import DistribucionDocumento, FormatoRespuesta
+    from ..models import DistribucionDocumento, FirmaElectronica, FormatoRespuesta
 
     formato = _formato_for_002()
     if formato is None:
@@ -610,14 +608,24 @@ def generar_planilla_lote(lote_id):
     dists = list(
         DistribucionDocumento.objects.filter(lote=lote_id)
         .select_related('usuario', 'usuario__perfil', 'documento')
-        .prefetch_related('firmas')
         .order_by('id')
     )
     if not dists:
         return None, None
 
+    #: Firmas del lote en UNA consulta (antes: prefetch de una FK que ya no
+    #: existe). Se indexan por ``origen_id`` para no hacer N+1 por fila.
+    firmas_por_dist = {}
+    for firma in FirmaElectronica.objects.filter(
+        origen_tipo='distribucion',
+        origen_id__in=[str(d.pk) for d in dists],
+    ):
+        firmas_por_dist.setdefault(firma.origen_id, []).append(firma)
+
     documento = dists[0].documento
-    respuestas = _respuestas_lote(documento, dists, formato=formato)
+    respuestas = _respuestas_lote(
+        documento, dists, formato=formato, firmas_por_dist=firmas_por_dist,
+    )
 
     fr, _creada = FormatoRespuesta.objects.update_or_create(
         origen_tipo='distribucion',
@@ -627,7 +635,7 @@ def generar_planilla_lote(lote_id):
     return fr, respuestas
 
 
-def _respuestas_lote(documento, dists, formato=None):
+def _respuestas_lote(documento, dists, formato=None, firmas_por_dist=None):
     """Dict de respuestas de la planilla FOR-002 para un lote.
 
     Se construye **desde el formato configurado** en el Constructor (campos y
@@ -639,6 +647,9 @@ def _respuestas_lote(documento, dists, formato=None):
       :data:`ORIGEN_POR_DEFECTO`.
     * Tabla → una fila por distribución, con las columnas declaradas en
       ``config_tabla`` (identificadas por su ``rol``).
+
+    ``firmas_por_dist`` (``{origen_id: [firmas]}``) evita una consulta por
+    fila; si no se pasa, cada fila consulta sus firmas.
     """
     from ..models import mapear_valores_auto, valores_documento
 
@@ -652,9 +663,25 @@ def _respuestas_lote(documento, dists, formato=None):
             respuestas[campo.clave] = _origen_por_defecto(campo)
         elif campo.tipo == 'tabla':
             respuestas[campo.clave] = [
-                _fila_destinatario(d, campo.config_tabla or {}) for d in dists
+                _fila_destinatario(
+                    d, campo.config_tabla or {},
+                    firmas=(firmas_por_dist or {}).get(str(d.pk)),
+                )
+                for d in dists
             ]
-    return respuestas
+
+    # Sello de evidencia (campo tipo 'sello'): una línea por firma conforme.
+    from ..models import FirmaElectronica
+    from .firmas import respuestas_con_sello
+
+    if firmas_por_dist is None:
+        firmas = list(FirmaElectronica.objects.filter(
+            origen_tipo='distribucion',
+            origen_id__in=[str(d.pk) for d in dists],
+        ))
+    else:
+        firmas = [f for lista in firmas_por_dist.values() for f in lista]
+    return respuestas_con_sello(formato, firmas, respuestas)
 
 
 def _es_marca_de_origen(campo):
@@ -679,13 +706,15 @@ def _origen_por_defecto(campo):
     return opciones[-1].get('valor') or ORIGEN_POR_DEFECTO
 
 
-def _fila_destinatario(dist, config_tabla=None):
+def _fila_destinatario(dist, config_tabla=None, firmas=None):
     """Fila de la tabla FOR-002 para una distribución.
 
     Cada columna se llena por su ``rol`` (identificador semántico: nombre,
     cargo, fecha, retiro, firma). Si la columna no lo declara se usa su
     ``clave`` como rol, de modo que las configuraciones antiguas siguen
     funcionando y renombrar claves no vacía la planilla.
+
+    ``firmas`` permite pasar las firmas ya cargadas del lote (evita N+1).
     """
     columnas = (config_tabla or {}).get('columnas') or []
     if not columnas:
@@ -700,15 +729,15 @@ def _fila_destinatario(dist, config_tabla=None):
             continue
         rol = str(columna.get('rol') or clave).strip()
         obtener = _VALORES_FILA.get(rol)
-        fila[clave] = obtener(dist) if obtener else ''
+        fila[clave] = obtener(dist, firmas) if obtener else ''
     return fila
 
 
-def _texto_firma(dist):
+def _texto_firma(dist, firmas=None):
     """Texto de la columna FIRMA CONFORME (vacío mientras no se firme)."""
     if dist.estado_firma != 'firmada':
         return ''
-    for firma in dist.firmas.all():
+    for firma in (firmas if firmas is not None else dist.firmas.all()):
         if firma.estado == 'firmada':
             return firma.firmante_nombre or firma.firmante_clave
     return ''
@@ -717,12 +746,12 @@ def _texto_firma(dist):
 #: Valor de cada columna de la tabla del FOR-002, por ``rol``.
 #: Se declara después de sus funciones para leerse en tiempo de llamada.
 _VALORES_FILA = {
-    'nombre': lambda d: d.destinatario_nombre,
-    'cargo': lambda d: (
+    'nombre': lambda d, f=None: d.destinatario_nombre,
+    'cargo': lambda d, f=None: (
         _cargo_de(d.usuario) if d.usuario_id else (d.cargo_externo or '')
     ),
-    'fecha': lambda d: timezone.localtime(d.fecha_distribucion).date().isoformat(),
-    'retiro': lambda d: 'si' if d.retiro_version_anterior else 'no',
+    'fecha': lambda d, f=None: timezone.localtime(d.fecha_distribucion).date().isoformat(),
+    'retiro': lambda d, f=None: 'si' if d.retiro_version_anterior else 'no',
     'firma': _texto_firma,
 }
 
@@ -754,8 +783,8 @@ def regenerar_planilla_de_firma(firma):
     No es un error si el formato no está activo: la firma ya quedó
     registrada en ``FirmaElectronica``.
     """
-    dist = firma.distribucion
-    if not dist.lote:
+    dist = firma.origen
+    if dist is None or not dist.lote:
         return None
     fr, _ = generar_planilla_lote(dist.lote)
     return fr

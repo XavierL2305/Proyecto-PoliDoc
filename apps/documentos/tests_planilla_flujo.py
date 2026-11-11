@@ -47,6 +47,8 @@ class BasePlanillaAprobacionTest(BaseDocumentosTest):
     def setUp(self):
         super().setUp()
         self.client = Client()
+        self.crear_pin_firma(self.user_jefe_ti)
+        self.crear_pin_firma(self.user_jefe_gg)
 
     def _pasos(self):
         return AprobacionPlanilla.objects.filter(planilla=self.planilla)
@@ -62,7 +64,7 @@ class BasePlanillaAprobacionTest(BaseDocumentosTest):
         self.client.login(username='jefe_ti', password='testpass123')
         resp = self.client.post(
             reverse('documentos:aprobar_planilla', args=[self.planilla.uuid]),
-            {'accion': 'aprobar', 'observaciones': 'evaluado'},
+            {'accion': 'aprobar', 'observaciones': 'evaluado', 'pin': '1234'},
         )
         self.assertEqual(resp.status_code, 302)
         return resp
@@ -115,7 +117,7 @@ class PromocionAutorizadorTest(BasePlanillaAprobacionTest):
         self.client.login(username='jefe_ti', password='testpass123')
         resp = self.client.post(
             f'/documentos/api/planilla/{self.planilla.uuid}/aprobar/',
-            data=json.dumps({'observaciones': 'evaluado'}),
+            data=json.dumps({'observaciones': 'evaluado', 'pin': '1234'}),
             content_type='application/json',
         )
         self.assertEqual(resp.status_code, 200)

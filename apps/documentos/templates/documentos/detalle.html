@@ -172,7 +172,7 @@
         </div>
         {% if puede_aprobar %}
         <div style="display: flex; gap: 0.5rem; margin-left: auto;">
-          <button class="btn btn--success btn--sm" onclick="aprobarDocumentoDirecto('{{ tipo }}', '{{ documento.uuid }}')">
+          <button class="btn btn--success btn--sm" onclick="aprobarDocumentoDirecto('{{ tipo }}', '{{ documento.uuid }}', {{ documento.es_plantilla|yesno:'true,false' }})">
             {% if solicitud_aprobacion.rol_aprobador == 'evaluador' %}
               <i class="fa-solid fa-magnifying-glass"></i> Evaluar
             {% else %}
@@ -1156,6 +1156,43 @@
       </div>
       {% endif %}
 
+      <!-- Registros de formato ligados a este documento -->
+      <div class="detail-card" style="margin-top:1.5rem;">
+        <div class="detail-header" style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;">
+          <h3 style="margin:0;"><i class="fa-solid fa-clipboard-check"></i> Registros de formato</h3>
+          <a class="btn btn--ghost btn--sm" href="{% url 'documentos:registros_lista' %}">Ver todos</a>
+        </div>
+        <div class="detail-body">
+          {% if registros_doc %}
+          <ul style="list-style:none;padding:0;margin:0;">
+            {% for r in registros_doc %}
+            <li style="padding:.5rem 0;border-bottom:1px solid var(--color-border);display:flex;justify-content:space-between;gap:.75rem;flex-wrap:wrap;">
+              <div>
+                <strong>{{ r.formato_codigo }}</strong> · {{ r.titulo }}
+                <span class="badge badge--{% if r.estado == 'aprobado' %}success{% elif r.estado == 'rechazado' %}danger{% elif r.estado == 'en_revision' %}warning{% else %}info{% endif %}">{{ r.get_estado_display }}</span>
+              </div>
+              <div style="font-size:.8rem;color:var(--color-muted);display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;">
+                {{ r.fecha|date:"d/m/Y" }} · {{ r.responsable.get_full_name|default:r.responsable.username }}
+                <a class="btn btn--ghost btn--sm" href="{% url 'documentos:registro_detalle' registro_uuid=r.uuid %}">Ver</a>
+              </div>
+            </li>
+            {% endfor %}
+          </ul>
+          {% else %}
+          <p style="font-size:.875rem;color:var(--color-muted);margin:0;">Sin registros de formato para este documento.</p>
+          {% endif %}
+          {% if puede_crear_registro and formatos_registro %}
+          <div style="margin-top:1rem;display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;">
+            <span style="font-size:.8rem;color:var(--color-muted);">Nuevo registro:</span>
+            {% for f in formatos_registro %}
+            <a class="btn btn--primary btn--sm"
+               href="{% url 'documentos:registro_crear' %}?formato={{ f.id }}&contexto_tipo=documento&contexto_id={{ documento.uuid }}">{{ f.codigo }}</a>
+            {% endfor %}
+          </div>
+          {% endif %}
+        </div>
+      </div>
+
       <style>
       .modal { display: none; }
       .modal.active {
@@ -1170,9 +1207,15 @@
 {% block extra_js %}
 <script src="{% static 'js/conversion-progress.js' %}" defer></script>
 <script>
-function aprobarDocumentoDirecto(tipo, docId) {
+async function aprobarDocumentoDirecto(tipo, docId, esPlantilla) {
   if (!confirm('¿Estás seguro de aprobar este documento?')) return;
-  console.log('Aprobando documento:', tipo, docId);
+  const payload = { observaciones: '' };
+  // Las plantillas se aprueban sin firma electrónica ni PIN.
+  if (!esPlantilla) {
+    const pin = await window.pedirPinFirma('Ingresa tu PIN para aprobar este documento.');
+    if (pin === null) return;
+    payload.pin = pin;
+  }
 
   fetch(`/documentos/api/${tipo}/${docId}/aprobar-creacion/`, {
     method: 'POST',
@@ -1180,16 +1223,15 @@ function aprobarDocumentoDirecto(tipo, docId) {
       'Content-Type': 'application/json',
       'X-CSRFToken': '{{ csrf_token }}',
     },
-    body: JSON.stringify({ observaciones: '' })
+    body: JSON.stringify(payload)
   })
-  .then(response => {
-    console.log('Response status:', response.status);
-    return response.json();
-  })
+  .then(response => response.json())
   .then(data => {
-    console.log('Response data:', data);
     if (data.success) {
       location.reload();
+    } else if (data.requiere_pin) {
+      alert(data.mensaje || 'Necesitas crear tu PIN de firma.');
+      window.avisoPinNoCreado();
     } else {
       alert(data.mensaje || 'Error al aprobar');
     }

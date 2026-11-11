@@ -56,6 +56,13 @@ def generar_ruta_version(instance, filename):
     return f'documentos/{depto_codigo}/{username}/{doc.codigo}_v{instance.numero_version}_{fecha}{extension}'
 
 
+def generar_ruta_registro(instance, filename):
+    """Ruta de un registro: el código del formato se repite, el uuid no."""
+    extension = os.path.splitext(filename)[1] if filename else '.pdf'
+    codigo = (instance.formato_codigo or 'registro').replace('/', '-')
+    return f'registros/{codigo}/{instance.uuid.hex}{extension}'
+
+
 # =========================================================================
 # MODELOS DE SOPORTE (se mantienen)
 # =========================================================================
@@ -1317,6 +1324,11 @@ class DistribucionDocumento(models.Model):
         """True si la distribución espera la firma conforme del destinatario."""
         return self.estado_firma == 'pendiente'
 
+    @property
+    def firmas(self):
+        """QuerySet de ``FirmaElectronica`` de esta distribución (motor único)."""
+        return FirmaElectronica.para(self)
+
 
 class SolicitudAprobacionDocumento(models.Model):
     ESTADO_CHOICES = [
@@ -1460,22 +1472,18 @@ class SolicitudAprobacionDocumento(models.Model):
             self._avanzar_siguiente()
 
     def rechazar(self, motivo=''):
+        """Rechaza la solicitud y devuelve el documento a correcciones.
+
+        El rechazo NO firma ni imprime los bloques de Evaluado/Autorizado ni
+        la Resolución: la planilla queda en blanco y el propietario corrige el
+        documento/planilla para reenviarlo. La trazabilidad queda en la
+        auditoría ISO y en ``motivo_rechazo``/observaciones.
+        """
         from django.utils import timezone as tz
         self.estado = 'rechazada'
         self.motivo_rechazo = motivo
         self.fecha_respuesta = tz.now()
         self.save(update_fields=['estado', 'motivo_rechazo', 'fecha_respuesta'])
-        valores = {}
-        # En un solo paso, el autorizador que rechaza también firma la
-        # evaluación; en dos pasos solo firma el rol que rechazó.
-        if self.rol_aprobador == 'evaluador' or self.es_paso_unico():
-            valores.update(_valores_evaluacion(self.aprobador, self.fecha_respuesta))
-        if self.rol_aprobador == 'autorizador':
-            valores.update(_valores_autorizacion(self.aprobador, self.fecha_respuesta))
-        valores['resolucion'] = 'Rechazado'
-        operacion = OPERACION_POR_ACCION.get(self.accion_solicitud)
-        if operacion:
-            autocompletar_respuestas(self.documento, valores, operacion=operacion)
         self._cancelar_hermano()
         self._revertir_documento()
 
@@ -1696,8 +1704,8 @@ def _fecha_respuesta_iso(fecha):
 def _valores_evaluacion(usuario, fecha=None):
     """Diccionario con los campos de evaluación para autorrellenar.
 
-    ``fecha`` es la fecha real de la respuesta (aprobación o rechazo); si se
-    omite, se usa la fecha actual.
+    ``fecha`` es la fecha real de la aprobación; si se omite, se usa la
+    actual. El rechazo no firma (ver ``SolicitudAprobacionDocumento.rechazar``).
     """
     return {
         'evaluado_por_nombre': usuario.get_full_name() or usuario.username,
@@ -1709,8 +1717,8 @@ def _valores_evaluacion(usuario, fecha=None):
 def _valores_autorizacion(usuario, fecha=None):
     """Diccionario con los campos de autorización para autorrellenar.
 
-    ``fecha`` es la fecha real de la respuesta (aprobación o rechazo); si se
-    omite, se usa la fecha actual.
+    ``fecha`` es la fecha real de la aprobación; si se omite, se usa la
+    actual. El rechazo no firma (ver ``SolicitudAprobacionDocumento.rechazar``).
     """
     return {
         'autorizado_por_nombre': usuario.get_full_name() or usuario.username,
@@ -1962,6 +1970,14 @@ class Formato(models.Model):
     aplica_modificacion = models.BooleanField(default=True, verbose_name='Aplica para Modificación')
     aplica_eliminacion = models.BooleanField(default=True, verbose_name='Aplica para Eliminación')
     activo = models.BooleanField(default=True, verbose_name='Activo')
+    #: Habilita el flujo de Registros (instancias llenas) para este formato.
+    permite_registros = models.BooleanField(
+        default=False, verbose_name='Permite registros',
+        help_text=(
+            'Si está activo, se pueden crear registros (formularios llenos) '
+            'de este formato ligados a un documento/contexto.'
+        ),
+    )
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_modificacion = models.DateTimeField(auto_now=True)
 
@@ -2037,6 +2053,7 @@ class CampoFormato(models.Model):
         ('select', 'Selección (desplegable)'),
         ('checkbox_grupo', 'Casillas de verificación'),
         ('tabla', 'Tabla / Plan de Acción'),
+        ('sello', 'Sello de firma electrónica'),
     ]
 
     ANCHO_CHOICES = [
@@ -2064,6 +2081,7 @@ class CampoFormato(models.Model):
         ('edicion_documento', 'Edición del documento (auto)'),
         ('fecha_vigencia_documento', 'Fecha de vigencia del documento (auto)'),
         ('descripcion_solicitud', 'Descripción de la solicitud (auto)'),
+        ('sello_firma', 'Sello de firma electrónica (auto)'),
     ]
 
     seccion = models.ForeignKey(
@@ -2307,6 +2325,108 @@ class FormatoRespuesta(models.Model):
         return f"{self.formato.codigo} ← {self.origen_tipo}:{self.origen_id}"
 
 
+class RegistroFormato(models.Model):
+    """Instancia LLENA de un ``Formato`` (registro/evidencia), con contexto.
+
+    El código visible es el del formato (``SGC-FOR-010``) y **se repite** por
+    diseño: dos registros para DPR-005 y DPR-006 comparten código. La
+    identidad es ``uuid``. No es un ``Documento`` controlado (CONTEXT §32).
+    """
+
+    ESTADO_CHOICES = [
+        ('borrador', 'Borrador'),
+        ('en_revision', 'En Revisión'),
+        ('aprobado', 'Aprobado'),
+        ('rechazado', 'Rechazado'),
+        ('obsoleto', 'Obsoleto'),
+    ]
+
+    uuid = models.UUIDField(
+        default=uuid.uuid4, editable=False, unique=True, verbose_name='UUID'
+    )
+    formato = models.ForeignKey(
+        Formato, on_delete=models.PROTECT, related_name='registros',
+        verbose_name='Formato',
+    )
+    #: Snapshot del formato al crear el registro (el código no cambia, pero
+    #: se conserva por trazabilidad de edición/versión).
+    formato_codigo = models.CharField(max_length=30, verbose_name='Código del formato')
+    formato_version = models.CharField(
+        max_length=20, blank=True, default='', verbose_name='Versión del formato'
+    )
+    formato_edicion = models.CharField(
+        max_length=20, blank=True, default='', verbose_name='Edición del formato'
+    )
+    #: Contexto genérico (primer caso: 'documento' + uuid del DPR).
+    contexto_tipo = models.CharField(
+        max_length=30, db_index=True, verbose_name='Tipo de contexto'
+    )
+    contexto_id = models.CharField(
+        max_length=64, db_index=True, verbose_name='Id del contexto'
+    )
+    titulo = models.CharField(max_length=200, verbose_name='Título')
+    descripcion = models.TextField(blank=True, default='', verbose_name='Descripción')
+    fecha = models.DateField(default=timezone.localdate, verbose_name='Fecha')
+    responsable = models.ForeignKey(
+        User, on_delete=models.PROTECT, related_name='registros_formato',
+        verbose_name='Responsable',
+    )
+    estado = models.CharField(
+        max_length=20, choices=ESTADO_CHOICES, default='borrador',
+        verbose_name='Estado',
+    )
+    respuestas = models.JSONField(default=dict, blank=True, verbose_name='Respuestas')
+    archivo = models.FileField(
+        upload_to=generar_ruta_registro, blank=True, null=True,
+        validators=[validar_archivo_documento], verbose_name='Archivo',
+    )
+    archivo_pdf = models.FileField(
+        upload_to=generar_ruta_registro, blank=True, null=True,
+        verbose_name='Archivo PDF',
+    )
+    hash_integridad = models.CharField(
+        max_length=64, blank=True, default='',
+        verbose_name='Hash de integridad (SHA-256)',
+    )
+    aprobador = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='registros_formato_aprobados',
+        verbose_name='Aprobador',
+    )
+    fecha_aprobacion = models.DateTimeField(
+        null=True, blank=True, verbose_name='Aprobado en'
+    )
+    observaciones = models.TextField(
+        blank=True, default='', verbose_name='Observaciones'
+    )
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Registro de Formato'
+        verbose_name_plural = 'Registros de Formatos'
+        ordering = ['-creado']
+        indexes = [
+            models.Index(
+                fields=['contexto_tipo', 'contexto_id'],
+                name='registro_ctx_idx',
+            ),
+            models.Index(
+                fields=['formato', 'estado'], name='registro_fmt_estado_idx',
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.formato_codigo} · {self.titulo} ({self.uuid})"
+
+    @property
+    def codigo(self):
+        """Código visible = el del formato (puede repetirse)."""
+        return self.formato_codigo or (
+            self.formato.codigo if self.formato_id else ''
+        )
+
+
 class ResumenIAUso(models.Model):
     """Contador diario de resúmenes IA generados por usuario."""
 
@@ -2362,21 +2482,36 @@ class ConversionPDFDiagnostico(models.Model):
 
 
 # =============================================================================
-# FIRMA ELECTRÓNICA DE DISTRIBUCIÓN (SES) — SGC-FOR-002
+# FIRMA ELECTRÓNICA (SES) — MOTOR ÚNICO
 # =============================================================================
 #
-# Alcance: SOLO la firma de la distribución (planilla FOR-002). Las firmas de
-# aprobación de documentos/planillas (FOR-001/FOR-005) son otro flujo y no se
-# tocan aquí.
+# Un solo modelo y una sola función de firma (``services/firmas.firmar``). El
+# documento firmado se identifica con ``origen_tipo`` + ``origen_id``, así que
+# agregar un documento firmable no requiere otra tabla ni otro flujo.
 #
 # * Interna: OTP por correo + PIN local (``FirmaCredencial``). El PIN se
 #   guarda con ``make_password`` y JAMÁS se re-valida contra AD (riesgo de
 #   bloqueo de cuenta real).
 # * Externa: invitación tokenizada (``InvitacionFirma``), 7 días, un solo uso.
 #   Solo se guarda el HASH del token: si la BD se filtra no se puede firmar.
+# * Sistema: auto-aprobaciones (no hay un acto humano que firmar).
 #
 # La firma interna es ASÍNCRONA: no bloquea el cierre de la distribución. El
 # FOR-002 simplemente muestra la fila como ``pendiente`` hasta firmar.
+
+#: ``_meta.model_name`` → ``origen_tipo`` de la firma.
+FIRMA_ORIGEN_POR_MODELO = {
+    'distribuciondocumento': 'distribucion',
+    'aprobacionplanilla': 'aprobacion_planilla',
+    'solicitudaprobaciondocumento': 'solicitud_aprobacion_documento',
+    'registroformato': 'registro_formato',
+}
+
+#: ``origen_tipo`` → ``_meta.model_name``.
+FIRMA_MODELO_POR_ORIGEN = {
+    origen: modelo for modelo, origen in FIRMA_ORIGEN_POR_MODELO.items()
+}
+
 
 class FirmaCredencial(models.Model):
     """PIN local de firma electrónica de un usuario interno."""
@@ -2417,17 +2552,21 @@ class FirmaCredencial(models.Model):
 
 
 class FirmaElectronica(models.Model):
-    """Firma electrónica de UNA distribución por UN firmante.
+    """Firma electrónica de UN objeto firmable por UN firmante.
 
     ``firmante_clave`` normaliza internos (``user:<id>``) y externos
-    (``email:<correo>``) para que la unicidad (distribución + firmante) aplique
-    igual a los dos casos (un externo no puede firmar dos veces la misma
-    distribución).
+    (``email:<correo>``) para que la unicidad (origen + firmante) aplique igual
+    a los dos casos (un externo no puede firmar dos veces la misma planilla).
+
+    El objeto firmado se identifica con ``origen_tipo`` + ``origen_id``
+    (migración 0059). Ver ``FIRMA_ORIGEN_POR_MODELO``; usar
+    :meth:`para` para consultar las firmas de una instancia.
     """
 
     TIPO_CHOICES = [
         ('interna', 'Interna (OTP + PIN)'),
         ('externa', 'Externa (invitación)'),
+        ('sistema', 'Sistema (automática)'),
     ]
     ESTADO_CHOICES = [
         ('pendiente', 'Pendiente'),
@@ -2436,14 +2575,18 @@ class FirmaElectronica(models.Model):
         ('rechazada', 'Rechazada'),
     ]
 
-    distribucion = models.ForeignKey(
-        DistribucionDocumento, on_delete=models.CASCADE, related_name='firmas',
-        verbose_name='Distribución'
+    #: Tipo del objeto firmado (ver ``FIRMA_ORIGEN_POR_MODELO``).
+    origen_tipo = models.CharField(
+        max_length=30, db_index=True, verbose_name='Tipo de origen'
+    )
+    #: ``str(pk)`` del objeto firmado.
+    origen_id = models.CharField(
+        max_length=64, verbose_name='Id de origen'
     )
     tipo = models.CharField(
         max_length=10, choices=TIPO_CHOICES, verbose_name='Tipo de firma'
     )
-    #: Clave única del firmante dentro de la distribución (ver docstring).
+    #: Clave única del firmante dentro del origen (ver docstring).
     firmante_clave = models.CharField(
         max_length=220, verbose_name='Clave de firmante'
     )
@@ -2502,13 +2645,38 @@ class FirmaElectronica(models.Model):
         ordering = ['-creado']
         constraints = [
             models.UniqueConstraint(
-                fields=['distribucion', 'firmante_clave'],
-                name='firma_dist_firmante_unico',
+                fields=['origen_tipo', 'origen_id', 'firmante_clave'],
+                name='firma_origen_firmante_unico',
             ),
         ]
 
     def __str__(self):
         return f"{self.get_tipo_display()} {self.firmante_nombre or self.firmante_clave} ({self.estado})"
+
+    @classmethod
+    def para(cls, obj):
+        """QuerySet de firmas del objeto ``obj`` (vacío si no es firmable)."""
+        if obj is None or obj.pk is None:
+            return cls.objects.none()
+        tipo = FIRMA_ORIGEN_POR_MODELO.get(obj._meta.model_name)
+        if tipo is None:
+            return cls.objects.none()
+        return cls.objects.filter(origen_tipo=tipo, origen_id=str(obj.pk))
+
+    @property
+    def origen(self):
+        """Instancia firmada (``None`` si ya no existe o el tipo es inválido)."""
+        from django.apps import apps
+
+        modelo = FIRMA_MODELO_POR_ORIGEN.get(self.origen_tipo)
+        if not modelo:
+            return None
+        try:
+            return apps.get_model('documentos', modelo)._default_manager.filter(
+                pk=self.origen_id,
+            ).first()
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def clave_interna(usuario):

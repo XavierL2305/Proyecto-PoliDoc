@@ -27,12 +27,16 @@ def valores_autorrelleno_planilla(aprobacion, aprobada=True):
       Autorizado.
     - **Dos pasos**: el evaluador firma solo Evaluado; el autorizador firma
       Autorizado y, si es final, fija la Resolución.
-    - **Rechazo**: firma el rol que actuó (en un solo paso, ambos) y la
-      Resolución queda ``Rechazado``.
+    - **Rechazo**: NO firma ni imprime nada (los bloques quedan en blanco);
+      el documento/planilla vuelve para correcciones y la trazabilidad queda
+      en la auditoría y las observaciones.
 
     Usa la fecha real de la respuesta (``fecha_aprobacion``).
     """
     from ..models import _valores_autorizacion, _valores_evaluacion
+
+    if not aprobada:
+        return {}
 
     valores = {}
     if aprobacion.rol_aprobador == 'evaluador' or aprobacion.es_paso_unico():
@@ -43,9 +47,7 @@ def valores_autorrelleno_planilla(aprobacion, aprobada=True):
         valores.update(_valores_autorizacion(
             aprobacion.aprobador, aprobacion.fecha_aprobacion,
         ))
-    if not aprobada:
-        valores['resolucion'] = 'Rechazado'
-    elif aprobacion.es_final:
+    if aprobacion.es_final:
         valores['resolucion'] = 'Aceptado'
     return valores
 
@@ -113,7 +115,7 @@ def tomar_paso_esperando(aprobacion, usuario):
 
 
 def resolver_aprobacion_planilla(aprobacion, usuario, *, aprobada,
-                                  observaciones=''):
+                                  observaciones='', firma=None):
     """Resuelve una ``AprobacionPlanilla`` (aprobar o rechazar) y sus efectos.
 
     Único punto para vista, API y auto-aprobación de plantillas: fija el
@@ -122,15 +124,24 @@ def resolver_aprobacion_planilla(aprobacion, usuario, *, aprobada,
     ``notificar_planilla_resuelta`` para que cada superficie decida a quién
     avisar.
 
+    Exige ``firma`` (``FirmaElectronica`` del paso) salvo en PLANTILLAS
+    (``documento.es_plantilla=True``): aprobar una plantilla no emite firma
+    SES. Las rutas humanas de documentos/planillas no-plantilla la obtienen
+    con ``services.firmas.firmar``.
+
     Devuelve ``{'planilla', 'documento', 'cambios', 'es_final'}``.
     """
     from ..models import AprobacionPlanilla
+    from .firmas import ErrorFirma
     from auditoria.services import (
         registrar_aprobacion_planilla, registrar_rechazo_planilla,
     )
     from .planillas import aplicar_planilla_al_documento
 
     planilla = aprobacion.planilla
+    es_plantilla = bool(getattr(planilla.documento, 'es_plantilla', False))
+    if aprobada and firma is None and not es_plantilla:
+        raise ErrorFirma('Falta la firma electrónica de la aprobación.')
     if aprobada:
         es_final = aprobacion.es_final
         aprobacion.estado = 'aprobada'
@@ -170,7 +181,12 @@ def resolver_aprobacion_planilla(aprobacion, usuario, *, aprobada,
     aprobacion.save(update_fields=[
         'estado', 'observaciones', 'fecha_aprobacion',
     ])
-    autocompletar_planilla(planilla, aprobacion, aprobada=False)
+    # Rechazo: no se firma ni se imprime nada. Solo se invalida el preview
+    # por si existiera un XLSX cacheado de un intento anterior.
+    if planilla.solicitud_cambio_id:
+        from .planillas import invalidar_planilla_solicitud
+
+        invalidar_planilla_solicitud(planilla.solicitud_cambio)
     hermano = AprobacionPlanilla.objects.filter(
         planilla=planilla,
     ).exclude(id=aprobacion.id).exclude(

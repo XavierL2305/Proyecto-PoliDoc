@@ -8,6 +8,9 @@
   .app-content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .page-content { flex: 1; min-height: 0; min-width: 0; padding: 2rem; overflow-x: hidden; overflow-y: auto; }
   .app-messages { flex: 0 0 auto; padding: 1rem 2rem 0; display: flex; flex-direction: column; gap: 0.75rem; }
+  /* El estilo inline `display:flex` anulaba el atributo hidden: el modal de
+     PIN se mostraba en TODAS las páginas. Esta regla lo mantiene oculto. */
+  #pin-firma-modal[hidden] { display: none !important; }
   /* Indicador de delegación de jefatura en curso (solo para delegados). */
   .app-delegacion { flex: 0 0 auto; margin: 1rem 2rem 0; display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem;
     padding: 0.65rem 1rem; border-radius: 8px; font-size: 0.85rem;
@@ -47,6 +50,9 @@
       </a>
       <a href="{% url 'documentos:mis_documentos' %}" class="sidebar-item {% if request.resolver_match.url_name == 'mis_documentos' %}active{% endif %}">
         <i class="fa-solid fa-file-lines"></i><span>Mis Documentos</span>
+      </a>
+      <a href="{% url 'documentos:registros_lista' %}" class="sidebar-item {% if 'registro' in request.resolver_match.url_name %}active{% endif %}">
+        <i class="fa-solid fa-clipboard-check"></i><span>Registros</span>
       </a>
       <a href="{% url 'documentos:seleccionar_tipo' %}" class="sidebar-item sidebar-item--primary {% if request.resolver_match.url_name == 'seleccionar_tipo' %}active{% endif %}">
         <i class="fa-solid fa-plus-circle"></i><span>Nuevo Documento</span>
@@ -112,6 +118,7 @@
           <div class="navbar-dropdown">
             <a href="{% url 'autenticacion:perfil' %}" class="navbar-dropdown-item"><i class="fa-solid fa-user"></i> Mi Perfil</a>
             <a href="{% url 'documentos:mis_documentos' %}" class="navbar-dropdown-item"><i class="fa-solid fa-file-lines"></i> Mis Documentos</a>
+            <a href="{% url 'documentos:registros_lista' %}" class="navbar-dropdown-item"><i class="fa-solid fa-clipboard-check"></i> Registros</a>
             <a href="{% url 'documentos:mis_solicitudes' %}" class="navbar-dropdown-item"><i class="fa-solid fa-inbox"></i> Mis solicitudes</a>
             <div class="navbar-dropdown-divider"></div>
             <form method="post" action="{% url 'autenticacion:logout' %}" style="display:inline;margin:0;">
@@ -145,6 +152,79 @@
     </main>
   </div>
 </div>
+
+<!-- Modal reutilizable de PIN de firma (SES) -->
+<div id="pin-firma-modal" hidden
+     style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:3000;display:flex;align-items:center;justify-content:center;padding:1rem;">
+  <div style="background:var(--color-surface);border-radius:var(--radius-lg);padding:1.5rem;max-width:420px;width:100%;box-shadow:var(--shadow-lg);">
+    <h3 style="margin:0 0 .5rem;font-size:1rem;">Firma electrónica</h3>
+    <p id="pin-firma-msg" style="font-size:.875rem;color:var(--color-muted);margin:0 0 1rem;">
+      Ingresa tu PIN de firma para registrar la decisión.
+    </p>
+    <input id="pin-firma-input" type="password" inputmode="numeric" autocomplete="off"
+           class="form-input" placeholder="PIN" style="width:100%;margin-bottom:1rem;">
+    <div style="display:flex;gap:.75rem;justify-content:flex-end;">
+      <button type="button" class="btn btn--ghost" id="pin-firma-cancel">Cancelar</button>
+      <button type="button" class="btn btn--primary" id="pin-firma-ok">Firmar</button>
+    </div>
+    <p id="pin-firma-help" hidden style="font-size:.85rem;margin:.75rem 0 0;">
+      Tiene que registrar primero su PIN antes de firmar.
+      <a href="{% url 'autenticacion:perfil' %}#firma-electronica" style="font-weight:600;">Ir a Mi perfil</a>.
+    </p>
+  </div>
+</div>
+<script>
+(function () {
+  var modal = document.getElementById('pin-firma-modal');
+  if (!modal) return;
+  var input = document.getElementById('pin-firma-input');
+  var ayuda = document.getElementById('pin-firma-help');
+  var mensaje = document.getElementById('pin-firma-msg');
+  var resolver = null;
+  function cerrar(valor) {
+    modal.hidden = true;
+    var r = resolver;
+    resolver = null;
+    if (r) r(valor);
+  }
+  var botonOk = document.getElementById('pin-firma-ok');
+  var botonCancelar = document.getElementById('pin-firma-cancel');
+  var aviso = false;
+  function modoAviso(activo) {
+    aviso = activo;
+    // display inline: .btn/.form-input fijan su propio display y anularían
+    // el atributo `hidden`.
+    input.style.display = activo ? 'none' : '';
+    botonOk.style.display = activo ? 'none' : '';
+    botonCancelar.textContent = activo ? 'Cerrar' : 'Cancelar';
+    ayuda.hidden = !activo;
+  }
+  window.pedirPinFirma = function (texto) {
+    modoAviso(false);
+    mensaje.textContent = texto || 'Ingresa tu PIN de firma para registrar la decisión.';
+    input.value = '';
+    modal.hidden = false;
+    setTimeout(function () { input.focus(); }, 30);
+    return new Promise(function (resolve) { resolver = resolve; });
+  };
+  window.avisoPinNoCreado = function () {
+    modoAviso(true);
+    mensaje.textContent = 'No puede firmar todavía.';
+    if (resolver) { var r = resolver; resolver = null; r(null); }
+    modal.hidden = false;
+  };
+  document.getElementById('pin-firma-cancel').addEventListener('click', function () { cerrar(null); });
+  document.getElementById('pin-firma-ok').addEventListener('click', function () {
+    var v = input.value.trim();
+    if (!v) { input.focus(); return; }
+    cerrar(v);
+  });
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); document.getElementById('pin-firma-ok').click(); }
+    if (e.key === 'Escape') { cerrar(null); }
+  });
+})();
+</script>
 <script src="{% static 'js/search.js' %}" defer></script>
 <script src="{% static 'js/sidebar.js' %}" defer></script>
 <script src="{% static 'js/accordion.js' %}" defer></script>

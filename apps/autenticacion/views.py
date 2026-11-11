@@ -332,15 +332,39 @@ def perfil_usuario(request):
         activa=True
     ).count()
 
+    from documentos.services.firmas import obtener_credencial
+
     return render(request, 'autenticacion/perfil.html', {
         'form': form,
         'perfil': perfil,
+        'credencial': obtener_credencial(request.user),
         'total_documentos': total_docs,
         'solicitudes_descarga': solicitudes_descarga,
         'mis_solicitudes_descarga': mis_solicitudes_descarga,
         'mas_solicitudes_descarga': solicitudes_descarga > len(mis_solicitudes_descarga),
         'asignaciones': asignaciones,
     })
+
+
+@login_required(login_url='/login/')
+def firmar_pin_perfil(request):
+    """Crea o cambia el PIN local de firma electrónica (SES)."""
+    from django.contrib import messages
+
+    from documentos.services import firmas
+
+    if request.method != 'POST':
+        return redirect('autenticacion:perfil')
+    try:
+        firmas.establecer_pin(
+            request.user,
+            request.POST.get('pin', ''),
+            request.POST.get('pin2', ''),
+        )
+        messages.success(request, 'PIN de firma guardado correctamente.')
+    except firmas.ErrorFirma as exc:
+        messages.error(request, str(exc))
+    return redirect('autenticacion:perfil')
 
 
 @login_required(login_url='/login/')

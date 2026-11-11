@@ -193,5 +193,18 @@ class BaseDocumentosTest(TestCase):
                 obj.__dict__ = fresh.__dict__
                 obj._state = fresh._state
 
+    def crear_pin_firma(self, usuario=None, pin='1234'):
+        """Crea el PIN de firma SES del usuario (idempotente) y lo devuelve.
+
+        Las aprobaciones/decisiones exigen firma electrónica desde el motor
+        único (``services.firmas.firmar``); los tests que aprueban deben
+        configurar el PIN del aprobador.
+        """
+        from documentos.services import firmas
+
+        usuario = usuario or self.user_admin
+        firmas.establecer_pin(usuario, pin)
+        return pin
+
     def tearDown(self):
         self._mongo_patch.stop()

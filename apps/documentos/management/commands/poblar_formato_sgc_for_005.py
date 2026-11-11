@@ -128,6 +128,9 @@ class Command(BaseCommand):
                          {'valor': 'Rechazado', 'etiqueta': 'Rechazado', 'shape': 'Rectángulo 25'},
                      ],
                      'ayuda': 'Indicar si el cambio fue aceptado o rechazado'},
+                    {'clave': 'sello_firma', 'etiqueta': 'Sello de firma electrónica',
+                     'tipo': 'sello', 'origen': 'sello_firma',
+                     'celda_excel': 'A42'},
                 ],
             },
             {

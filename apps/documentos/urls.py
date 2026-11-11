@@ -74,6 +74,17 @@ urlpatterns = [
     path('delegaciones/', views.delegaciones_jefatura, name='delegaciones_jefatura'),
     path('delegaciones/<int:deleg_id>/revocar/', views.revocar_delegacion, name='revocar_delegacion'),
 
+    # Registros de formato (DEBE ir antes del genérico <str:tipo>/<uuid:/>)
+    path('registros/', views.registros_lista, name='registros_lista'),
+    path('registros/nuevo/', views.registro_crear, name='registro_crear'),
+    path('registros/<uuid:registro_uuid>/', views.registro_detalle, name='registro_detalle'),
+    path('registros/<uuid:registro_uuid>/editar/', views.registro_editar, name='registro_editar'),
+    path('registros/<uuid:registro_uuid>/enviar/', views.registro_enviar, name='registro_enviar'),
+    path('registros/<uuid:registro_uuid>/aprobar/', views.registro_aprobar, name='registro_aprobar'),
+    path('registros/<uuid:registro_uuid>/rechazar/', views.registro_rechazar, name='registro_rechazar'),
+    path('registros/<uuid:registro_uuid>/xlsx/', views.registro_xlsx, name='registro_xlsx'),
+    path('registros/<uuid:registro_uuid>/pdf/', views.registro_pdf, name='registro_pdf'),
+
     # Detalle, editar, eliminar (genérico - DEBE ir después de rutas específicas)
     path('<str:tipo>/<uuid:documento_id>/', views.detalle_documento, name='detalle'),
     path('<str:tipo>/<uuid:documento_id>/enviar/', views.enviar_documento, name='enviar_documento'),

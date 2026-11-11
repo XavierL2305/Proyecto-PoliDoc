@@ -11,7 +11,6 @@ from ..models import (
 )
 from .aprobaciones import (
     avisar_paso_sin_asignar, notificar_planilla_resuelta,
-    resolver_aprobacion_planilla,
     notificar_aprobador as _notificar_aprobador,
 )
 
@@ -171,10 +170,11 @@ def _crear_solicitud_plantilla(documento, usuario, departamento, documentos_kwar
             aprobador=aprobador, rol_aprobador='autorizador', es_final=True,
             estado='pendiente', **documentos_kwargs,
         )
-        sol.aprobar(
-            observaciones='Aprobación directa: quien subió la plantilla '
-                          'ejerce jefatura en el departamento.'
-        )
+        # Las plantillas no emiten firma SES (§31.6): solo estado + auditoría.
+        sol.aprobar(observaciones=(
+            'Aprobación directa: quien subió la plantilla ejerce jefatura '
+            'en el departamento.'
+        ))
         return sol
 
     if aprobador:
@@ -269,17 +269,19 @@ def _crear_aprobacion_planilla_plantilla(planilla, usuario, documento,
             rol_aprobador='autorizador', es_final=True,
             estado='pendiente', **kwargs,
         )
+        observaciones = (
+            'Aprobación directa: quien propuso el cambio ejerce jefatura '
+            'en el departamento de la plantilla.'
+        )
+        # Las plantillas no emiten firma SES (§31.6): resolver directo.
         resolver_aprobacion_planilla(
-            ap, usuario, aprobada=True,
-            observaciones=(
-                'Aprobación directa: quien propuso el cambio ejerce jefatura '
-                'en el departamento de la plantilla.'
-            ),
+            ap, usuario, aprobada=True, observaciones=observaciones,
+            firma=None,
         )
         if planilla.responsable_id != usuario.id:
             notificar_planilla_resuelta(
                 planilla, True,
-                observaciones=ap.observaciones,
+                observaciones=ap.observaciones or observaciones,
             )
         return ap
 
@@ -332,7 +334,7 @@ def _auditar_resolucion(request, solicitud, resuelta, observaciones=''):
         from auditoria.middleware import resolver_ip_cliente
         from auditoria.services import registrar_log_iso
         registrar_log_iso(
-            usuario=request.user,
+            usuario=request.user if request else solicitud.aprobador,
             accion_tipo='aprobacion' if resuelta else 'rechazo',
             accion_categoria='documento',
             recurso_tipo=solicitud.documento.tipo_id or '',
@@ -349,24 +351,37 @@ def _auditar_resolucion(request, solicitud, resuelta, observaciones=''):
                 f'Solicitud {solicitud.accion_solicitud} '
                 f'{"aprobada" if resuelta else "rechazada"}'
             ),
-            ip_address=resolver_ip_cliente(request),
-            user_agent=request.META.get('HTTP_USER_AGENT'),
+            ip_address=resolver_ip_cliente(request) if request else None,
+            user_agent=(
+                request.META.get('HTTP_USER_AGENT') if request else ''
+            ),
         )
     except Exception:
         pass
 
 
-def resolver_solicitud_documento(request, solicitud, *, aprobada, observaciones=''):
+def resolver_solicitud_documento(request, solicitud, *, aprobada,
+                                 observaciones='', firma=None):
     """Aprueba o rechaza una ``SolicitudAprobacionDocumento`` y sus efectos.
 
     Incluye el gate de planillas por operación, la notificación al solicitante
     y la auditoría de resolución. El llamador debe estar dentro de una
     transacción (la API ya lo está).
+
+    Exige ``firma`` (``FirmaElectronica`` del paso) salvo en PLANTILLAS
+    (``documento.es_plantilla=True``): aprobar una plantilla no emite firma.
+    Las rutas humanas de documentos no-plantilla la obtienen con
+    ``services.firmas.firmar``.
     """
     from autenticacion.models import Notificacion
 
     from .cambios_estado import ACCION_LABEL
+    from .firmas import ErrorFirma
     from .planillas import encolar_generacion_planilla
+
+    es_plantilla = bool(getattr(solicitud.documento, 'es_plantilla', False))
+    if aprobada and firma is None and not es_plantilla:
+        raise ErrorFirma('Falta la firma electrónica de la aprobación.')
 
     accion = solicitud.accion_solicitud
     documento = solicitud.documento

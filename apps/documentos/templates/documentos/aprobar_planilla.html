@@ -114,11 +114,41 @@
             <label class="form-label">Observaciones (opcional)</label>
             <textarea name="observaciones" class="form-input form-textarea" rows="3" placeholder="Agregue observaciones..." {% if planilla.estado != 'en_revision' %}disabled{% endif %}></textarea>
           </div>
+
+          {% if planilla.estado == 'en_revision' and es_plantilla %}
+          <div class="form-group" style="margin-top: 1.5rem;">
+            <div class="alert alert--info" style="margin-top: .5rem;">
+              Aprobación de plantilla: no requiere firma electrónica ni PIN.
+            </div>
+          </div>
+          {% endif %}
+
+          {% if planilla.estado == 'en_revision' and not es_plantilla %}
+          <div class="form-group" style="margin-top: 1.5rem;">
+            <label class="form-label">PIN de firma <span style="color: var(--color-muted);">(solo para aprobar)</span></label>
+            {% if credencial %}
+            <input type="password" name="pin" inputmode="numeric" autocomplete="off"
+                   class="form-input" placeholder="Ingresa tu PIN" required
+                   minlength="4" maxlength="12">
+            <p style="font-size: .8rem; color: var(--color-muted); margin-top: .35rem;">
+              Al aprobar, tu decisión queda firmada electrónicamente (hash SHA-256 + auditoría).
+            </p>
+            {% else %}
+            <div class="alert alert--warning" style="margin-top: .5rem;">
+              <strong>Tiene que registrar primero su PIN antes de firmar.</strong>
+              <a href="{% url 'autenticacion:perfil' %}#firma-electronica">Ir a Mi perfil</a>.
+              Puede rechazar sin PIN.
+            </div>
+            {% endif %}
+          </div>
+          {% endif %}
         </div>
         <div class="form-card-footer">
           <a href="{% url 'documentos:detalle_planilla' planilla_uuid=planilla.uuid %}" class="btn btn--ghost">Volver</a>
           {% if planilla.estado == 'en_revision' %}
-          <button type="submit" name="accion" value="rechazar" class="btn btn--danger">Rechazar</button>
+          <button type="submit" name="accion" value="rechazar" class="btn btn--danger"
+                  formnovalidate>Rechazar</button>
+          {% if credencial or es_plantilla %}
           <button type="submit" name="accion" value="aprobar" class="btn btn--success">
             {% with aprobacion=planilla.aprobaciones.all.0 %}
             {% if aprobacion.rol_aprobador == 'evaluador' %}
@@ -128,6 +158,7 @@
             {% endif %}
             {% endwith %}
           </button>
+          {% endif %}
           {% endif %}
         </div>
         </form>

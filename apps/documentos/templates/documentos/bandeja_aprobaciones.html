@@ -264,7 +264,7 @@
       <i class="fa-solid fa-eye"></i> Ver Documento
     </a>
     {% if sol.aprobador_id == request.user.id or not sol.aprobador_id and user.perfil.es_administrador %}
-    <button class="btn btn--success btn--sm" onclick="aprobarSolicitud({{ sol.id }}, '{{ sol.documento.tipo_id }}', '{{ sol.documento.uuid }}')">
+    <button class="btn btn--success btn--sm" onclick="aprobarSolicitud({{ sol.id }}, '{{ sol.documento.tipo_id }}', '{{ sol.documento.uuid }}', {{ sol.documento.es_plantilla|yesno:'true,false' }})">
       <i class="fa-solid fa-check"></i> Aprobar
     </button>
     <button class="btn btn--danger btn--sm" onclick="toggleRechazo({{ sol.id }})">
@@ -480,8 +480,15 @@
 
 {% block extra_js %}
 <script>
-function aprobarSolicitud(solicitudId, tipo, docId) {
+async function aprobarSolicitud(solicitudId, tipo, docId, esPlantilla) {
   if (!confirm('¿Estás seguro de aprobar esta solicitud?')) return;
+  const payload = { observaciones: '' };
+  // Las plantillas se aprueban sin firma electrónica ni PIN.
+  if (!esPlantilla) {
+    const pin = await window.pedirPinFirma('Ingresa tu PIN para aprobar esta solicitud.');
+    if (pin === null) return;
+    payload.pin = pin;
+  }
 
   fetch(`/documentos/api/${tipo}/${docId}/aprobar-creacion/`, {
     method: 'POST',
@@ -489,12 +496,15 @@ function aprobarSolicitud(solicitudId, tipo, docId) {
       'Content-Type': 'application/json',
       'X-CSRFToken': '{{ csrf_token }}',
     },
-    body: JSON.stringify({ observaciones: '' })
+    body: JSON.stringify(payload)
   })
   .then(response => response.json())
   .then(data => {
     if (data.success) {
       location.reload();
+    } else if (data.requiere_pin) {
+      alert(data.mensaje || 'Necesitas crear tu PIN de firma.');
+      window.avisoPinNoCreado();
     } else {
       alert(data.mensaje || 'Error al aprobar');
     }
@@ -512,6 +522,7 @@ function confirmarRechazo(solicitudId, tipo, docId) {
     return;
   }
 
+  // El rechazo no se firma: no se pide PIN.
   fetch(`/documentos/api/${tipo}/${docId}/rechazar-creacion/`, {
     method: 'POST',
     headers: {

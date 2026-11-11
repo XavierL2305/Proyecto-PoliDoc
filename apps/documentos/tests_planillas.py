@@ -290,10 +290,12 @@ class AprobacionEncolaPlanillasTest(BasePlanillasTest):
 
     def test_al_aprobar_encola_la_planilla(self):
         self.client.login(username='jefe_ti', password='testpass123')
+        self.crear_pin_firma(self.user_jefe_ti)
         with patch('documentos.tasks.generar_planilla_solicitud_task') as mock_task:
             with self.captureOnCommitCallbacks(execute=True):
                 resp = self.client.post(
-                    self.url, data=json.dumps({}), content_type='application/json',
+                    self.url, data=json.dumps({'pin': '1234'}),
+                    content_type='application/json',
                 )
 
         self.assertEqual(resp.status_code, 200)
@@ -305,11 +307,13 @@ class AprobacionEncolaPlanillasTest(BasePlanillasTest):
         self.solicitud_aprob.es_final = False
         self.solicitud_aprob.save(update_fields=['es_final'])
         self.client.login(username='jefe_ti', password='testpass123')
+        self.crear_pin_firma(self.user_jefe_ti)
 
         with patch('documentos.tasks.generar_planilla_solicitud_task') as mock_task:
             with self.captureOnCommitCallbacks(execute=True):
                 resp = self.client.post(
-                    self.url, data=json.dumps({}), content_type='application/json',
+                    self.url, data=json.dumps({'pin': '1234'}),
+                    content_type='application/json',
                 )
 
         self.assertEqual(resp.status_code, 200)
