@@ -3021,8 +3021,9 @@ origen (p. ej. en CI, donde `documentacion/` no está versionado),
 30. FIRMA ELECTRÓNICA DE DISTRIBUCIÓN (SES)
 ===================================================================
 
-Alcance: firma de CONFORMIDAD de la distribución (columna FIRMA CONFORME
-del FOR-002). NO cubre la firma de aprobaciones 001/005 (diferido).
+Alcance original: firma de CONFORMIDAD de la distribución (columna FIRMA
+CONFORME del FOR-002). La extensión a las aprobaciones 001/005 se hizo con el
+mismo motor (ver §31), no con un segundo flujo.
 
   30.1 MODELOS (migración 0058)
     - FirmaCredencial   PIN local por usuario (make_password). intentos_fallidos
@@ -3064,3 +3065,206 @@ del FOR-002). NO cubre la firma de aprobaciones 001/005 (diferido).
       Datos y Firmas Electrónicas (2001), SUSCERTE.
     - PENDIENTE: validar con jurídico el texto de consentimiento; SMTP real
       (en demo Mailpit/consola); revisión de UX de firma masiva.
+
+31. MOTOR ÚNICO DE FIRMA ELECTRÓNICA (SES) — EXTENSIÓN A FOR-001/005
+====================================================================
+
+Decisión: NO hay dos sistemas de firma. Hay UN modelo (FirmaElectronica)
+y UNA función de entrada (firmar()). La única distinción legítima es el
+MÉTODO de verificación de identidad (PIN interno, OTP, token externo o
+automático), que es un parámetro, no otro mecanismo.
+
+  31.1 MODELO UNIFICADO (migración 0059)
+    - FirmaElectronica deja de colgar de DistribucionDocumento y pasa a
+      tener origen genérico: origen_tipo (texto) + origen_id (texto),
+      mismo patrón que FormatoRespuesta (§24). Valores previstos:
+      'distribucion', 'aprobacion_planilla',
+      'solicitud_aprobacion_documento' (futuro: 'documento', 'descarga').
+    - tipo: interna | externa | sistema.
+    - Unique (origen_tipo, origen_id, firmante_clave). Se conservan
+      firmante_clave ('user:<id>' / 'email:<correo>'), estado, otp_*,
+      hash_contenido, algoritmo, ip_address, user_agent y datos (JSON).
+    - Backfill: las filas existentes quedan origen_tipo='distribucion' y
+      origen_id=str(distribucion_id).
+    - Las firmas NO se borran en cascada: son evidencia (ISO 15489).
+    - Migración 0060: agrega el tipo de campo 'sello' y el origen
+      'sello_firma', y crea el campo en los formatos SGC ya poblados
+      (001 A29, 002 A52, 005 A42).
+    - Acceso: FirmaElectronica.para(obj). DistribucionDocumento.firmas se
+      mantiene como propiedad y el prefetch del lote se resuelve con un
+      mapa en bloque (sin N+1).
+
+  31.2 REGISTRO DE FIRMABLES (escalabilidad)
+    - services/firmas.py expone Firmable (firmantes, puede_firmar,
+      contenido, despues) y registrar_firmable(tipo). Los imports son
+      perezosos para no crear ciclos.
+    - Agregar un documento firmable = una entrada en el registro; el
+      resto del sistema no cambia.
+    - Registrados: distribucion (FOR-002), aprobacion_planilla (FOR-005)
+      y solicitud_aprobacion_documento (FOR-001).
+
+  31.3 FUNCIÓN ÚNICA firmar()
+    - firmar(obj, usuario=None, pin=None, codigo=None, request=None,
+      metodo='pin', consentimiento=False, crear=False) -> FirmaElectronica
+    - Flujo atómico: resuelve spec → puede_firmar → obtiene/crea firma →
+      verifica credencial (PIN | OTP+PIN | token | auto) → hash_contenido
+      + IP/UA → auditoría ISO (accion_tipo del origen) → despues(obj,
+      firma).
+    - firmar_interna / firmar_externa (FOR-002) son envoltorios del mismo
+      firmar(): no hay camino paralelo.
+
+  31.4 POLÍTICA POR DOCUMENTO (requiere_otp)
+    - FOR-002 interna: OTP + PIN (sin cambios).
+    - Aprobaciones FOR-001/FOR-005: SOLO PIN (el usuario ya está en
+      sesión; evita depender de SMTP en cada decisión). El OTP queda
+      disponible por spec si se exige después.
+
+  31.5 SELLO EN XLSX/PDF
+    - Nuevo tipo de campo 'sello' (origen 'sello_firma', no editable): recibe
+      una lista de líneas y las escribe en filas consecutivas desde
+      celda_excel, preservando el estilo de cada fila (_ref_desplazada).
+    - respuestas_con_sello(formato, origen, respuestas) arma las líneas
+      desde FirmaElectronica: nombre, fecha, SHA-256 corto e ID.
+    - Inyección única: exportar_xlsx() para 001/005 y _respuestas_lote()
+      para 002. El PDF hereda el sello (se convierte del XLSX).
+    - El hash cubre el contenido ANTES del sello; el segundo firmante
+      cubre también el sello del primero (cadena). El hash corresponde a
+      la versión revisada, no al archivo ya sellado.
+    - Ubicación configurable; defaults: 001 filas libres 29+, 005 bajo la
+      tabla (42+) y 002 bajo la tabla (52+).
+
+  31.6 ALCANCE DE LAS APROBACIONES (001/005/plantillas)
+    - DOCUMENTOS (FOR-001) y PLANILLAS (FOR-005) no-plantilla: APROBAR
+      exige firma= (PIN). RECHAZAR no se firma: no pide PIN, no crea
+      FirmaElectronica y no imprime bloques (Evaluado/Autorizado/
+      Resolución quedan en blanco). El documento vuelve a borrador y la
+      planilla a correcciones; la trazabilidad queda en auditoría +
+      observaciones/motivo.
+    - PLANTILLAS (documento.es_plantilla=True), tanto el alta como la
+      modificación: NO emiten firma SES ni piden PIN. La aprobación es
+      solo estado + auditoría; si hay planilla impresa, sus bloques
+      Evaluado/Autorizado/Resolución se llenan con nombre/cargo/fecha.
+      La auto-aprobación del jefe/delegado llama aprobar/resolver directo,
+      sin firmar().
+    - resolver_* acepta firma=None SOLO si el documento es plantilla; para
+      el resto, aprobar sin firma sigue siendo error.
+    - resolver_* solo exige firma cuando aprobada=True; el comando
+      reparar_planillas_evaluacion reconstruye únicamente pasos aprobados.
+    - Superficies: views.aprobar_planilla (HTML), api.aprobar_planilla /
+      rechazar_planilla, api.aprobar_creacion_documento /
+      rechazar_creacion_documento. Las plantillas resuelven directo (sin
+      _firmar_paso). Alta/cambio de PIN: SOLO en /perfil
+      (#firma-electronica). Si falta el PIN al aprobar (no-plantilla), se
+      muestra una alerta con ancla "Ir a Mi perfil" (sin formulario inline).
+    - El modal de PIN vive en base_app.html y está oculto por defecto
+      (regla #pin-firma-modal[hidden]{display:none!important}; el
+      display:flex en línea anulaba el atributo hidden y lo mostraba en
+      todas las páginas).
+
+  31.7 PRUEBAS
+    - tests_ses.py: motor sobre FOR-005 y FOR-001, API con/sin PIN, hash y
+      auditoría, PIN ausente/incorrecto/bloqueado, auto='sistema', doble
+      firma del mismo paso, sello en el XLSX del FOR-002 y plantillas sin
+      firma.
+    - tests_plantillas.py verifica que aprobar una plantilla (alta o
+      modificación, humana o automática) NO crea FirmaElectronica.
+    - Los tests que aprueban documentos/planillas no-plantilla usan
+      BaseDocumentosTest.crear_pin_firma (PIN '1234').
+    - tests_firmas_aprobacion.py (existente) cubre el autollenado del
+      texto Evaluado/Autorizado; no confundir con SES.
+
+  31.8 LIMITACIONES CONOCIDAS
+    - Sin worker Celery el PDF se regenera en línea (§29).
+    - El consentimiento externo debe validarlo jurídico (§30.4).
+
+32. MODELO DOCUMENTAL: DOCUMENTO, FORMATO Y REGISTRO
+===================================================================
+
+Base ISO 9001:2015 §7.5.3 (información documentada vs evidencia). Detalle y
+alternativas en docs/adr/0001-modelo-documento-formato-registro.md.
+
+  32.1 DOCUMENTO CONTROLADO
+    - Entidad Documento. Código ÚNICO, versión/edición, aprobación,
+      distribución, retención y obsolescencia. Ej.: DPR-005, TI-PRG-001.
+  32.2 FORMATO / PLANTILLA
+    - Entidad Formato (código único, ej. SGC-FOR-010), secciones/campos y
+      plantilla XLSX. Es el formulario EN BLANCO.
+  32.3 REGISTRO
+    - Instancia llena de un formato para un contexto (DPR, proceso, área…).
+      Identidad uuid; el código visible es el del formato y se repite por
+      diseño. No se versiona como documento: es evidencia.
+  32.4 REGLAS
+    - Documento.codigo sigue unique: NO se relaja.
+    - Formato.codigo sigue unique.
+    - Un registro no crea Documento; su código es el del formato + contexto.
+    - Cambio de edición de un formato: los registros viejos NO se regeneran.
+  32.5 ESTADO Y DEUDA
+    - Antes los registros se creaban como Documento (tipo formulario), lo
+      que chocaba con codigo unique.
+    - Solución: RegistroFormato (§33). Los "documentos-registro" heredados
+      se migran con un comando (P2, §35).
+    - Fuentes: Cognidox (control documental ISO), P3LogiQ (panorama QMS),
+      Qwebdocuments/Focusys (automatización y auditorías).
+
+33. REGISTROS DE FORMATO (SGC-FOR-010)
+===================================================================
+
+  33.1 MODELO RegistroFormato (migración 0061)
+    - uuid (identidad), formato FK, formato_codigo/version/edicion
+      (snapshot), contexto_tipo/contexto_id (primer caso 'documento' =
+      uuid del DPR), titulo, descripcion, fecha, responsable, estado
+      (borrador/en_revision/aprobado/rechazado/obsoleto), respuestas JSON,
+      archivo, archivo_pdf, hash_integridad, aprobador, fecha_aprobacion,
+      observaciones, creado/actualizado.
+    - Formato.permite_registros habilita el flujo.
+  33.2 APROBACIÓN (SES/PIN)
+    - Reutiliza el motor firmar(): origen 'registro_formato' y spec
+      FirmaRegistroFormato (services/firmables.py).
+    - APROBAR exige PIN; RECHAZAR no firma y deja el registro en 'rechazado'
+      (editable y reenviable) con observaciones.
+    - contenido = archivo/XLSX del registro (o JSON canónico); hash +
+      auditoría. Al aprobar se guarda hash_integridad, aprobador y fecha.
+  33.3 UI
+    - "Registros" en la ficha del documento de contexto y listado global
+      /documentos/registros/. Alta (solo formatos permite_registros),
+      detalle y export XLSX/PDF.
+    - El código repetido se distingue por contexto + fecha + título; los
+      archivos llevan sufijo uuid para evitar colisiones.
+  33.4 DISTRIBUCIÓN (P1)
+    - Pendiente: distribución/acuse por registro (hoy solo archivo+estado).
+
+34. CAMPAÑAS DE REVISIÓN MASIVA
+===================================================================
+
+  34.1 CUÁNDO APLICA
+    - Cambio de plantilla: nueva edición del Formato; los registros viejos
+      quedan intactos como evidencia.
+    - Cambio de un documento controlado con impacto en muchos (p. ej. 200):
+      campaña de revisión, no regeneración.
+  34.2 DISEÑO (PENDIENTE, P1)
+    - Análisis de impacto con documentos_relacionados/ReferenciaDocumento.
+    - Selección múltiple → tareas de revisión y nuevas versiones con su
+      aprobación; distribución y acuse por lote; evidencias en auditoría.
+    - NO existe "botón regenerar 200": se versiona y se conserva lo previo.
+
+35. BACKLOG Y ORDEN
+===================================================================
+
+  35.1 HECHO
+    - SES distribución FOR-002; aprobaciones 001/005 con PIN; rechazo sin
+      firma; plantillas sin firma/PIN; sello en XLSX/PDF.
+  35.2 P0 (HECHO)
+    - RegistroFormato (migración 0061) + Formato.permite_registros.
+    - Spec SES 'registro_formato' (aprobar con PIN; rechazo sin firma).
+    - UI: /documentos/registros/ (lista/alta/detalle), sección "Registros de
+      formato" en la ficha del documento, export XLSX/PDF.
+    - tests_registros.py (11): mismo código en contextos distintos, sin crear
+      Documento, aprobación con PIN, rechazo sin firma, export y vistas.
+  35.3 P1
+    - Distribución/acuse de registros; campaña de revisión masiva (§34).
+  35.4 P2
+    - Migración de "documentos-registro" heredados.
+  35.5 NO HACER
+    - Relajar Documento.codigo.
+    - Regenerar registros al cambiar un formato.
+    - Pedir PIN en aprobaciones de plantilla.
