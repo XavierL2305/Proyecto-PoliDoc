@@ -172,6 +172,8 @@
   background: none;
   font: inherit;
   text-align: left;
+  appearance: none;
+  -webkit-appearance: none;
 }
 .sidebar-group-toggle[data-tooltip] {
   cursor: pointer;

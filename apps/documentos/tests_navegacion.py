@@ -160,3 +160,35 @@ class SidebarTest(BaseDocumentosTest):
             reverse('documentos:auditoria_reportes_lista'),
         ):
             self.assertContains(respuesta, f'href="{url}"')
+
+
+class AssetsSidebarTest(BaseDocumentosTest):
+    """Guardián: la fuente CSS/JS debe contener el comportamiento de grupos.
+
+    Evita la regresión observada en producción: HTML nuevo con archivos
+    estáticos viejos (grupos sin estilo y sin colapsar).
+    """
+
+    def _leer(self, *partes):
+        from pathlib import Path
+
+        from django.conf import settings
+
+        return Path(settings.BASE_DIR).joinpath(*partes).read_text(
+            encoding='utf-8',
+        )
+
+    def test_css_fuente_incluye_estilos_de_grupos(self):
+        contenido = self._leer(
+            'polidoc', 'static', 'css', 'components', 'sidebar.css',
+        )
+        self.assertIn('.sidebar-group-toggle', contenido)
+        self.assertIn('.sidebar-group-body', contenido)
+        self.assertIn('.sidebar-group.is-open', contenido)
+
+    def test_js_fuente_inicializa_grupos_y_no_cierra_drawer_al_toggle(self):
+        contenido = self._leer('polidoc', 'static', 'js', 'sidebar.js')
+        self.assertIn("querySelectorAll('.sidebar-group')", contenido)
+        self.assertIn('initGroups', contenido)
+        # Los toggles son <button>: el cierre del drawer aplica solo a enlaces.
+        self.assertIn("querySelectorAll('a.sidebar-item')", contenido)

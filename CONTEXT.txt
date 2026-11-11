@@ -2799,6 +2799,11 @@ el cuello NO era el volumen de datos.
       el icono de un grupo expande la sidebar y abre ese grupo.
     - Accesibilidad: `aria-expanded`/`aria-controls` en los toggles,
       `aria-current="page"` en el ítem activo y `prefers-reduced-motion`.
+    - Si un cambio de CSS/JS "no se ve": regenerar estáticos y reiniciar
+      (`collectstatic --noinput && compress --force`; `run_local.sh` y el
+      compose ya lo hacen al arrancar) + hard reload. En DEBUG WhiteNoise
+      usa finders + autorefresh + max-age 0 para no servir copias viejas de
+      STATIC_ROOT ni cachear en el navegador.
 
 -------------------------------------------------------------------
 27. MANUAL DE USUARIO (docs/manual-usuario/) — TOMO 1 + TOMO 2 + EXPORT

@@ -248,6 +248,15 @@ COMPRESS_ENABLED = os.getenv('COMPRESS_ENABLED', str(not DEBUG)).lower() in ('tr
 COMPRESS_OFFLINE = os.getenv('COMPRESS_OFFLINE', str(not DEBUG)).lower() in ('true', '1', 't')
 COMPRESS_OUTPUT_DIR = 'CACHE'
 
+# WhiteNoise en desarrollo: servir desde los finders (fuente del repo) y sin
+# caché. Así un cambio de CSS/JS no queda "invisible" por copias viejas en
+# STATIC_ROOT ni por caché del navegador. En producción se mantiene el
+# manifest con hash (cache-busting) y el collectstatic del arranque.
+if DEBUG:
+    WHITENOISE_USE_FINDERS = True
+    WHITENOISE_AUTOREFRESH = True
+    WHITENOISE_MAX_AGE = 0
+
 # Media files (uploaded documents)
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'polidoc' / 'media'

@@ -140,7 +140,9 @@
     }
   });
 
-  sidebar.querySelectorAll('.sidebar-item').forEach(function (item) {
+  // Solo los enlaces cierran el drawer: los toggles de grupo (button)
+  // deben expandir/colapsar sin cerrar el menú en móvil.
+  sidebar.querySelectorAll('a.sidebar-item').forEach(function (item) {
     item.addEventListener('click', function () {
       if (isMobile()) closeDrawer();
     });
