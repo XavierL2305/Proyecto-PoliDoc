@@ -22,6 +22,9 @@ from django.db import transaction
 from django.urls import reverse
 from django.utils import timezone
 
+from .avisos import (
+    aviso_texto, clasificacion_de_documento, cuerpo_email_html,
+)
 from .firmas import VIGENCIA_INVITACION_DIAS
 
 logger = logging.getLogger(__name__)
@@ -441,11 +444,15 @@ def enviar_email_distribucion(distribucion, documento, tipo, request,
             'Debes firmar la conformidad de esta distribución; '
             'recibirás una invitación de firma con un enlace.',
         ]
-    lineas += ['', '— POLIDOC']
+    clasificacion = clasificacion_de_documento(documento)
+    lineas += ['', aviso_texto(clasificacion), '', '— POLIDOC']
 
-    message = mail.EmailMessage(
+    message = mail.EmailMultiAlternatives(
         asunto, '\n'.join(lineas),
         settings.DEFAULT_FROM_EMAIL, [email_destino],
+    )
+    message.attach_alternative(
+        cuerpo_email_html(lineas, clasificacion), 'text/html',
     )
 
     # Decisión de adjunto (intención + política), sin tocar la BD todavía.
@@ -548,6 +555,11 @@ def enviar_invitacion_firma(invitacion, token, distribucion, documento,
 
     url = reverse('documentos:firmar_invitacion', args=[token])
     link = request.build_absolute_uri(url) if request else url
+    url_descarga = reverse('documentos:descarga_invitacion', args=[token])
+    link_descarga = (
+        request.build_absolute_uri(url_descarga) if request else url_descarga
+    )
+    clasificacion = clasificacion_de_documento(documento)
 
     asunto = (
         f'[POLIDOC] Invitación a firmar distribución: '
@@ -568,14 +580,23 @@ def enviar_invitacion_firma(invitacion, token, distribucion, documento,
         f'{VIGENCIA_INVITACION_DIAS} días y de un solo uso):',
         link,
         '',
+        'También puedes descargar el archivo con el mismo enlace hasta que '
+        'caduque:',
+        link_descarga,
+        '',
         f'Distribuido por: {distribucion.distribuido_por.get_full_name() or distribucion.distribuido_por.username}',
+        '',
+        aviso_texto(clasificacion),
         '',
         '— POLIDOC',
     ]
 
-    message = mail.EmailMessage(
+    message = mail.EmailMultiAlternatives(
         asunto, '\n'.join(lineas),
         settings.DEFAULT_FROM_EMAIL, [email_destino],
+    )
+    message.attach_alternative(
+        cuerpo_email_html(lineas, clasificacion), 'text/html',
     )
     try:
         mail.mailers.default.send_messages([message])
@@ -788,3 +809,49 @@ def regenerar_planilla_de_firma(firma):
         return None
     fr, _ = generar_planilla_lote(dist.lote)
     return fr
+
+
+# ---------------------------------------------------------------------------
+# Acuse físico escaneado (método impreso)
+# ---------------------------------------------------------------------------
+
+def subir_acuse_documento(distribucion, archivo, usuario):
+    """Guarda el acuse escaneado de una distribución impresa (ISO 9001:7.5.3).
+
+    Raises:
+        PermissionError: distribución revocada.
+        ValueError: método distinto de ``impreso``.
+        ValidationError: archivo inválido (extensión/contenido/tamaño).
+    """
+    if distribucion.revocado:
+        raise PermissionError('La distribución fue revocada.')
+    if distribucion.metodo != 'impreso':
+        raise ValueError('El acuse escaneado aplica solo a distribuciones impresas.')
+
+    distribucion.acuse_archivo = archivo
+    distribucion.full_clean()
+    distribucion.save(update_fields=['acuse_archivo'])
+
+    try:
+        from auditoria.services import registrar_log_iso
+
+        documento = distribucion.documento
+        registrar_log_iso(
+            usuario=usuario,
+            accion_tipo='acuse_escaneado',
+            accion_categoria='documento',
+            recurso_tipo=(documento.tipo_id if documento else ''),
+            recurso_id=str(documento.uuid) if documento else str(distribucion.pk),
+            recurso_codigo=(documento.codigo if documento else ''),
+            detalles={
+                'distribucion_id': distribucion.id,
+                'destinatario': distribucion.destinatario_nombre,
+            },
+            resultado_exitoso=True,
+            resultado_mensaje=(
+                f'Acuse escaneado de {distribucion.destinatario_nombre}'
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error('Auditoría de acuse escaneado falló: %s', exc)
+    return distribucion

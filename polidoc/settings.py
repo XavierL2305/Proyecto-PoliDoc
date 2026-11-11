@@ -268,6 +268,17 @@ MAILERS = {
 
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'no-reply@polidoc.local')
 
+# =============================================================================
+# MENSAJERÍA OPCIONAL (canal WhatsApp DESACTIVADO por defecto)
+# =============================================================================
+# Proveedor oficial (Meta Cloud API o compatible). Sin configurar, el canal
+# 'whatsapp' de documentos.services.canales queda inactivo: POLIDOC no usa
+# bots no oficiales ligados a la sesión de una PC (no institucional, no
+# auditable). Activar = definir estas variables; el flujo no cambia.
+WHATSAPP_API_URL = os.getenv('WHATSAPP_API_URL', '')
+WHATSAPP_TOKEN = os.getenv('WHATSAPP_TOKEN', '')
+WHATSAPP_REMITENTE = os.getenv('WHATSAPP_REMITENTE', '')
+
 MONGO_URI = os.getenv('MONGO_URI', '')
 
 MONGO_SETTINGS = {
@@ -478,8 +489,9 @@ AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',
 ]
 
-# Servidor LDAP
-AUTH_LDAP_SERVER_URI = os.getenv('AUTH_LDAP_SERVER_URI', 'ldap://15.15.1.60:389')
+# Servidor LDAP (vacío = sin LDAP: autenticación solo con ModelBackend).
+# La IP del AD real NO se incrusta en el código: va en .env del entorno.
+AUTH_LDAP_SERVER_URI = os.getenv('AUTH_LDAP_SERVER_URI', '')
 
 # Bind DN (vacío = bind anónimo para búsqueda, luego bind con credenciales del usuario)
 AUTH_LDAP_BIND_DN = os.getenv('AUTH_LDAP_BIND_DN', '')

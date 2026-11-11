@@ -108,6 +108,13 @@
               {% if dist.adjunto_pdf_enviado %} · PDF adjunto{% endif %}
               {% if dist.retiro_version_anterior %} · retiró versión anterior{% endif %}
             </div>
+            {% if dist.acuse_archivo %}
+            <div style="font-size: 0.72rem; margin-top: 0.25rem;">
+              <a href="{{ dist.acuse_archivo.url }}" target="_blank" rel="noopener">
+                <i class="fa-solid fa-file-signature"></i> Acuse escaneado
+              </a>
+            </div>
+            {% endif %}
           {% endif %}
         </td>
         <td>{{ dist.distribuido_por.get_full_name|default:dist.distribuido_por.username }}</td>
@@ -134,6 +141,18 @@
                 <i class="fa-solid fa-ban"></i> Revocar
               </button>
             </form>
+            {% if dist.metodo == 'impreso' %}
+            <form method="post" action="{% url 'documentos:subir_acuse_distribucion' tipo=tipo documento_id=documento.uuid dist_id=dist.id %}"
+                  enctype="multipart/form-data" style="display:flex; gap:0.35rem; align-items:center; flex-wrap:wrap;">
+              {% csrf_token %}
+              <input type="file" name="acuse" accept=".pdf,.jpg,.jpeg,.png" required
+                     style="font-size:0.7rem; max-width:150px;">
+              <button type="submit" class="btn btn--ghost btn--sm" style="font-size:0.72rem;">
+                <i class="fa-solid fa-cloud-arrow-up"></i>
+                {% if dist.acuse_archivo %}Reemplazar acuse{% else %}Subir acuse{% endif %}
+              </button>
+            </form>
+            {% endif %}
             {% endif %}
             {% if dist.lote and puede_revocar or dist.lote and dist.usuario_id == request.user.id %}
             <a href="{% url 'documentos:descargar_planilla_lote' tipo=tipo documento_id=documento.uuid lote=dist.lote %}"

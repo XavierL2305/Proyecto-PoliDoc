@@ -41,8 +41,9 @@ class PlantillaForm(forms.ModelForm):
             'usuarios descargarán y llenarán.'
         )
         self.fields['clasificacion'].help_text = (
-            '"Público" hace la plantilla visible para todos los departamentos; '
-            'el resto se mantiene dentro del tuyo.'
+            '"Público" es visible para todo el personal de la Policlínica '
+            'Táchira (no para el público general); los demás niveles '
+            'restringen la consulta y la distribución.'
         )
         self.fields['descripcion'].required = False
         # El archivo en blanco es la razón de ser de la plantilla: sin él el
@@ -99,7 +100,7 @@ class DocumentoForm(forms.ModelForm):
             'nombre': 'Nombre con el que se identificará en el catálogo. Sé claro y específico (ej. Procedimiento de Control de Documentos).',
             'descripcion': 'Resume el objetivo y el alcance: para qué sirve y a quién aplica.',
             'archivo': 'Archivo principal del documento (PDF, Word o Excel, máx. 10 MB). Es la versión que se controla y distribuye.',
-            'clasificacion': '"Público" hace el documento visible para todos los departamentos; el resto se mantiene dentro del tuyo.',
+            'clasificacion': '"Público" es visible para todo el personal de la Policlínica Táchira (no para el público general); los demás niveles restringen la consulta y la distribución.',
             'periodo_vigencia': 'Tiempo que el documento permanece vigente antes de requerir revisión/renovación. Puede quedar sin vigencia si el tipo lo permite.',
             'periodo_retencion': 'Tiempo que debe conservarse antes de su disposición final (ISO 15489).',
             'departamentos_afectados': 'Áreas a las que impacta este documento.',

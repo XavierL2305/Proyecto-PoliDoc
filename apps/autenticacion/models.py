@@ -182,6 +182,7 @@ class Notificacion(models.Model):
         ('nueva_version', 'Nueva Versión Disponible'),
         ('propiedad_transferida', 'Propiedad Transferida'),
         ('documento_distribuido', 'Documento Distribuido'),
+        ('registro_distribuido', 'Registro Distribuido'),
         ('distribucion_revocada', 'Distribución Revocada'),
         ('cambio_vigencia', 'Vigencia Establecida'),
         ('aprobacion_escalada', 'Aprobación Escalada'),

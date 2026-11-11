@@ -84,6 +84,10 @@ urlpatterns = [
     path('registros/<uuid:registro_uuid>/rechazar/', views.registro_rechazar, name='registro_rechazar'),
     path('registros/<uuid:registro_uuid>/xlsx/', views.registro_xlsx, name='registro_xlsx'),
     path('registros/<uuid:registro_uuid>/pdf/', views.registro_pdf, name='registro_pdf'),
+    path('registros/<uuid:registro_uuid>/distribuir/', views.registro_distribuir, name='registro_distribuir'),
+    path('registros/<uuid:registro_uuid>/distribucion/<int:dist_id>/acuse/', views.registro_subir_acuse, name='registro_subir_acuse'),
+    path('registros/<uuid:registro_uuid>/distribucion/<int:dist_id>/revocar/', views.registro_revocar_distribucion, name='registro_revocar_distribucion'),
+    path('registros/<uuid:registro_uuid>/constancia/<str:formato>/', views.registro_constancia, name='registro_constancia'),
 
     # Detalle, editar, eliminar (genérico - DEBE ir después de rutas específicas)
     path('<str:tipo>/<uuid:documento_id>/', views.detalle_documento, name='detalle'),
@@ -117,9 +121,11 @@ urlpatterns = [
     path('<str:tipo>/<uuid:documento_id>/distribuir/', views.distribuir_documento, name='distribuir_documento'),
     path('<str:tipo>/<uuid:documento_id>/historial-distribucion/', views.historial_distribucion, name='historial_distribucion'),
     path('<str:tipo>/<uuid:documento_id>/distribucion/<int:dist_id>/revocar/', views.revocar_distribucion, name='revocar_distribucion'),
+    path('<str:tipo>/<uuid:documento_id>/distribucion/<int:dist_id>/acuse/', views.subir_acuse_distribucion, name='subir_acuse_distribucion'),
     path('<str:tipo>/<uuid:documento_id>/distribucion/<int:dist_id>/firmar/', views.firmar_distribucion, name='firmar_distribucion'),
     path('<str:tipo>/<uuid:documento_id>/distribucion/<int:dist_id>/retiro-version/', views.alternar_retiro_version, name='alternar_retiro_version'),
     path('<str:tipo>/<uuid:documento_id>/distribucion/planilla/<uuid:lote>/', views.descargar_planilla_lote, name='descargar_planilla_lote'),
+    path('firmar/<str:token>/descargar/', views.descarga_invitacion, name='descarga_invitacion'),
     path('firmar/<str:token>/', views.firmar_invitacion, name='firmar_invitacion'),
 
     # Transferir propiedad

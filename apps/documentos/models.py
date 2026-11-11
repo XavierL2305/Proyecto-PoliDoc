@@ -8,7 +8,7 @@ from django.db.models import Max
 from django.contrib.auth.models import User
 from django.utils import timezone
 
-from .validators import validar_archivo_documento
+from .validators import validar_archivo_acuse, validar_archivo_documento
 
 
 #: Extensión permitida → valor de `Documento.tipo_archivo`.
@@ -371,8 +371,10 @@ class Documento(models.Model):
         default='interno',
         verbose_name='Clasificación',
         help_text=(
-            'Clasificación de seguridad del documento. Sólo '
-            '"Público" hace el documento visible para otros departamentos.'
+            'Clasificación de seguridad del documento. "Público" es visible '
+            'para todo el personal de la Policlínica Táchira (no para el '
+            'público general); los demás niveles restringen la consulta y '
+            'la distribución.'
         )
     )
     # Discriminador de Plantilla (documento en blanco subido para que otros
@@ -1279,6 +1281,13 @@ class DistribucionDocumento(models.Model):
     error_revocacion = models.TextField(
         blank=True, default='', verbose_name='Error de revocación',
         help_text='Detalle si falló el envío de la revocación.'
+    )
+    #: Escaneo del acuse firmado en papel (método impreso; ISO 9001:7.5.3).
+    acuse_archivo = models.FileField(
+        upload_to='acuses/documentos/%Y/%m/', blank=True, null=True,
+        validators=[validar_archivo_acuse],
+        verbose_name='Acuse escaneado',
+        help_text='Escaneo del acuse firmado en papel (método impreso).',
     )
 
     class Meta:
@@ -2502,6 +2511,7 @@ class ConversionPDFDiagnostico(models.Model):
 #: ``_meta.model_name`` → ``origen_tipo`` de la firma.
 FIRMA_ORIGEN_POR_MODELO = {
     'distribuciondocumento': 'distribucion',
+    'distribucionregistro': 'distribucion_registro',
     'aprobacionplanilla': 'aprobacion_planilla',
     'solicitudaprobaciondocumento': 'solicitud_aprobacion_documento',
     'registroformato': 'registro_formato',
@@ -2733,3 +2743,160 @@ class InvitacionFirma(models.Model):
         if self.usado:
             return False
         return self.expira > timezone.now()
+
+
+class DistribucionRegistro(models.Model):
+    """Distribución de un ``RegistroFormato`` aprobado y su acuse.
+
+    Espejo liviano de :class:`DistribucionDocumento` (P1): destinatario
+    interno (cuenta en POLIDOC) o externo (datos de contacto), método de
+    entrega y estado del acuse. La firma del acuse y el enlace seguro de
+    descarga reutilizan ``FirmaElectronica`` + ``InvitacionFirma`` con
+    origen ``distribucion_registro`` (no hay un token propio: una sola
+    cadena de tokens, revocable y con caducidad de 7 días).
+    """
+
+    METODO_CHOICES = [
+        ('sistema', 'Sistema'),
+        ('email', 'Email'),
+        ('impreso', 'Impreso'),
+    ]
+
+    ESTADO_ACUSE_CHOICES = [
+        ('pendiente', 'Acuse pendiente'),
+        ('acusado', 'Acusado'),
+        ('vencido', 'Invitación vencida'),
+        ('revocado', 'Revocado'),
+    ]
+
+    registro = models.ForeignKey(
+        RegistroFormato, on_delete=models.CASCADE,
+        related_name='distribuciones', verbose_name='Registro',
+    )
+    #: ``None`` cuando el destinatario es EXTERNO (no tiene cuenta en POLIDOC).
+    usuario = models.ForeignKey(
+        User, on_delete=models.CASCADE, null=True, blank=True,
+        related_name='registros_recibidos', verbose_name='Usuario destinatario',
+    )
+    nombre_externo = models.CharField(
+        max_length=200, blank=True, default='', verbose_name='Nombre (externo)'
+    )
+    cargo_externo = models.CharField(
+        max_length=200, blank=True, default='', verbose_name='Cargo (externo)'
+    )
+    email_externo = models.EmailField(
+        blank=True, default='', verbose_name='Correo (externo)'
+    )
+    organizacion_externa = models.CharField(
+        max_length=200, blank=True, default='', verbose_name='Organización (externa)'
+    )
+    fecha_distribucion = models.DateTimeField(auto_now_add=True)
+    metodo = models.CharField(max_length=20, choices=METODO_CHOICES, default='sistema')
+    distribuido_por = models.ForeignKey(
+        User, on_delete=models.PROTECT,
+        related_name='registros_distribuidos', verbose_name='Distribuido por',
+    )
+    observaciones = models.TextField(blank=True, default='')
+    #: Entrega confirmada (sistema/impreso al distribuir; email al enviarse).
+    fecha_entrega = models.DateTimeField(
+        null=True, blank=True, verbose_name='Fecha de entrega',
+    )
+    #: Estado del acuse de conformidad del destinatario.
+    estado_acuse = models.CharField(
+        max_length=20, choices=ESTADO_ACUSE_CHOICES, default='pendiente',
+        verbose_name='Estado del acuse',
+    )
+    fecha_acuse = models.DateTimeField(
+        null=True, blank=True, verbose_name='Acusado en',
+    )
+    #: Acuse firmado (SES). La IP/UA del acuse viven en la firma; la
+    #: eliminación de la firma está protegida para no perder evidencia.
+    firma = models.ForeignKey(
+        'FirmaElectronica', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='acuses_registro', verbose_name='Firma del acuse',
+    )
+    #: Escaneo del acuse firmado en papel (método impreso).
+    acuse_archivo = models.FileField(
+        upload_to='acuses/registros/%Y/%m/', blank=True, null=True,
+        validators=[validar_archivo_acuse],
+        verbose_name='Acuse escaneado',
+        help_text='Escaneo del acuse firmado en papel (método impreso).',
+    )
+    adjunto_pdf_enviado = models.BooleanField(
+        default=False, verbose_name='Adjunto enviado',
+        help_text='True si el PDF del registro se adjuntó al correo.',
+    )
+    motivo_sin_adjunto = models.CharField(
+        max_length=200, blank=True, default='',
+        verbose_name='Motivo sin adjunto',
+        help_text='Por qué no se adjuntó el archivo (política de clasificación).',
+    )
+    enviado = models.BooleanField(
+        default=False, verbose_name='Email enviado',
+        help_text='True si el correo de distribución se envió correctamente.',
+    )
+    error = models.TextField(
+        blank=True, default='', verbose_name='Error de envío',
+        help_text='Detalle si falló el envío del correo.',
+    )
+    revocado = models.BooleanField(
+        default=False, verbose_name='Revocado',
+        help_text='True si la distribución fue revocada (bloquea el enlace).',
+    )
+    fecha_revocacion = models.DateTimeField(
+        null=True, blank=True, verbose_name='Fecha de revocación',
+    )
+    revocado_por = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='registros_distribuciones_revocadas',
+        verbose_name='Revocado por',
+    )
+    motivo_revocacion = models.TextField(
+        blank=True, default='', verbose_name='Motivo de revocación',
+    )
+
+    class Meta:
+        verbose_name = 'Distribución de Registro'
+        verbose_name_plural = 'Distribuciones de Registros'
+        ordering = ['-fecha_distribucion']
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(usuario__isnull=False, nombre_externo='')
+                    | models.Q(usuario__isnull=True, nombre_externo__gt='')
+                ),
+                name='reg_dist_destino_interno_o_externo',
+            ),
+        ]
+
+    def __str__(self):
+        if self.usuario_id:
+            return f"Acuse de {self.registro.formato_codigo} a {self.usuario.username}"
+        return f"Acuse de {self.registro.formato_codigo} a {self.nombre_externo}"
+
+    @property
+    def es_externo(self):
+        """True cuando el destinatario no tiene cuenta en POLIDOC."""
+        return self.usuario_id is None
+
+    @property
+    def destinatario_nombre(self):
+        if self.usuario_id:
+            return self.usuario.get_full_name() or self.usuario.username
+        return self.nombre_externo
+
+    @property
+    def destinatario_email(self):
+        if self.usuario_id:
+            return self.usuario.email or ''
+        return self.email_externo or ''
+
+    @property
+    def acuse_pendiente(self):
+        """True si la distribución espera el acuse del destinatario."""
+        return self.estado_acuse == 'pendiente'
+
+    @property
+    def firmas(self):
+        """QuerySet de ``FirmaElectronica`` de esta distribución."""
+        return FirmaElectronica.para(self)

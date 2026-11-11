@@ -1,0 +1,164 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Distribuir Registro - POLIDOC{% endblock %}
+
+{% block extra_css %}
+<style>
+  .dist-card { max-width: 760px; margin: 0 auto; }
+  .dist-card .form-card-body { display: grid; gap: 1.25rem; }
+  .dest-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.25rem; }
+  .externos-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+  .externos-table th { text-align: left; color: var(--color-muted); font-weight: 500; padding: .35rem .25rem; }
+  .externos-table td { padding: .3rem .25rem; }
+  .externos-table input { width: 100%; }
+  .externos-vacio { font-size: .8rem; color: var(--color-muted); padding: .5rem 0; }
+  .radio-linea { display: flex; gap: 1.25rem; flex-wrap: wrap; font-size: .85rem; }
+  .radio-linea label { display: flex; gap: .4rem; align-items: center; }
+  .aviso { border-left: 4px solid var(--color-primary); background: var(--color-info-light);
+           color: var(--color-info-dark); padding: .75rem .9rem; border-radius: var(--radius);
+           font-size: .8rem; line-height: 1.5; }
+</style>
+{% endblock %}
+
+{% block app_content %}
+<div class="form-card dist-card">
+  <div class="form-card-header">
+    <h3 style="margin:0;">Distribuir registro {{ registro.formato_codigo }} — {{ registro.titulo }}</h3>
+    <p style="font-size:.8rem;color:var(--color-muted);margin:.35rem 0 0;">
+      El destinatario externo recibirá un enlace seguro para descargar el
+      archivo y firmar su acuse (vigencia 7 días; la descarga funciona hasta
+      que el enlace venza).
+    </p>
+  </div>
+
+  <form method="post" id="form-distribuir">
+    {% csrf_token %}
+    <div class="form-card-body">
+
+      {% if form.non_field_errors %}
+      <div class="alerta alerta--error" style="background:var(--color-danger-light);color:var(--color-danger);padding:.75rem .9rem;border-radius:var(--radius);font-size:.85rem;">
+        {{ form.non_field_errors.0 }}
+      </div>
+      {% endif %}
+
+      <div class="dest-grid">
+        <div class="form-group" style="margin:0;">
+          <label class="form-label">Destinatarios internos</label>
+          <select name="usuarios" multiple size="8" class="form-input" style="height:auto;">
+            {% for u in usuarios %}
+            <option value="{{ u.pk }}">{{ u.get_full_name|default:u.username }}{% if u.email %} — {{ u.email }}{% endif %}</option>
+            {% endfor %}
+          </select>
+          <p class="help-text">Mantén pulsado Ctrl/Cmd para seleccionar varios.</p>
+        </div>
+
+        <div class="form-group" style="margin:0;">
+          <label class="form-label">Destinatarios externos</label>
+          <table class="externos-table" id="externos-tabla">
+            <thead>
+              <tr><th>Nombre</th><th>Correo</th><th>Cargo</th><th>Organización</th><th></th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <div class="externos-vacio" id="externos-vacio">Sin destinatarios externos.</div>
+          <button type="button" class="btn btn--ghost btn--sm" id="btn-externo" style="margin-top:.5rem;">
+            <i class="fa-solid fa-plus"></i> Agregar externo
+          </button>
+          <input type="hidden" name="externos" id="id_externos" value="[]">
+          {% if form.externos.errors %}
+          <p class="help-text" style="color:var(--color-danger);">{{ form.externos.errors.0 }}</p>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="form-group" style="margin:0;">
+        <label class="form-label">Método de distribución</label>
+        <div class="radio-linea">
+          <label><input type="radio" name="metodo" value="sistema" checked> Sistema (notificación en la app)</label>
+          <label><input type="radio" name="metodo" value="email"> Correo</label>
+          <label><input type="radio" name="metodo" value="impreso"> Impreso</label>
+        </div>
+        {% if form.metodo.errors %}<p class="help-text" style="color:var(--color-danger);">{{ form.metodo.errors.0 }}</p>{% endif %}
+      </div>
+
+      <div class="form-group" style="margin:0;">
+        <label class="form-label" style="display:flex;gap:.5rem;align-items:center;">
+          <input type="checkbox" name="adjuntar_pdf" class="form-checkbox">
+          Adjuntar el PDF al correo interno (la política de clasificación puede vetarlo)
+        </label>
+      </div>
+
+      <div class="form-group" style="margin:0;">
+        <label class="form-label">Observaciones</label>
+        <textarea name="observaciones" class="form-input" rows="3">{{ form.observaciones.value|default:'' }}</textarea>
+      </div>
+
+      <div class="aviso">{{ aviso_html }}</div>
+    </div>
+
+    <div class="form-card-footer" style="justify-content:space-between;">
+      <a class="btn btn--ghost" href="{% url 'documentos:registro_detalle' registro_uuid=registro.uuid %}">Cancelar</a>
+      <button type="submit" class="btn btn--primary">
+        <i class="fa-solid fa-share-nodes"></i> Distribuir y pedir acuse
+      </button>
+    </div>
+  </form>
+</div>
+
+<script>
+(function () {
+  const tbody = document.querySelector('#externos-tabla tbody');
+  const vacio = document.getElementById('externos-vacio');
+  const input = document.getElementById('id_externos');
+
+  function actualizar() {
+    const filas = [];
+    tbody.querySelectorAll('tr').forEach(tr => {
+      const [nombre, email, cargo, organizacion] =
+        Array.from(tr.querySelectorAll('input')).slice(0, 4).map(i => i.value.trim());
+      filas.push({ nombre, email, cargo, organizacion });
+    });
+    input.value = JSON.stringify(filas);
+    vacio.style.display = filas.length ? 'none' : 'block';
+    return filas;
+  }
+
+  function agregarFila(datos) {
+    const tr = document.createElement('tr');
+    const campos = ['nombre', 'email', 'cargo', 'organizacion'];
+    campos.forEach((campo, idx) => {
+      const td = document.createElement('td');
+      const i = document.createElement('input');
+      i.type = 'text';
+      i.className = 'form-input';
+      i.placeholder = idx === 0 ? 'Nombre*' : (idx === 1 ? 'Correo*' : '');
+      i.value = (datos && datos[campo]) || '';
+      td.appendChild(i);
+      tr.appendChild(td);
+    });
+    const tdBtn = document.createElement('td');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn--ghost btn--sm';
+    btn.innerHTML = '<i class="fa-solid fa-trash"></i>';
+    btn.addEventListener('click', () => { tr.remove(); actualizar(); });
+    tdBtn.appendChild(btn);
+    tr.appendChild(tdBtn);
+    tbody.appendChild(tr);
+    actualizar();
+    tr.querySelector('input').focus();
+  }
+
+  document.getElementById('btn-externo').addEventListener('click', () => agregarFila());
+
+  document.getElementById('form-distribuir').addEventListener('submit', () => actualizar());
+
+  // Restaura los externos si el formulario vuelve con errores.
+  try {
+    const previos = JSON.parse(input.value || '[]');
+    previos.forEach(agregarFila);
+  } catch (e) { /* JSON inválido: se arranca vacío */ }
+})();
+</script>
+{% endblock %}

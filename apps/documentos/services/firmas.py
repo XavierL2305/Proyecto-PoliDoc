@@ -583,9 +583,14 @@ def marcar_expirada(invitacion):
         firma.estado = 'expirada'
         firma.save(update_fields=['estado', 'actualizado'])
         dist = firma.origen
-        if dist is not None and getattr(dist, 'estado_firma', '') == 'pendiente':
+        if dist is None:
+            return
+        if getattr(dist, 'estado_firma', '') == 'pendiente':
             dist.estado_firma = 'expirada'
             dist.save(update_fields=['estado_firma'])
+        elif getattr(dist, 'estado_acuse', '') == 'pendiente':
+            dist.estado_acuse = 'vencido'
+            dist.save(update_fields=['estado_acuse'])
 
 
 def buscar_invitacion(token):

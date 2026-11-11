@@ -18,6 +18,9 @@ from django.utils.translation import gettext_lazy as _
 # Extensiones permitidas (CONTEXT.txt §8: formatos ISO soportados).
 EXTENSIONES_PERMITIDAS = frozenset({'.pdf', '.doc', '.docx', '.xls', '.xlsx', '.vsdx'})
 
+#: Acuse escaneado (firma en papel): PDF o imagen de escáner/cámara.
+EXTENSIONES_ACUSE = frozenset({'.pdf', '.jpg', '.jpeg', '.png'})
+
 # Familias por firma mágica.
 _EXT_OLE2 = frozenset({'.doc', '.xls'})            # Office legacy (compuesto OLE2)
 _EXT_ZIP = frozenset({'.docx', '.xlsx', '.vsdx'})   # OOXML / Visio (contenedor ZIP)
@@ -25,6 +28,8 @@ _EXT_ZIP = frozenset({'.docx', '.xlsx', '.vsdx'})   # OOXML / Visio (contenedor 
 _SIG_PDF = b'%PDF-'
 _SIG_OLE2 = b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1'
 _SIG_ZIP = (b'PK\x03\x04', b'PK\x05\x06', b'PK\x07\x08')
+_SIG_JPEG = b'\xff\xd8\xff'
+_SIG_PNG = b'\x89PNG\r\n\x1a\n'
 
 # Bytes iniciales a inspeccionar (suficiente para todas las firmas usadas).
 _CABECERA_BYTES = 16
@@ -108,5 +113,61 @@ def validar_archivo_documento(value):
             raise ValidationError(
                 _('El contenido no es un documento Office/Visio válido (%(ext)s).'),
                 params={'ext': ext},
+                code='contenido_invalido',
+            )
+
+
+def validar_archivo_acuse(value):
+    """Validador del acuse físico escaneado (PDF o imagen).
+
+    Extensión restringida a ``EXTENSIONES_ACUSE``, tamaño máximo y
+    coherencia extensión↔contenido con magic bytes (misma defensa en
+    profundidad que :func:`validar_archivo_documento`).
+    """
+    nombre = getattr(value, 'name', '') or ''
+    ext = os.path.splitext(nombre)[1].lower()
+
+    if ext not in EXTENSIONES_ACUSE:
+        raise ValidationError(
+            _('Extensión "%(ext)s" no permitida para el acuse. '
+              'Tipos aceptados: %(tipos)s.'),
+            params={
+                'ext': ext or '(sin extensión)',
+                'tipos': ', '.join(sorted(EXTENSIONES_ACUSE)),
+            },
+            code='extension_no_permitida',
+        )
+
+    size = getattr(value, 'size', None)
+    if size is not None and size > _max_upload_bytes():
+        raise ValidationError(
+            _('El archivo supera el tamaño máximo de %(mb)s MB.'),
+            params={'mb': getattr(settings, 'DOCUMENTOS_MAX_UPLOAD_MB', 10)},
+            code='archivo_demasiado_grande',
+        )
+
+    cabecera = _leer_cabecera(value)
+    if not cabecera:
+        raise ValidationError(
+            _('El archivo está vacío o no se pudo leer su contenido.'),
+            code='archivo_ilegible',
+        )
+
+    if ext == '.pdf':
+        if _SIG_PDF not in cabecera:
+            raise ValidationError(
+                _('El contenido no es un PDF válido (firma no encontrada).'),
+                code='contenido_invalido',
+            )
+    elif ext in ('.jpg', '.jpeg'):
+        if not cabecera.startswith(_SIG_JPEG):
+            raise ValidationError(
+                _('El contenido no es una imagen JPEG válida.'),
+                code='contenido_invalido',
+            )
+    elif ext == '.png':
+        if not cabecera.startswith(_SIG_PNG):
+            raise ValidationError(
+                _('El contenido no es una imagen PNG válida.'),
                 code='contenido_invalido',
             )

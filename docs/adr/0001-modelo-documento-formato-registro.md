@@ -85,3 +85,29 @@ Reglas derivadas:
   ETQ, AssurX, Ideagen, Greenlight Guru, Unifize, TrackWise).
 - Qwebdocuments / Focusys (automatización documental, workflows,
   auditorías y gestión de riesgo para ISO/GMP/HACCP).
+
+## Addendum P1 — Distribución y acuse de registros
+
+Decisiones tomadas al implementar la distribución de registros (`0062`):
+
+- **Un solo token por destinatario externo.** `DistribucionRegistro` **no**
+  duplica `token_hash`/`expira`: reutiliza `InvitacionFirma` (SHA-256, 7
+  días) como enlace de firma **y** de descarga (`/firmar/<token>/descargar/`).
+  La descarga funciona hasta la caducidad, incluso después de firmar; el
+  "un solo uso" aplica solo a la firma. Si la distribución se revoca, el
+  enlace se bloquea (404) aunque el token siga vigente.
+- **Acuse = firma SES.** Interno con PIN (`FirmaDistribucionRegistro`,
+  `requiere_otp=False`); externo con token + consentimiento. La firma es la
+  evidencia del acuse; IP/UA viven en `FirmaElectronica` (sin duplicar).
+- **Impreso con acuse escaneado.** Se registra la entrega y se sube el
+  escaneo (PDF/JPG/PNG validados por magic bytes). Se añadió
+  `acuse_archivo` también a `DistribucionDocumento` por paridad.
+- **Avisos únicos por clasificación** en `services/avisos.py` (texto plano,
+  HTML y banner de correo). Textos de confidencial/restringido pendientes de
+  validación por Asesoría Legal.
+- **WhatsApp no se integra.** Interfaz `CanalMensajeria` + `CanalWhatsApp`
+  desactivado por defecto (proveedor oficial por variables de entorno); no
+  se usan bots no oficiales de sesión/QR.
+- **Sin IP del AD en el código.** `AUTH_LDAP_SERVER_URI` queda vacío por
+  defecto y se configura en `.env`; con URI vacío el `LDAPBackend` no abre
+  ninguna conexión.

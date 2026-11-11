@@ -69,6 +69,12 @@
     </div>
     {% endif %}
 
+    {% if aviso_html %}
+    <div style="margin-top:1rem;font-size:.78rem;line-height:1.5;color:var(--color-text);background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius);padding:.7rem .9rem;">
+      {{ aviso_html }}
+    </div>
+    {% endif %}
+
     <hr style="margin:1.25rem 0;">
     {% include 'documentos/_formato_dinamico.html' with formato=formato respuestas=registro.respuestas read_only=True %}
 
@@ -93,10 +99,91 @@
       {% endfor %}
     </ul>
     {% endif %}
+
+    <hr style="margin:1.25rem 0;">
+    <div style="display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;align-items:center;">
+      <span class="detail-label">Distribución y acuses</span>
+      {% if distribuciones %}
+      <span style="font-size:.75rem;color:var(--color-muted);display:flex;gap:.5rem;flex-wrap:wrap;">
+        Constancia:
+        <a href="{% url 'documentos:registro_constancia' registro_uuid=registro.uuid formato='pdf' %}">PDF</a>
+        <a href="{% url 'documentos:registro_constancia' registro_uuid=registro.uuid formato='xlsx' %}">XLSX</a>
+        <a href="{% url 'documentos:registro_constancia' registro_uuid=registro.uuid formato='csv' %}">CSV</a>
+      </span>
+      {% endif %}
+    </div>
+
+    {% if distribuciones %}
+    <div style="overflow-x:auto;margin-top:.6rem;">
+      <table style="width:100%;border-collapse:collapse;font-size:.78rem;">
+        <thead>
+          <tr style="color:var(--color-muted);text-align:left;">
+            <th style="padding:.35rem .25rem;">Destinatario</th>
+            <th style="padding:.35rem .25rem;">Método</th>
+            <th style="padding:.35rem .25rem;">Distribuido</th>
+            <th style="padding:.35rem .25rem;">Acuse</th>
+            <th style="padding:.35rem .25rem;">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for d in distribuciones %}
+          <tr style="border-top:1px solid var(--color-border);vertical-align:top;">
+            <td style="padding:.45rem .25rem;">
+              {{ d.destinatario_nombre }}
+              {% if d.es_externo %}<span class="badge badge--secondary" style="font-size:.65rem;">Externo</span>{% endif %}
+              {% if d.revocado %}<span class="badge badge--danger" style="font-size:.65rem;">Revocada</span>{% endif %}
+            </td>
+            <td style="padding:.45rem .25rem;">{{ d.get_metodo_display }}</td>
+            <td style="padding:.45rem .25rem;">{{ d.fecha_distribucion|date:"d/m/Y H:i" }}</td>
+            <td style="padding:.45rem .25rem;">
+              <span class="badge badge--{% if d.estado_acuse == 'acusado' %}success{% elif d.estado_acuse == 'revocado' %}danger{% elif d.estado_acuse == 'vencido' %}secondary{% else %}warning{% endif %}" style="font-size:.65rem;">
+                {{ d.get_estado_acuse_display }}
+              </span>
+              {% if d.fecha_acuse %}<br><span style="color:var(--color-muted);">{{ d.fecha_acuse|date:"d/m/Y H:i" }}</span>{% endif %}
+              {% if d.firma and d.firma.hash_contenido %}<br><span style="font-family:monospace;font-size:.68rem;color:var(--color-muted);word-break:break-all;">{{ d.firma.hash_contenido|slice:":16" }}…</span>{% endif %}
+              {% if d.acuse_archivo %}<br><a href="{{ d.acuse_archivo.url }}" target="_blank" rel="noopener">Acuse escaneado</a>{% endif %}
+            </td>
+            <td style="padding:.45rem .25rem;">
+              {% if puede_distribuir %}
+                {% if d.metodo == 'impreso' and d.estado_acuse != 'acusado' and not d.revocado %}
+                <form method="post" action="{% url 'documentos:registro_subir_acuse' registro_uuid=registro.uuid dist_id=d.id %}"
+                      enctype="multipart/form-data" style="display:flex;gap:.35rem;align-items:center;flex-wrap:wrap;margin-bottom:.35rem;">
+                  {% csrf_token %}
+                  <input type="file" name="acuse" accept=".pdf,.jpg,.jpeg,.png" required
+                         style="font-size:.7rem;max-width:150px;">
+                  <button type="submit" class="btn btn--ghost btn--sm">Subir acuse</button>
+                </form>
+                {% endif %}
+                {% if not d.revocado %}
+                <form method="post" action="{% url 'documentos:registro_revocar_distribucion' registro_uuid=registro.uuid dist_id=d.id %}"
+                      style="display:flex;gap:.35rem;align-items:center;flex-wrap:wrap;">
+                  {% csrf_token %}
+                  <input type="text" name="motivo" placeholder="Motivo de revocación"
+                         class="form-input" style="font-size:.7rem;max-width:180px;">
+                  <button type="submit" class="btn btn--ghost btn--sm">Revocar</button>
+                </form>
+                {% endif %}
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p style="font-size:.8rem;color:var(--color-muted);margin:.6rem 0 0;">
+      Este registro todavía no ha sido distribuido.
+    </p>
+    {% endif %}
   </div>
 
   <div class="form-card-footer" style="flex-wrap:wrap;gap:.75rem;">
     <a class="btn btn--ghost" href="{% url 'documentos:registros_lista' %}">Volver</a>
+    {% if puede_distribuir %}
+    <a class="btn btn--primary" href="{% url 'documentos:registro_distribuir' registro_uuid=registro.uuid %}">
+      <i class="fa-solid fa-share-nodes"></i> Distribuir registro
+    </a>
+    {% endif %}
     {% if puede_editar %}
     <a class="btn btn--ghost"
        href="{% url 'documentos:registro_editar' registro_uuid=registro.uuid %}">Editar</a>

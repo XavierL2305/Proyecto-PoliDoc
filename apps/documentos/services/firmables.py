@@ -267,3 +267,66 @@ class FirmaRegistroFormato(Firmable):
             'estado', 'aprobador', 'fecha_aprobacion', 'hash_integridad',
             'observaciones', 'actualizado',
         ])
+
+
+@registrar_firmable
+class FirmaDistribucionRegistro(Firmable):
+    """Acuse de conformidad del destinatario de una distribución de registro.
+
+    Interno: PIN local. Externo: token de ``InvitacionFirma`` + consentimiento
+    (el enlace también permite descargar el PDF hasta que caduca).
+    """
+
+    tipo = 'distribucion_registro'
+    audit_accion = 'acuse_distribucion_registro'
+    audit_categoria = 'documento'
+
+    def documento(self, obj):
+        from .registros import documento_de_contexto
+
+        return documento_de_contexto(obj.registro)
+
+    def puede_firmar(self, obj, usuario):
+        if obj.usuario_id and obj.usuario_id != usuario.id:
+            raise ErrorFirma('Esta distribución no te pertenece.')
+        if obj.revocado or obj.estado_acuse == 'revocado':
+            raise ErrorFirma('La distribución fue revocada.')
+        if obj.estado_acuse != 'pendiente':
+            raise ErrorFirma('El acuse de esta distribución ya fue registrado.')
+
+    def contenido(self, obj):
+        """PDF del registro o, en su defecto, su XLSX exportado."""
+        registro = obj.registro
+        if registro.archivo:
+            try:
+                with registro.archivo.open('rb') as fh:
+                    return fh.read()
+            except (OSError, ValueError):
+                pass
+        if registro.archivo_pdf:
+            try:
+                with registro.archivo_pdf.open('rb') as fh:
+                    return fh.read()
+            except (OSError, ValueError):
+                pass
+        from .registros import exportar_registro_xlsx
+
+        return exportar_registro_xlsx(registro)
+
+    def detalles(self, obj):
+        return {
+            'distribucion_registro_id': obj.id,
+            'registro': obj.registro.formato_codigo,
+            'destinatario': obj.destinatario_nombre,
+            'metodo': obj.metodo,
+        }
+
+    def despues(self, obj, firma, contexto=None):
+        obj.estado_acuse = 'acusado'
+        obj.fecha_acuse = firma.fecha_firma or timezone.now()
+        obj.firma = firma
+        campos = ['estado_acuse', 'fecha_acuse', 'firma']
+        if not obj.fecha_entrega:
+            obj.fecha_entrega = obj.fecha_acuse
+            campos.append('fecha_entrega')
+        obj.save(update_fields=campos)

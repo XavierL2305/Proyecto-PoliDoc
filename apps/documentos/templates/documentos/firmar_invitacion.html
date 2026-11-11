@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 {% load static %}
 
-{% block title %}Firma de distribución - POLIDOC{% endblock %}
+{% block title %}{% if registro %}Acuse de registro{% else %}Firma de distribución{% endif %} - POLIDOC{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -43,6 +43,11 @@
   .alerta--ok { background: var(--color-success-light); color: var(--color-success); }
   .alerta--warn { background: var(--color-warning-light); color: var(--color-warning); }
   .brand { font-weight: 700; color: var(--color-primary); margin-bottom: 1rem; font-size: 0.8rem; letter-spacing: 0.05em; }
+  .aviso-clasificacion {
+    font-size: 0.78rem; line-height: 1.5; color: var(--color-text);
+    background: var(--color-bg); border: 1px solid var(--color-border);
+    border-radius: var(--radius); padding: 0.75rem 0.9rem; margin-top: 1rem;
+  }
 </style>
 {% endblock %}
 
@@ -51,26 +56,41 @@
   <div class="firma-card">
     <div class="firma-header">
       <div class="brand">POLIDOC</div>
-      <h1><i class="fa-solid fa-signature"></i> Firma de conformidad de distribución</h1>
+      <h1>
+        <i class="fa-solid fa-signature"></i>
+        {% if registro %}Acuse de conformidad del registro{% else %}Firma de conformidad de distribución{% endif %}
+      </h1>
     </div>
 
     {% if invalida %}
     <div class="firma-body">
       <div class="alerta alerta--error">
-        El enlace de firma no es válido. Verifica que lo hayas copiado completo
-        o solicita una nueva invitación al emisor del documento.
+        El enlace no es válido. Verifica que lo hayas copiado completo
+        o solicita una nueva invitación al emisor.
+      </div>
+    </div>
+
+    {% elif revocada %}
+    <div class="firma-body">
+      <div class="alerta alerta--error">
+        <strong>Enlace bloqueado.</strong> Esta distribución fue revocada por
+        el emisor; el archivo ya no está disponible ni se puede firmar.
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Registro</span>
+        <span class="detail-value">{{ registro.formato_codigo }} - {{ registro.titulo|default:documento.nombre }}</span>
       </div>
     </div>
 
     {% elif expirada %}
     <div class="firma-body">
       <div class="alerta alerta--warn">
-        Esta invitación de firma expiró o ya fue utilizada. Solicita una nueva
-        al emisor del documento.
+        Esta invitación expiró o ya fue utilizada. Solicita una nueva
+        al emisor.
       </div>
       <div class="detail-row">
-        <span class="detail-label">Documento</span>
-        <span class="detail-value">{{ documento.codigo }} - {{ documento.nombre }}</span>
+        <span class="detail-label">Registro</span>
+        <span class="detail-value">{{ registro.formato_codigo }} - {{ registro.titulo|default:documento.nombre }}</span>
       </div>
     </div>
 
@@ -78,17 +98,34 @@
     <div class="firma-body">
       <div class="alerta alerta--ok">
         <strong>Firma registrada.</strong> Gracias, {{ firma.firmante_nombre }}.
-        Tu conformidad quedó registrada en la planilla SGC-FOR-002 el
-        {{ firma.fecha_firma|date:"d/m/Y H:i" }}.
+        {% if registro %}
+          Tu acuse quedó registrado en POLIDOC el
+          {{ firma.fecha_firma|date:"d/m/Y H:i" }}.
+        {% else %}
+          Tu conformidad quedó registrada en la planilla SGC-FOR-002 el
+          {{ firma.fecha_firma|date:"d/m/Y H:i" }}.
+        {% endif %}
       </div>
       <div class="detail-row">
-        <span class="detail-label">Documento</span>
-        <span class="detail-value">{{ documento.codigo }} - {{ documento.nombre }}</span>
+        <span class="detail-label">{% if registro %}Registro{% else %}Documento{% endif %}</span>
+        <span class="detail-value">
+          {% if registro %}{{ registro.formato_codigo }} - {{ registro.titulo }}{% else %}{{ documento.codigo }} - {{ documento.nombre }}{% endif %}
+        </span>
       </div>
       <div class="detail-row">
         <span class="detail-label">Firmante</span>
         <span class="detail-value">{{ firma.firmante_nombre }}</span>
       </div>
+      <div class="detail-row">
+        <span class="detail-label">Descarga</span>
+        <span class="detail-value">El enlace sigue vigente hasta {{ invitacion.expira|date:"d/m/Y H:i" }}</span>
+      </div>
+      <div class="aviso-clasificacion">{{ aviso_html }}</div>
+    </div>
+    <div class="firma-footer">
+      <a class="btn btn--ghost" href="{{ url_descarga }}">
+        <i class="fa-solid fa-download"></i> Descargar archivo
+      </a>
     </div>
 
     {% else %}
@@ -99,12 +136,14 @@
         <div class="alerta alerta--error">{{ error }}</div>
         {% endif %}
         <div class="detail-row">
-          <span class="detail-label">Documento</span>
-          <span class="detail-value">{{ documento.codigo }} - {{ documento.nombre }}</span>
+          <span class="detail-label">{% if registro %}Registro{% else %}Documento{% endif %}</span>
+          <span class="detail-value">
+            {% if registro %}{{ registro.formato_codigo }} - {{ registro.titulo }}{% else %}{{ documento.codigo }} - {{ documento.nombre }}{% endif %}
+          </span>
         </div>
         <div class="detail-row">
           <span class="detail-label">Versión</span>
-          <span class="detail-value">{{ documento.version_actual }}</span>
+          <span class="detail-value">{% if registro %}{{ registro.formato_version|default:"—" }}{% else %}{{ documento.version_actual }}{% endif %}</span>
         </div>
         <div class="detail-row">
           <span class="detail-label">Firmante</span>
@@ -131,10 +170,15 @@
             dispositivo.
           </span>
         </label>
+        <div class="aviso-clasificacion">{{ aviso_html }}</div>
       </div>
       <div class="firma-footer">
+        <a class="btn btn--ghost" href="{{ url_descarga }}">
+          <i class="fa-solid fa-download"></i> Descargar archivo
+        </a>
         <button type="submit" class="btn btn--primary">
-          <i class="fa-solid fa-signature"></i> Firmar conformidad
+          <i class="fa-solid fa-signature"></i>
+          {% if registro %}Firmar acuse{% else %}Firmar conformidad{% endif %}
         </button>
       </div>
     </form>

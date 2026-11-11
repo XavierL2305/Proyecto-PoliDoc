@@ -6,7 +6,7 @@ from .models import (
     AprobacionPlanilla, DocumentoAsociadoPlanilla,
     DistribucionDocumento, SolicitudAprobacionDocumento,
     ReferenciaDocumento, Formato, SeccionFormato, CampoFormato,
-    SolicitudCambio, RegistroFormato,
+    SolicitudCambio, RegistroFormato, DistribucionRegistro,
 )
 
 
@@ -110,6 +110,19 @@ class DistribucionDocumentoAdmin(admin.ModelAdmin):
     list_display = ['documento', 'usuario', 'metodo', 'distribuido_por', 'fecha_distribucion']
     list_filter = ['metodo']
     search_fields = ['usuario__username', 'documento__codigo']
+
+
+@admin.register(DistribucionRegistro)
+class DistribucionRegistroAdmin(admin.ModelAdmin):
+    list_display = [
+        'registro', 'destinatario_nombre', 'metodo', 'estado_acuse',
+        'fecha_distribucion', 'revocado',
+    ]
+    list_filter = ['metodo', 'estado_acuse', 'revocado']
+    search_fields = [
+        'registro__formato_codigo', 'registro__titulo', 'usuario__username',
+        'nombre_externo', 'email_externo',
+    ]
 
 
 @admin.register(SolicitudAprobacionDocumento)

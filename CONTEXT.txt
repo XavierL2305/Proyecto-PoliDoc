@@ -3230,8 +3230,42 @@ alternativas en docs/adr/0001-modelo-documento-formato-registro.md.
       detalle y export XLSX/PDF.
     - El código repetido se distingue por contexto + fecha + título; los
       archivos llevan sufijo uuid para evitar colisiones.
-  33.4 DISTRIBUCIÓN (P1)
-    - Pendiente: distribución/acuse por registro (hoy solo archivo+estado).
+  33.4 DISTRIBUCIÓN Y ACUSE (P1, HECHO)
+    - Modelo DistribucionRegistro (migración 0062): destinatario interno
+      (usuario) o externo (nombre/cargo/email/organización), método
+      sistema/email/impreso, fecha_entrega, estado_acuse (pendiente/
+      acusado/vencido/revocado), fecha_acuse, firma FK (SES), acuse_archivo
+      (PDF/JPG/PNG escaneado), adjunto_pdf_enviado/motivo_sin_adjunto,
+      enviado/error y revocación. Solo registros APROBADOS; un acuse por
+      destinatario. UI en la ficha del registro (historial + constancia).
+    - SES: origen 'distribucion_registro' + spec FirmaDistribucionRegistro
+      (interno con PIN; externo token + consentimiento). La firma marca el
+      acuse (estado 'acusado', fecha y FK); IP/UA quedan en la firma.
+    - Enlace seguro: se REUTILIZA InvitacionFirma (SHA-256, 7 días) en vez
+      de un token propio (una sola cadena de tokens). /documentos/firmar/
+      <token>/descargar/ sirve el PDF del documento o del registro hasta la
+      caducidad —aunque ya se haya firmado— y queda bloqueado si la
+      distribución se revoca. "Un solo uso" aplica SOLO a la firma.
+    - Impreso: registra la entrega y permite subir el acuse físico escaneado
+      (validador propio: PDF/JPG/PNG + magic bytes + tamaño). Se agregó
+      acuse_archivo también a DistribucionDocumento (paridad).
+    - Correos multipart (texto + HTML) con banner por clasificación
+      (público verde, interno azul, confidencial ámbar, restringido rojo) y
+      aviso único en services/avisos.py (texto sujeto a Asesoría Legal).
+      Adjunto: público/interno si se pide; confidencial solo admin o jefe
+      efectivo; restringido nunca (solo enlace seguro).
+    - Constancia: historial en pantalla + planilla CSV/XLSX/PDF con
+      destinatarios, método, fechas, acuse, firma id/hash y aviso
+      (/documentos/registros/<uuid>/constancia/<formato>/).
+    - Copy: "Público" = visible para todo el personal de la Policlínica
+      Táchira (no para el público general); actualizado en modelo, formularios
+      y ayuda.
+    - WhatsApp: NO se integra. Interfaz CanalMensajeria + CanalWhatsApp
+      DESACTIVADO por defecto (WHATSAPP_API_URL/TOKEN vacíos en .env); no se
+      usan bots no oficiales ligados a la sesión de una PC.
+    - Higiene: la IP del AD ya no está hardcodeada en settings.py
+      (AUTH_LDAP_SERVER_URI vacío por defecto = sin LDAP; se configura en
+      .env). tests_distribucion_registros.py cubre el flujo completo.
 
 34. CAMPAÑAS DE REVISIÓN MASIVA
 ===================================================================
@@ -3260,8 +3294,12 @@ alternativas en docs/adr/0001-modelo-documento-formato-registro.md.
       formato" en la ficha del documento, export XLSX/PDF.
     - tests_registros.py (11): mismo código en contextos distintos, sin crear
       Documento, aprobación con PIN, rechazo sin firma, export y vistas.
-  35.3 P1
-    - Distribución/acuse de registros; campaña de revisión masiva (§34).
+  35.3 P1 (HECHO)
+    - Distribución/acuse de registros (migración 0062) + enlace seguro de
+      descarga, acuse escaneado, constancia, avisos/banner y WhatsApp
+      opcional desactivado (§33.4).
+    - Pendiente de P1: campaña de revisión masiva (§34) y validación legal
+      de los textos de aviso.
   35.4 P2
     - Migración de "documentos-registro" heredados.
   35.5 NO HACER

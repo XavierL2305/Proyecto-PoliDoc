@@ -50,6 +50,11 @@ class LDAPBackend:
     def authenticate(self, request, username=None, password=None, **kwargs):
         if not username or not password:
             return None
+        # Sin servidor LDAP configurado no se intenta NINGUNA conexión
+        # (evita tocar el AD por accidente; la autenticación local sigue
+        # a cargo de ModelBackend).
+        if not getattr(settings, 'AUTH_LDAP_SERVER_URI', ''):
+            return None
 
         try:
             # 1. Conectar al servidor LDAP

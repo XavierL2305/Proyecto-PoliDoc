@@ -25,6 +25,7 @@ from .models import (
     RenovacionVencimiento, ReferenciaDocumento, Formato, SeccionFormato, CampoFormato,
     SolicitudCambio, Periodo, FormatoPublicacion, respuestas_planilla_actual,
     DelegacionJefatura, RegistroFormato, FirmaElectronica,
+    DistribucionRegistro,
 )
 from .forms import (
     DocumentoForm, PlantillaForm, SolicitudDescargaForm, PlanillaCambiosForm,
@@ -4718,17 +4719,27 @@ def _enviar_email_revocacion(distribucion, documento, tipo, request):
     ]
     if distribucion.motivo_revocacion:
         lineas += [f'Motivo: {distribucion.motivo_revocacion}', '']
+    from .services.avisos import (
+        aviso_texto, clasificacion_de_documento, cuerpo_email_html,
+    )
+
+    clasificacion = clasificacion_de_documento(documento)
     lineas += [
         f'Puedes verlo en: {link}',
         '',
         f'Revocado por: {request.user.get_full_name() or request.user.username}',
         '',
+        aviso_texto(clasificacion),
+        '',
         '— POLIDOC',
     ]
 
-    message = mail.EmailMessage(
+    message = mail.EmailMultiAlternatives(
         asunto, '\n'.join(lineas),
         settings.DEFAULT_FROM_EMAIL, [email_destino],
+    )
+    message.attach_alternative(
+        cuerpo_email_html(lineas, clasificacion), 'text/html',
     )
 
     try:
@@ -4958,6 +4969,34 @@ def descargar_planilla_lote(request, tipo, documento_id, lote):
 
 
 @login_required(login_url='/login/')
+@login_required(login_url='/login/')
+@require_POST
+def subir_acuse_distribucion(request, tipo, documento_id, dist_id):
+    """Sube el acuse físico escaneado de una distribución impresa (P1)."""
+    from .services.distribucion import subir_acuse_documento
+
+    documento = get_documento(tipo, documento_id)
+    if documento is None:
+        messages.error(request, 'Documento no encontrado.')
+        return redirect('documentos:mis_documentos')
+    if not puede_revocar_distribucion(request.user, documento):
+        messages.error(request, 'No tienes permisos para gestionar este acuse.')
+        return redirect('documentos:historial_distribucion', tipo=tipo, documento_id=documento.uuid)
+    distribucion = get_object_or_404(
+        DistribucionDocumento, id=dist_id, documento=documento,
+    )
+    archivo = request.FILES.get('acuse')
+    if archivo is None:
+        messages.error(request, 'Selecciona el archivo del acuse escaneado.')
+        return redirect('documentos:historial_distribucion', tipo=tipo, documento_id=documento.uuid)
+    try:
+        subir_acuse_documento(distribucion, archivo, request.user)
+        messages.success(request, 'Acuse escaneado registrado.')
+    except (PermissionError, ValueError, ValidationError) as exc:
+        messages.error(request, str(exc))
+    return redirect('documentos:historial_distribucion', tipo=tipo, documento_id=documento.uuid)
+
+
 def firmar_distribucion(request, tipo, documento_id, dist_id):
     """Firma interna de una distribución: OTP al correo + PIN local."""
     from .services import firmas
@@ -5031,8 +5070,15 @@ def firmar_distribucion(request, tipo, documento_id, dist_id):
 
 
 def firmar_invitacion(request, token):
-    """Firma externa vía invitación tokenizada (sin sesión de POLIDOC)."""
+    """Firma externa vía invitación tokenizada (sin sesión de POLIDOC).
+
+    Soporta distribuciones de **documentos** (SGC-FOR-002) y de
+    **registros** (acuse del SGC-FOR-010); en ambos casos el mismo token
+    permite descargar el archivo hasta la caducidad.
+    """
+    from .models import DistribucionDocumento, DistribucionRegistro
     from .services import firmas
+    from .services.avisos import aviso_html
 
     invitacion = firmas.buscar_invitacion(token)
     if invitacion is None:
@@ -5041,15 +5087,48 @@ def firmar_invitacion(request, token):
         }, status=404)
 
     firma = invitacion.firma
-    distribucion = firma.origen
-    documento = distribucion.documento
+    origen = firma.origen
+    if isinstance(origen, DistribucionDocumento):
+        documento = origen.documento
+        registro = None
+        distribucion = origen
+        revocada = origen.revocado
+    elif isinstance(origen, DistribucionRegistro):
+        from .services.registros import documento_de_contexto
+
+        registro = origen.registro
+        documento = documento_de_contexto(registro)
+        distribucion = origen
+        revocada = origen.revocado
+    else:
+        return render(request, 'documentos/firmar_invitacion.html', {
+            'invalida': True,
+        }, status=404)
+    if documento is None and registro is None:
+        return render(request, 'documentos/firmar_invitacion.html', {
+            'invalida': True,
+        }, status=404)
+
+    clasificacion = (
+        (documento.clasificacion or 'interno') if documento else 'interno'
+    ).lower()
+    contexto_base = {
+        'invitacion': invitacion, 'firma': firma, 'documento': documento,
+        'registro': registro, 'distribucion': distribucion,
+        'url_descarga': reverse('documentos:descarga_invitacion', args=[token]),
+        'aviso_html': aviso_html(clasificacion),
+    }
+
+    if revocada:
+        return render(request, 'documentos/firmar_invitacion.html', {
+            **contexto_base, 'revocada': True,
+        }, status=403)
 
     if not invitacion.esta_vigente:
         if not invitacion.usado and firma.estado == 'pendiente':
             firmas.marcar_expirada(invitacion)
         return render(request, 'documentos/firmar_invitacion.html', {
-            'expirada': True, 'invitacion': invitacion,
-            'firma': firma, 'documento': documento,
+            **contexto_base, 'expirada': True,
         })
 
     error = ''
@@ -5060,16 +5139,13 @@ def firmar_invitacion(request, token):
                 consentimiento=request.POST.get('consentimiento') == 'on',
             )
             return render(request, 'documentos/firmar_invitacion.html', {
-                'firmada': True, 'invitacion': invitacion,
-                'firma': firma, 'documento': documento,
+                **contexto_base, 'firmada': True,
             })
         except firmas.ErrorFirma as exc:
             error = str(exc)
 
     return render(request, 'documentos/firmar_invitacion.html', {
-        'invitacion': invitacion, 'firma': firma,
-        'documento': documento, 'distribucion': distribucion,
-        'error': error,
+        **contexto_base, 'error': error,
     })
 
 
@@ -5769,6 +5845,10 @@ def registro_editar(request, registro_uuid):
 def registro_detalle(request, registro_uuid):
     from .services import firmas as svc_firmas
     from .services import registros as svc
+    from .services.avisos import aviso_html
+    from .services.distribucion_registros import (
+        clasificacion_de_registro, puede_gestionar_distribucion_registro,
+    )
 
     registro = get_object_or_404(
         RegistroFormato.objects.select_related(
@@ -5780,6 +5860,15 @@ def registro_detalle(request, registro_uuid):
         messages.error(request, 'No tienes acceso a este registro.')
         return redirect('documentos:registros_lista')
 
+    puede_distribuir = (
+        registro.estado == 'aprobado'
+        and puede_gestionar_distribucion_registro(request.user, registro)
+    )
+    usuarios_distribucion = (
+        User.objects.filter(is_active=True).order_by(
+            'first_name', 'last_name', 'username',
+        ) if puede_distribuir else []
+    )
     return render(request, 'documentos/registro_detalle.html', {
         'registro': registro,
         'formato': registro.formato,
@@ -5788,6 +5877,12 @@ def registro_detalle(request, registro_uuid):
         'puede_aprobar': svc.puede_aprobar_registro(request.user, registro),
         'credencial': svc_firmas.obtener_credencial(request.user),
         'firmas': FirmaElectronica.para(registro).order_by('-creado'),
+        'distribuciones': registro.distribuciones.select_related(
+            'usuario', 'firma',
+        ).order_by('-fecha_distribucion'),
+        'puede_distribuir': puede_distribuir,
+        'usuarios_distribucion': usuarios_distribucion,
+        'aviso_html': aviso_html(clasificacion_de_registro(registro)),
     })
 
 
@@ -5885,3 +5980,222 @@ def registro_pdf(request, registro_uuid):
         )
     nombre = f'{registro.formato_codigo}_{registro.uuid.hex[:8]}.pdf'
     return FileResponse(open(ruta, 'rb'), as_attachment=True, filename=nombre)
+
+
+# =============================================================================
+# REGISTROS: DISTRIBUCIÓN, ACUSE Y CONSTANCIA (P1)
+# =============================================================================
+
+@login_required(login_url='/login/')
+def registro_distribuir(request, registro_uuid):
+    """Distribuye un registro aprobado (sistema/correo/impreso) y pide acuse."""
+    from .services.avisos import aviso_html
+    from .services.distribucion_registros import (
+        clasificacion_de_registro, crear_distribuciones_registro,
+        puede_gestionar_distribucion_registro,
+    )
+    from .services.registros import documento_de_contexto
+
+    registro = get_object_or_404(RegistroFormato, uuid=registro_uuid)
+    if not puede_gestionar_distribucion_registro(request.user, registro):
+        messages.error(request, 'No tienes permisos para distribuir este registro.')
+        return redirect('documentos:registro_detalle', registro_uuid=registro.uuid)
+    if registro.estado != 'aprobado':
+        messages.error(request, 'Solo se pueden distribuir registros aprobados.')
+        return redirect('documentos:registro_detalle', registro_uuid=registro.uuid)
+
+    if request.method == 'POST':
+        form = DistribucionDocumentoForm(request.POST)
+        if form.is_valid():
+            usuarios = form.cleaned_data['usuarios']
+            externos = getattr(form, 'externos_parsed', None) or []
+            if not usuarios and not externos:
+                messages.error(request, 'Debes seleccionar al menos un destinatario.')
+                return redirect('documentos:registro_distribuir', registro_uuid=registro.uuid)
+            try:
+                resultado = crear_distribuciones_registro(
+                    registro,
+                    internos=usuarios,
+                    externos=externos,
+                    metodo=form.cleaned_data['metodo'],
+                    observaciones=form.cleaned_data['observaciones'],
+                    distribuido_por=request.user,
+                    adjuntar_pdf=form.cleaned_data.get('adjuntar_pdf', False),
+                    request=request,
+                )
+            except ValueError as exc:
+                messages.error(request, str(exc))
+                return redirect('documentos:registro_distribuir', registro_uuid=registro.uuid)
+            messages.success(
+                request,
+                f'Registro distribuido a {resultado.creadas} destinatario(s).',
+            )
+            for aviso in resultado.mensajes:
+                messages.warning(request, aviso)
+            return redirect('documentos:registro_detalle', registro_uuid=registro.uuid)
+    else:
+        form = DistribucionDocumentoForm()
+
+    return render(request, 'documentos/distribuir_registro.html', {
+        'registro': registro,
+        'form': form,
+        'usuarios': form.usuarios_list,
+        'documento_contexto': documento_de_contexto(registro),
+        'aviso_html': aviso_html(clasificacion_de_registro(registro)),
+    })
+
+
+@login_required(login_url='/login/')
+@require_POST
+def registro_subir_acuse(request, registro_uuid, dist_id):
+    """Sube el acuse físico escaneado de una distribución impresa."""
+    from .services.distribucion_registros import (
+        puede_gestionar_distribucion_registro, subir_acuse,
+    )
+
+    registro = get_object_or_404(RegistroFormato, uuid=registro_uuid)
+    distribucion = get_object_or_404(
+        DistribucionRegistro, id=dist_id, registro=registro,
+    )
+    if not puede_gestionar_distribucion_registro(request.user, registro):
+        messages.error(request, 'No tienes permisos para gestionar este acuse.')
+        return redirect('documentos:registro_detalle', registro_uuid=registro.uuid)
+
+    archivo = request.FILES.get('acuse')
+    if archivo is None:
+        messages.error(request, 'Selecciona el archivo del acuse escaneado.')
+        return redirect('documentos:registro_detalle', registro_uuid=registro.uuid)
+    try:
+        subir_acuse(distribucion, archivo, request.user)
+        messages.success(request, 'Acuse escaneado registrado.')
+    except (PermissionError, ValueError, ValidationError) as exc:
+        messages.error(request, str(exc))
+    return redirect('documentos:registro_detalle', registro_uuid=registro.uuid)
+
+
+@login_required(login_url='/login/')
+@require_POST
+def registro_revocar_distribucion(request, registro_uuid, dist_id):
+    """Revoca una distribución: bloquea el enlace seguro y el acuse."""
+    from .services.distribucion_registros import (
+        puede_gestionar_distribucion_registro, revocar_distribucion_registro,
+    )
+
+    registro = get_object_or_404(RegistroFormato, uuid=registro_uuid)
+    distribucion = get_object_or_404(
+        DistribucionRegistro, id=dist_id, registro=registro,
+    )
+    if not puede_gestionar_distribucion_registro(request.user, registro):
+        messages.error(request, 'No tienes permisos para revocar esta distribución.')
+        return redirect('documentos:registro_detalle', registro_uuid=registro.uuid)
+    try:
+        revocar_distribucion_registro(
+            distribucion, request.user,
+            request.POST.get('motivo', '').strip(),
+        )
+        messages.success(request, 'Distribución revocada; el enlace quedó bloqueado.')
+    except ValueError as exc:
+        messages.warning(request, str(exc))
+    return redirect('documentos:registro_detalle', registro_uuid=registro.uuid)
+
+
+@login_required(login_url='/login/')
+def registro_constancia(request, registro_uuid, formato):
+    """Planilla de distribución y acuses del registro (``csv``/``xlsx``/``pdf``)."""
+    from .services.distribucion_registros import (
+        constancia_csv, constancia_pdf, constancia_xlsx,
+    )
+    from .services.registros import puede_ver_registro
+
+    registro = get_object_or_404(RegistroFormato, uuid=registro_uuid)
+    if not puede_ver_registro(request.user, registro):
+        raise Http404
+    base = f'constancia_{registro.formato_codigo}_{registro.uuid.hex[:8]}'
+
+    if formato == 'csv':
+        return FileResponse(
+            io.BytesIO(constancia_csv(registro)), as_attachment=True,
+            filename=f'{base}.csv',
+        )
+    if formato == 'xlsx':
+        return FileResponse(
+            io.BytesIO(constancia_xlsx(registro)), as_attachment=True,
+            filename=f'{base}.xlsx',
+        )
+    if formato == 'pdf':
+        data = constancia_pdf(registro)
+        if not data:
+            messages.error(request, 'No se pudo generar el PDF de la constancia.')
+            return redirect(
+                'documentos:registro_detalle', registro_uuid=registro.uuid,
+            )
+        return FileResponse(
+            io.BytesIO(data), as_attachment=True, filename=f'{base}.pdf',
+        )
+    raise Http404
+
+
+# =============================================================================
+# ENLACE SEGURO: DESCARGA TOKENIZADA (documentos y registros)
+# =============================================================================
+
+def descarga_invitacion(request, token):
+    """Descarga el archivo por enlace seguro (token SHA-256, 7 días).
+
+    Permitida **hasta la caducidad** del token, incluso después de firmar;
+    un solo uso aplica solo a la firma. Bloquea distribuciones revocadas.
+    """
+    from .services import firmas
+
+    invitacion = firmas.buscar_invitacion(token)
+    if invitacion is None or invitacion.expira <= timezone.now():
+        raise Http404
+
+    firma = invitacion.firma
+    origen = firma.origen
+    from .models import DistribucionDocumento, DistribucionRegistro
+
+    if isinstance(origen, DistribucionDocumento):
+        if origen.revocado:
+            raise Http404
+        documento = origen.documento
+        if documento is None:
+            raise Http404
+        from .services.documentos_pdf import archivo_existe, pdf_disponible
+
+        archivo = None
+        if documento.archivo_pdf and pdf_disponible(documento):
+            archivo = documento.archivo_pdf
+        elif documento.archivo and archivo_existe(documento.archivo):
+            archivo = documento.archivo
+        if archivo is None:
+            raise Http404
+        nombre = getattr(archivo, 'name', '') or 'documento.pdf'
+        response = FileResponse(
+            archivo.open('rb'), as_attachment=True,
+            filename=os.path.basename(nombre),
+        )
+    elif isinstance(origen, DistribucionRegistro):
+        if origen.revocado:
+            raise Http404
+        from .services.registros import exportar_registro_pdf
+
+        ruta = exportar_registro_pdf(origen.registro)
+        if not ruta:
+            raise Http404
+        nombre = (
+            f'{origen.registro.formato_codigo}_'
+            f'{origen.registro.uuid.hex[:8]}.pdf'
+        )
+        response = FileResponse(open(ruta, 'rb'), as_attachment=True, filename=nombre)
+    else:
+        raise Http404
+
+    logger.info(
+        'Descarga por enlace seguro: invitación=%s destino=%s',
+        invitacion.pk, firma.firmante_email or firma.firmante_clave,
+    )
+    response['Cache-Control'] = 'no-store, max-age=0'
+    response['Pragma'] = 'no-cache'
+    response['X-Content-Type-Options'] = 'nosniff'
+    return response
