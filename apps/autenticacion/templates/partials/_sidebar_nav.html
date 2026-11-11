@@ -1,0 +1,98 @@
+{% load static %}
+{% with url_name=request.resolver_match.url_name %}
+      <a href="{% url 'autenticacion:dashboard' %}" class="sidebar-item {% if url_name == 'dashboard' %}active{% endif %}"{% if url_name == 'dashboard' %} aria-current="page"{% endif %}>
+        <i class="fa-solid fa-chart-pie" aria-hidden="true"></i><span>Inicio</span>
+      </a>
+
+      <a href="{% url 'documentos:seleccionar_tipo' %}" class="sidebar-item sidebar-item--primary {% if url_name == 'seleccionar_tipo' %}active{% endif %}"{% if url_name == 'seleccionar_tipo' %} aria-current="page"{% endif %}>
+        <i class="fa-solid fa-plus-circle" aria-hidden="true"></i><span>Nuevo Documento</span>
+      </a>
+
+      {# === Grupo: Documentación === #}
+      <div class="sidebar-group is-open{% if sidebar_grupo_activo == 'documentacion' %} has-active{% endif %}" data-group="documentacion">
+        <button type="button" class="sidebar-item sidebar-group-toggle"
+                aria-expanded="true" aria-controls="sidebar-group-documentacion"
+                data-tooltip="Documentación" data-tooltip-position="right">
+          <i class="fa-solid fa-folder-tree" aria-hidden="true"></i><span>Documentación</span>
+          <i class="fa-solid fa-chevron-down sidebar-group-chevron" aria-hidden="true"></i>
+        </button>
+        <div class="sidebar-group-body" id="sidebar-group-documentacion">
+          <div class="sidebar-group-inner">
+            <a href="{% url 'documentos:catalogo' %}" class="sidebar-item sidebar-item--child {% if url_name == 'catalogo' %}active{% endif %}"{% if url_name == 'catalogo' %} aria-current="page"{% endif %}>
+              <i class="fa-solid fa-file-circle-check" aria-hidden="true"></i><span>Plantillas</span>
+            </a>
+            <a href="{% url 'documentos:mis_documentos' %}" class="sidebar-item sidebar-item--child {% if url_name == 'mis_documentos' %}active{% endif %}"{% if url_name == 'mis_documentos' %} aria-current="page"{% endif %}>
+              <i class="fa-solid fa-file-lines" aria-hidden="true"></i><span>Mis Documentos</span>
+            </a>
+            <a href="{% url 'documentos:registros_lista' %}" class="sidebar-item sidebar-item--child {% if 'registro' in url_name %}active{% endif %}"{% if 'registro' in url_name %} aria-current="page"{% endif %}>
+              <i class="fa-solid fa-clipboard-check" aria-hidden="true"></i><span>Registros</span>
+            </a>
+            {% if user.perfil.ejerce_jefatura or user.perfil.es_administrador %}
+            <a href="{% url 'documentos:bandeja_aprobaciones' %}" class="sidebar-item sidebar-item--child {% if url_name == 'bandeja_aprobaciones' %}active{% endif %}"{% if url_name == 'bandeja_aprobaciones' %} aria-current="page"{% endif %}>
+              <i class="fa-solid fa-stamp" aria-hidden="true"></i><span>Bandeja de aprobaciones</span>
+            </a>
+            <a href="{% url 'documentos:documentos_departamento' %}" class="sidebar-item sidebar-item--child {% if url_name == 'documentos_departamento' %}active{% endif %}"{% if url_name == 'documentos_departamento' %} aria-current="page"{% endif %}>
+              <i class="fa-solid fa-building" aria-hidden="true"></i><span>Departamento</span>
+            </a>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      {% if user.perfil.es_administrador or user.perfil.es_jefe %}
+      {# === Grupo: Configuración === #}
+      <div class="sidebar-divider"></div>
+      <div class="sidebar-group{% if sidebar_grupo_activo == 'configuracion' %} is-open has-active{% endif %}" data-group="configuracion">
+        <button type="button" class="sidebar-item sidebar-group-toggle"
+                aria-expanded="{% if sidebar_grupo_activo == 'configuracion' %}true{% else %}false{% endif %}"
+                aria-controls="sidebar-group-configuracion"
+                data-tooltip="Configuración" data-tooltip-position="right">
+          <i class="fa-solid fa-gear" aria-hidden="true"></i><span>Configuración</span>
+          <i class="fa-solid fa-chevron-down sidebar-group-chevron" aria-hidden="true"></i>
+        </button>
+        <div class="sidebar-group-body" id="sidebar-group-configuracion">
+          <div class="sidebar-group-inner">
+            <a href="{% url 'documentos:configuracion' %}" class="sidebar-item sidebar-item--child {% if url_name == 'configuracion' %}active{% endif %}"{% if url_name == 'configuracion' %} aria-current="page"{% endif %}>
+              <i class="fa-solid fa-gauge-high" aria-hidden="true"></i><span>Panel</span>
+            </a>
+            <a href="{% url 'documentos:formatos_lista' %}" class="sidebar-item sidebar-item--child {% if url_name == 'formatos_lista' or url_name == 'formato_crear' or url_name == 'formato_editar' or url_name == 'formato_constructor' or url_name == 'formato_preview' or 'seccion_' in url_name or 'campo_' in url_name %}active{% endif %}"{% if url_name == 'formatos_lista' %} aria-current="page"{% endif %}>
+              <i class="fa-solid fa-file-circle-plus" aria-hidden="true"></i><span>Formatos / Formularios</span>
+            </a>
+            <a href="{% url 'documentos:tipos_documento_lista' %}" class="sidebar-item sidebar-item--child {% if url_name == 'tipos_documento_lista' or 'tipo_documento_' in url_name %}active{% endif %}"{% if url_name == 'tipos_documento_lista' %} aria-current="page"{% endif %}>
+              <i class="fa-solid fa-tags" aria-hidden="true"></i><span>Tipos de Documento</span>
+            </a>
+            <a href="{% url 'documentos:periodos_lista' %}" class="sidebar-item sidebar-item--child {% if url_name == 'periodos_lista' or 'periodo_' in url_name %}active{% endif %}"{% if url_name == 'periodos_lista' %} aria-current="page"{% endif %}>
+              <i class="fa-solid fa-clock" aria-hidden="true"></i><span>Períodos</span>
+            </a>
+            <a href="{% url 'documentos:ciclo_vida' %}" class="sidebar-item sidebar-item--child {% if url_name == 'ciclo_vida' %}active{% endif %}"{% if url_name == 'ciclo_vida' %} aria-current="page"{% endif %}>
+              <i class="fa-solid fa-arrows-spin" aria-hidden="true"></i><span>Ciclo de Vida</span>
+            </a>
+            <a href="{% url 'documentos:delegaciones_jefatura' %}" class="sidebar-item sidebar-item--child {% if url_name == 'delegaciones_jefatura' %}active{% endif %}"{% if url_name == 'delegaciones_jefatura' %} aria-current="page"{% endif %}>
+              <i class="fa-solid fa-user-shield" aria-hidden="true"></i><span>Delegaciones de Jefatura</span>
+            </a>
+            <a href="{% url 'documentos:transferencia_masiva' %}" class="sidebar-item sidebar-item--child {% if url_name == 'transferencia_masiva' %}active{% endif %}"{% if url_name == 'transferencia_masiva' %} aria-current="page"{% endif %}>
+              <i class="fa-solid fa-plane-departure" aria-hidden="true"></i><span>Transferencia Masiva</span>
+            </a>
+            <a href="{% url 'documentos:auditoria_lista' %}" class="sidebar-item sidebar-item--child {% if url_name == 'auditoria_lista' or url_name == 'auditoria_detalle' %}active{% endif %}"{% if url_name == 'auditoria_lista' %} aria-current="page"{% endif %}>
+              <i class="fa-solid fa-clipboard-list" aria-hidden="true"></i><span>Auditoría</span>
+            </a>
+            <a href="{% url 'documentos:roles_permisos' %}" class="sidebar-item sidebar-item--child {% if url_name == 'roles_permisos' %}active{% endif %}"{% if url_name == 'roles_permisos' %} aria-current="page"{% endif %}>
+              <i class="fa-solid fa-shield-halved" aria-hidden="true"></i><span>Roles y Permisos</span>
+            </a>
+            {% if user.perfil.es_administrador %}
+            <div class="sidebar-group-label">Administración</div>
+            <a href="{% url 'documentos:departamentos_lista' %}" class="sidebar-item sidebar-item--child {% if url_name == 'departamentos_lista' or 'departamento_' in url_name %}active{% endif %}"{% if url_name == 'departamentos_lista' %} aria-current="page"{% endif %}>
+              <i class="fa-solid fa-building" aria-hidden="true"></i><span>Departamentos</span>
+            </a>
+            <a href="{% url 'autenticacion:gestionar_usuarios' %}" class="sidebar-item sidebar-item--child {% if url_name == 'gestionar_usuarios' or url_name == 'ver_usuario' %}active{% endif %}"{% if url_name == 'gestionar_usuarios' %} aria-current="page"{% endif %}>
+              <i class="fa-solid fa-users" aria-hidden="true"></i><span>Usuarios</span>
+            </a>
+            <a href="{% url 'documentos:auditoria_reportes_lista' %}" class="sidebar-item sidebar-item--child {% if url_name == 'auditoria_reportes_lista' or url_name == 'auditoria_reporte_descarga' %}active{% endif %}"{% if url_name == 'auditoria_reportes_lista' %} aria-current="page"{% endif %}>
+              <i class="fa-solid fa-file-pdf" aria-hidden="true"></i><span>Reportes de Auditoría</span>
+            </a>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      {% endif %}
+{% endwith %}

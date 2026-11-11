@@ -2781,6 +2781,26 @@ el cuello NO era el volumen de datos.
     - Suite completa: 1213 tests OK con `polidoc.test_settings`.
 
 -------------------------------------------------------------------
+  26.7 NAVEGACIÓN (SIDEBAR)
+    - El menú vive en `autenticacion/templates/partials/_sidebar_nav.html`
+      (incluido por base_app.html). Dos grupos colapsables: "Documentación"
+      (abierto) y "Configuración" (admin/jefe; cerrado salvo que la ruta
+      activa pertenezca al grupo).
+    - "Configuración" incluye "Panel" (/documentos/configuracion/) y accesos
+      rápidos ordenados por uso: Formatos, Tipos, Períodos, Ciclo de Vida,
+      Delegaciones, Transferencia, Auditoría, Roles y (solo admin)
+      Departamentos, Usuarios y Reportes de Auditoría.
+    - `autenticacion/context_processors.navegacion` calcula
+      `sidebar_grupo_activo` para renderizar el grupo abierto y `has-active`
+      sin parpadeo (una sola fuente, sin condicionales duplicados).
+    - Dos colapsos independientes persistidos en localStorage:
+      sidebar completa (`polidoc:sidebar`; 72px iconos en PC, drawer móvil) y
+      cada grupo (`polidoc:sidebar:group:<id>`). En modo iconos, el click en
+      el icono de un grupo expande la sidebar y abre ese grupo.
+    - Accesibilidad: `aria-expanded`/`aria-controls` en los toggles,
+      `aria-current="page"` en el ítem activo y `prefers-reduced-motion`.
+
+-------------------------------------------------------------------
 27. MANUAL DE USUARIO (docs/manual-usuario/) — TOMO 1 + TOMO 2 + EXPORT
 -------------------------------------------------------------------
 

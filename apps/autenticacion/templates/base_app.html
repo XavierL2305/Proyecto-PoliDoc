@@ -42,37 +42,7 @@
       <span class="sidebar-logo-text">POLIDOC</span>
     </a>
     <div class="sidebar-nav">
-      <a href="{% url 'autenticacion:dashboard' %}" class="sidebar-item {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}">
-        <i class="fa-solid fa-chart-pie"></i><span>Inicio</span>
-      </a>
-      <a href="{% url 'documentos:catalogo' %}" class="sidebar-item {% if request.resolver_match.url_name == 'catalogo' %}active{% endif %}">
-        <i class="fa-solid fa-file-circle-check"></i><span>Plantillas</span>
-      </a>
-      <a href="{% url 'documentos:mis_documentos' %}" class="sidebar-item {% if request.resolver_match.url_name == 'mis_documentos' %}active{% endif %}">
-        <i class="fa-solid fa-file-lines"></i><span>Mis Documentos</span>
-      </a>
-      <a href="{% url 'documentos:registros_lista' %}" class="sidebar-item {% if 'registro' in request.resolver_match.url_name %}active{% endif %}">
-        <i class="fa-solid fa-clipboard-check"></i><span>Registros</span>
-      </a>
-      <a href="{% url 'documentos:seleccionar_tipo' %}" class="sidebar-item sidebar-item--primary {% if request.resolver_match.url_name == 'seleccionar_tipo' %}active{% endif %}">
-        <i class="fa-solid fa-plus-circle"></i><span>Nuevo Documento</span>
-      </a>
-      {% if user.perfil.ejerce_jefatura or user.perfil.es_administrador %}
-      <a href="{% url 'documentos:documentos_departamento' %}" class="sidebar-item {% if request.resolver_match.url_name == 'documentos_departamento' %}active{% endif %}">
-        <i class="fa-solid fa-building"></i><span>Departamento</span>
-      </a>
-      {% endif %}
-      {% if user.perfil.es_administrador %}
-      <a href="{% url 'autenticacion:gestionar_usuarios' %}" class="sidebar-item {% if request.resolver_match.url_name == 'gestionar_usuarios' %}active{% endif %}">
-        <i class="fa-solid fa-users-gear"></i><span>Usuarios</span>
-      </a>
-      {% endif %}
-      {% if user.perfil.es_administrador or user.perfil.es_jefe %}
-      <div class="sidebar-divider"></div>
-      <a href="{% url 'documentos:configuracion' %}" class="sidebar-item {% if 'configuracion' in request.resolver_match.url_name %}active{% endif %}">
-        <i class="fa-solid fa-gear"></i><span>Configuración</span>
-      </a>
-      {% endif %}
+      {% include 'partials/_sidebar_nav.html' %}
     </div>
   </aside>
   <div class="sidebar-overlay" id="sidebar-overlay"></div>
@@ -80,7 +50,7 @@
   <div class="app-content">
     <nav class="navbar">
       <button class="navbar-toggle" id="sidebar-toggle" type="button"
-              aria-label="Abrir menú" aria-controls="app-sidebar" aria-expanded="false">
+              aria-label="Expandir menú" aria-controls="app-sidebar" aria-expanded="false">
         <span class="navbar-toggle-box"><span class="navbar-toggle-bar"></span></span>
       </button>
       <div class="navbar-search">

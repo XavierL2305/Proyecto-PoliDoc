@@ -69,15 +69,7 @@
 </div>
 
 <div class="config-grid">
-  <a href="{% url 'documentos:tipos_documento_lista' %}" class="config-card">
-    <div class="config-card-icon config-card-icon--primary">
-      <i class="fa-solid fa-tags"></i>
-    </div>
-    <h3 class="config-card-title">Tipos de Documento</h3>
-    <p class="config-card-desc">Catálogo de tipos ISO: Procesos, Procedimientos, Formularios, etc.</p>
-  </a>
-
-  {% if request.user.perfil.es_administrador or request.user.perfil.es_jefe %}
+  {# --- Operación diaria (más usada) --- #}
   <a href="{% url 'documentos:formatos_lista' %}" class="config-card">
     <div class="config-card-icon config-card-icon--primary">
       <i class="fa-solid fa-file-circle-plus"></i>
@@ -85,7 +77,14 @@
     <h3 class="config-card-title">Formatos / Formularios</h3>
     <p class="config-card-desc">Motor configurable: construya formularios dinámicos para crear, modificar y eliminar documentos.</p>
   </a>
-  {% endif %}
+
+  <a href="{% url 'documentos:tipos_documento_lista' %}" class="config-card">
+    <div class="config-card-icon config-card-icon--primary">
+      <i class="fa-solid fa-tags"></i>
+    </div>
+    <h3 class="config-card-title">Tipos de Documento</h3>
+    <p class="config-card-desc">Catálogo de tipos ISO: Procesos, Procedimientos, Formularios, etc.</p>
+  </a>
 
   <a href="{% url 'documentos:periodos_lista' %}" class="config-card">
     <div class="config-card-icon config-card-icon--success">
@@ -103,48 +102,13 @@
     <p class="config-card-desc">Flujo completo del documento: creación → activo → vencimiento → destrucción.</p>
   </a>
 
-  {% if request.user.perfil.es_administrador %}
-  <a href="{% url 'documentos:departamentos_lista' %}" class="config-card">
-    <div class="config-card-icon config-card-icon--primary">
-      <i class="fa-solid fa-building"></i>
+  {# --- Operación de jefatura --- #}
+  <a href="{% url 'documentos:delegaciones_jefatura' %}" class="config-card">
+    <div class="config-card-icon config-card-icon--success">
+      <i class="fa-solid fa-user-shield"></i>
     </div>
-    <h3 class="config-card-title">Departamentos</h3>
-    <p class="config-card-desc">Gestionar departamentos, jefes y estructura organizacional.</p>
-  </a>
-  {% endif %}
-
-  <a href="{% url 'autenticacion:gestionar_usuarios' %}" class="config-card">
-    <div class="config-card-icon config-card-icon--warning">
-      <i class="fa-solid fa-users"></i>
-    </div>
-    <h3 class="config-card-title">Usuarios</h3>
-    <p class="config-card-desc">Gestionar usuarios, roles y permisos del sistema.</p>
-  </a>
-
-  <a href="{% url 'documentos:auditoria_lista' %}" class="config-card">
-    <div class="config-card-icon config-card-icon--warning">
-      <i class="fa-solid fa-clipboard-list"></i>
-    </div>
-    <h3 class="config-card-title">Auditoría</h3>
-    <p class="config-card-desc">Registro de actividades del sistema ISO 9001:9.2.</p>
-  </a>
-
-  {% if request.user.perfil.es_administrador %}
-  <a href="{% url 'documentos:auditoria_reportes_lista' %}" class="config-card">
-    <div class="config-card-icon config-card-icon--primary">
-      <i class="fa-solid fa-file-pdf"></i>
-    </div>
-    <h3 class="config-card-title">Reportes de Auditoría</h3>
-    <p class="config-card-desc">Historial de informes PDF exportados, con su hash de integridad.</p>
-  </a>
-  {% endif %}
-
-  <a href="{% url 'documentos:roles_permisos' %}" class="config-card">
-    <div class="config-card-icon config-card-icon--primary">
-      <i class="fa-solid fa-shield-halved"></i>
-    </div>
-    <h3 class="config-card-title">Roles y Permisos</h3>
-    <p class="config-card-desc">Matriz de funcionalidades por rol del sistema.</p>
+    <h3 class="config-card-title">Delegaciones de Jefatura</h3>
+    <p class="config-card-desc">Cubrir vacaciones del jefe: delegar los poderes operativos de la jefatura a un miembro del departamento, con vigencia.</p>
   </a>
 
   <a href="{% url 'documentos:transferencia_masiva' %}" class="config-card">
@@ -155,12 +119,48 @@
     <p class="config-card-desc">Cubrir vacaciones: transferir propiedad, asignaciones y distribuciones de un trabajador en un solo paso.</p>
   </a>
 
-  <a href="{% url 'documentos:delegaciones_jefatura' %}" class="config-card">
-    <div class="config-card-icon config-card-icon--success">
-      <i class="fa-solid fa-user-shield"></i>
+  {# --- Evidencias y seguridad --- #}
+  <a href="{% url 'documentos:auditoria_lista' %}" class="config-card">
+    <div class="config-card-icon config-card-icon--warning">
+      <i class="fa-solid fa-clipboard-list"></i>
     </div>
-    <h3 class="config-card-title">Delegaciones de Jefatura</h3>
-    <p class="config-card-desc">Cubrir vacaciones del jefe: delegar los poderes operativos de la jefatura a un miembro del departamento, con vigencia.</p>
+    <h3 class="config-card-title">Auditoría</h3>
+    <p class="config-card-desc">Registro de actividades del sistema ISO 9001:9.2.</p>
   </a>
+
+  <a href="{% url 'documentos:roles_permisos' %}" class="config-card">
+    <div class="config-card-icon config-card-icon--primary">
+      <i class="fa-solid fa-shield-halved"></i>
+    </div>
+    <h3 class="config-card-title">Roles y Permisos</h3>
+    <p class="config-card-desc">Matriz de funcionalidades por rol del sistema.</p>
+  </a>
+
+  {% if request.user.perfil.es_administrador %}
+  {# --- Administración (solo admin; coincide con las vistas) --- #}
+  <a href="{% url 'documentos:departamentos_lista' %}" class="config-card">
+    <div class="config-card-icon config-card-icon--primary">
+      <i class="fa-solid fa-building"></i>
+    </div>
+    <h3 class="config-card-title">Departamentos</h3>
+    <p class="config-card-desc">Gestionar departamentos, jefes y estructura organizacional.</p>
+  </a>
+
+  <a href="{% url 'autenticacion:gestionar_usuarios' %}" class="config-card">
+    <div class="config-card-icon config-card-icon--warning">
+      <i class="fa-solid fa-users"></i>
+    </div>
+    <h3 class="config-card-title">Usuarios</h3>
+    <p class="config-card-desc">Gestionar usuarios, roles y permisos del sistema.</p>
+  </a>
+
+  <a href="{% url 'documentos:auditoria_reportes_lista' %}" class="config-card">
+    <div class="config-card-icon config-card-icon--primary">
+      <i class="fa-solid fa-file-pdf"></i>
+    </div>
+    <h3 class="config-card-title">Reportes de Auditoría</h3>
+    <p class="config-card-desc">Historial de informes PDF exportados, con su hash de integridad.</p>
+  </a>
+  {% endif %}
 </div>
 {% endblock %}

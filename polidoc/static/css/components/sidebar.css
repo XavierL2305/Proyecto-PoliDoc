@@ -157,6 +157,89 @@
   margin: 0.5rem 0.75rem;
 }
 
+
+/* === SIDEBAR GROUP (acordeón) === */
+.sidebar-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+/* Botón del grupo: hereda .sidebar-item; se resetea el estilo nativo. */
+.sidebar-group-toggle {
+  width: 100%;
+  border: none;
+  background: none;
+  font: inherit;
+  text-align: left;
+}
+.sidebar-group-toggle[data-tooltip] {
+  cursor: pointer;
+}
+
+.sidebar-group-chevron {
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: var(--color-muted);
+  transition: transform 0.25s ease;
+}
+.sidebar-group.is-open .sidebar-group-chevron {
+  transform: rotate(180deg);
+}
+
+/* El grupo que contiene la página activa se resalta aunque esté cerrado. */
+.sidebar-group.has-active > .sidebar-group-toggle {
+  color: var(--color-primary);
+  background-color: var(--color-primary-light);
+}
+[data-theme="dark"] .sidebar-group.has-active > .sidebar-group-toggle {
+  background-color: rgba(96, 165, 250, 0.15);
+}
+
+.sidebar-group-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.25s ease;
+}
+.sidebar-group.is-open .sidebar-group-body {
+  grid-template-rows: 1fr;
+}
+.sidebar-group-inner {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+/* Guía vertical que agrupa visualmente los ítems hijos. */
+.sidebar-group-inner::before {
+  content: '';
+  position: absolute;
+  left: 1.35rem;
+  top: 0.15rem;
+  bottom: 0.15rem;
+  width: 1px;
+  background: var(--color-border);
+  pointer-events: none;
+}
+.sidebar-item--child {
+  padding-left: 2.5rem;
+  font-size: 0.84rem;
+}
+.sidebar-item--child i {
+  width: 18px;
+  font-size: 0.88rem;
+}
+.sidebar-group-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--color-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.5rem 0.75rem 0.15rem 2.5rem;
+}
+
 /* === SIDEBAR FOOTER === */
 .sidebar-footer {
   padding: 1rem 1.25rem;
@@ -183,6 +266,17 @@
 
 .sidebar.collapsed .sidebar-item i {
   margin: 0;
+}
+/* En modo iconos los grupos se colapsan: click en el icono expande la
+   sidebar + abre el grupo (lo hace sidebar.js). */
+.sidebar.collapsed .sidebar-group-body,
+.sidebar.collapsed .sidebar-group-chevron,
+.sidebar.collapsed .sidebar-group-label {
+  display: none;
+}
+.sidebar.collapsed .sidebar-group-toggle {
+  justify-content: center;
+  padding: 0.75rem;
 }
 .sidebar.collapsed .sidebar-logo-text {
   display: none;
@@ -223,5 +317,13 @@
 
   .sidebar-overlay.active {
     display: block;
+  }
+}
+
+/* === REDUCED MOTION === */
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-group-body,
+  .sidebar-group-chevron {
+    transition: none;
   }
 }
