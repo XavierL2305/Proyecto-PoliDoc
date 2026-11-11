@@ -186,7 +186,7 @@ INCIDENTE_CRONO = [
     ("Sesiones previas (03/11) y ma\u00f1ana del 04/11",
      "Corridas de carga con las 4 cuentas reales de personas",
      "Cada `POST /login/` ejecutaba un `simple_bind_s('PTH\\usuario', "
-     "contrase\u00f1a local)` contra el DC de 15.15.1.60:389"),
+     "contrase\u00f1a local)` contra el DC de ad.interno:389"),
     ("04/11, detecci\u00f3n",
      "Diagn\u00f3stico del entorno de carga",
      "`AUTHENTICATION_BACKENDS` inclu\u00eda `LDAPBackend` primero y "
@@ -196,7 +196,7 @@ INCIDENTE_CRONO = [
      "El entorno de carga deja de poder autenticar contra AD"),
     ("04/11, verificaci\u00f3n",
      "5 corridas con `check_no_ldap.sh`",
-     "0 conexiones TCP hacia 15.15.1.60:389 en todas ellas"),
+     "0 conexiones TCP hacia ad.interno:389 en todas ellas"),
 ]
 
 BLINDAJE = [
@@ -213,7 +213,7 @@ BLINDAJE = [
      "Bloque Python en `run_loadtest.sh`",
      "Comprueba backends y URI antes de lanzar Locust"),
     ("5. Vigilante en red",
-     "`check_no_ldap.sh [segundos]` (ss contra 15.15.1.60)",
+     "`check_no_ldap.sh [segundos]` (ss contra ad.interno)",
      "0 conexiones = OK; autocorrecto (detecta una conexi\u00f3n y sale con rc=1)"),
     ("6. Cuentas dedicadas",
      "`loadtest_admin|jefe|coord|trab` (no existen en AD)",
@@ -237,7 +237,7 @@ cd /tmp/polidoc_loadtest
 bash run_loadtest.sh opt3b_27_w3t4 27 150 1   # 27 usuarios
 bash run_loadtest.sh opt3_54_w3t4  54 150 1   # 54 usuarios"""),
     ("Vigilar AD durante la corrida", """\
-bash check_no_ldap.sh 120    # reporta 0 conexiones a 15.15.1.60:389"""),
+bash check_no_ldap.sh 120    # reporta 0 conexiones a ad.interno:389"""),
     ("Perfilado de endpoints (queries)", """\
 cd /tmp/polidoc_loadtest
 DJANGO_SETTINGS_MODULE=loadtest_settings PYTHONPATH=/app:/tmp/polidoc_loadtest \\
@@ -1162,7 +1162,7 @@ def construir():
     b.append(("ul", [
         "`polidoc/settings.py` declara `AUTHENTICATION_BACKENDS = "
         "['autenticacion.backends.LDAPBackend', 'ModelBackend']` y "
-        "`AUTH_LDAP_SERVER_URI = 'ldap://15.15.1.60:389'` (valor por defecto "
+        "`AUTH_LDAP_SERVER_URI = 'ldap://ad.interno:389'` (valor por defecto "
         "sin variable de entorno).",
         "`apps/autenticacion/backends.py` ejecuta "
         "`conn.simple_bind_s(f'PTH\\\\{username}', password)` contra esa URI.",
@@ -1196,7 +1196,7 @@ def construir():
                [[a, c, d, e] for a, c, d, e in PRUEBAS_POST_BLINDAJE],
                "Corridas posteriores al blindaje con vigilancia de red activa"))
     b.append(("ul", [
-        "5 de 5 corridas con `0 conexiones a 15.15.1.60:389` durante toda la "
+        "5 de 5 corridas con `0 conexiones a ad.interno:389` durante toda la "
         "ventana (`*-ldap-check.txt`).",
         "184 avisos `LOGIN BREAK-GLASS v\u00eda ModelBackend (sin LDAP)` en el log "
         "de gunicorn, todos con cuentas `loadtest_*`.",

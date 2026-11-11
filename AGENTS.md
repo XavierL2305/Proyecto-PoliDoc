@@ -26,7 +26,7 @@ Reglas obligatorias:
 3. Usar únicamente los usuarios dedicados `loadtest_admin|jefe|coord|trab`
    (no existen en AD). No reutilizar cuentas reales de personas.
 4. Antes/durante cada corrida: `bash check_no_ldap.sh <segundos>` debe reportar
-   **0 conexiones** a `15.15.1.60:389`. El runner lo ejecuta y avisa.
+   **0 conexiones** a `ad.interno:389`. El runner lo ejecuta y avisa.
 5. **No** intentar verificar el desbloqueo de AD con `bind` de prueba: cada
    intento fallido vuelve a contar para la política de bloqueo. Que IT confirme.
 6. El aviso `LOGIN BREAK-GLASS vía ModelBackend (sin LDAP)` en el log es

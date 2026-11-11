@@ -1,1 +1,1 @@
-OK: 0 conexiones a AD (15.15.1.60) en 294s
+OK: 0 conexiones a AD (ad.interno) en 294s

@@ -373,7 +373,7 @@ Esos binds fallaban (la contraseña local no es la de AD), pero la política de 
 
 ### 8.2 Causa raíz
 
-- `polidoc/settings.py` declara `AUTHENTICATION_BACKENDS = ['autenticacion.backends.LDAPBackend', 'ModelBackend']` y `AUTH_LDAP_SERVER_URI = 'ldap://15.15.1.60:389'` (valor por defecto sin variable de entorno).
+- `polidoc/settings.py` declara `AUTHENTICATION_BACKENDS = ['autenticacion.backends.LDAPBackend', 'ModelBackend']` y `AUTH_LDAP_SERVER_URI = 'ldap://ad.interno:389'` (valor por defecto sin variable de entorno).
 - `apps/autenticacion/backends.py` ejecuta `conn.simple_bind_s(f'PTH\\{username}', password)` contra esa URI.
 - `loadtest_settings.py` heredaba esa configuración: el entorno de carga autenticaba contra el AD real.
 - El throttle de intentos fallidos (`LOGIN_MAX_INTENTOS = 5`, en `apps/autenticacion/views.py`) no frenó nada: solo cuenta los logins que terminan en error, y aquí el LDAP fallaba pero `ModelBackend` completaba el login con éxito, así que el contador se borraba en cada intento. El riesgo real no era el intento de fuerza bruta, sino el vínculo fallido contra AD.
@@ -385,10 +385,10 @@ Esos binds fallaban (la contraseña local no es la de AD), pero la política de 
 
 | Momento | Acción | Detalle |
 | --- | --- | --- |
-| Sesiones previas (03/11) y mañana del 04/11 | Corridas de carga con las 4 cuentas reales de personas | Cada `POST /login/` ejecutaba un `simple_bind_s('PTH\usuario', contraseña local)` contra el DC de 15.15.1.60:389 |
+| Sesiones previas (03/11) y mañana del 04/11 | Corridas de carga con las 4 cuentas reales de personas | Cada `POST /login/` ejecutaba un `simple_bind_s('PTH\usuario', contraseña local)` contra el DC de ad.interno:389 |
 | 04/11, detección | Diagnóstico del entorno de carga | `AUTHENTICATION_BACKENDS` incluía `LDAPBackend` primero y `AUTH_LDAP_SERVER_URI` apuntaba al AD real |
 | 04/11, corrección | Blindaje en 5 capas + preflight + vigilante | El entorno de carga deja de poder autenticar contra AD |
-| 04/11, verificación | 5 corridas con `check_no_ldap.sh` | 0 conexiones TCP hacia 15.15.1.60:389 en todas ellas |
+| 04/11, verificación | 5 corridas con `check_no_ldap.sh` | 0 conexiones TCP hacia ad.interno:389 en todas ellas |
 
 
 ### 8.4 Blindaje aplicado
@@ -403,7 +403,7 @@ Se descartó hacer autenticación local en primera opción («local first») por
 | 2. URI muerta | `AUTH_LDAP_SERVER_URI = 'ldap://127.0.0.1:9'` | Red de descarte: si algo conectara, sería a un puerto local cerrado |
 | 3. Guard de arranque | `assert` de `LDAPBackend` + `LDAP_DESHABILITADO = True` | El arranque aborta si alguien reintroduce el backend |
 | 4. Preflight en cada corrida | Bloque Python en `run_loadtest.sh` | Comprueba backends y URI antes de lanzar Locust |
-| 5. Vigilante en red | `check_no_ldap.sh [segundos]` (ss contra 15.15.1.60) | 0 conexiones = OK; autocorrecto (detecta una conexión y sale con rc=1) |
+| 5. Vigilante en red | `check_no_ldap.sh [segundos]` (ss contra ad.interno) | 0 conexiones = OK; autocorrecto (detecta una conexión y sale con rc=1) |
 | 6. Cuentas dedicadas | `loadtest_admin|jefe|coord|trab` (no existen en AD) | Ninguna cuenta real vuelve a usarse en carga |
 
 Además, `AGENTS.md` del repositorio documenta estas reglas como obligatorias para cualquier persona que ejecute carga en el futuro.
@@ -421,7 +421,7 @@ Además, `AGENTS.md` del repositorio documenta estas reglas como obligatorias pa
 | opt3c_27_w3t4 | 27 | 0 | 27 usuarios (host cargado, p95 1900 ms) |
 | opt3_54_w3t4 | 54 | 0 | 54 usuarios (p95 5300 ms) |
 
-- 5 de 5 corridas con `0 conexiones a 15.15.1.60:389` durante toda la ventana (`*-ldap-check.txt`).
+- 5 de 5 corridas con `0 conexiones a ad.interno:389` durante toda la ventana (`*-ldap-check.txt`).
 - 184 avisos `LOGIN BREAK-GLASS vía ModelBackend (sin LDAP)` en el log de gunicorn, todos con cuentas `loadtest_*`.
 - Preflight en cada corrida: `run_loadtest.sh` aborta si `AUTHENTICATION_BACKENDS` no es solo `ModelBackend` o si la URI apunta al AD.
 - `check_no_ldap.sh` se autocorrectó: detectando una conexión sale con código 1; sin ella, con 0 y mensaje `OK`.
@@ -659,7 +659,7 @@ bash run_loadtest.sh opt3_54_w3t4  54 150 1   # 54 usuarios
 #### Vigilar AD durante la corrida
 
 ```
-bash check_no_ldap.sh 120    # reporta 0 conexiones a 15.15.1.60:389
+bash check_no_ldap.sh 120    # reporta 0 conexiones a ad.interno:389
 ```
 
 

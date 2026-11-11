@@ -2823,13 +2823,16 @@ credenciales reales de AD, sin exponerla a internet y sin que la
 configuración corte el acceso (400 DisallowedHost / CSRF).
 
   28.1 ACCESO
+    - Ejemplos sanitizados: este documento usa 192.0.2.10 (RFC 5737,
+      documentación) para el host y ad.interno para el DC. Las IPs reales
+      del host y del AD viven SOLO en .env (ignorado por git).
     - App en Docker publica el puerto 8001 en todas las interfaces
       (docker-compose.yml: "8001:8001", comando runserver).
     - nginx 1.30.4 instalado en la PC (host, FUERA del repo) como
-      reverse proxy → http://15.15.2.45/login (nginx :80); también
-      directo http://15.15.2.45:8001/login.
+      reverse proxy → http://192.0.2.10/login (nginx :80); también
+      directo http://192.0.2.10:8001/login.
     - Config nginx mínima (en la PC del usuario, no versionada):
-        listen 80; server_name 15.15.2.45;
+        listen 80; server_name 192.0.2.10;
         client_max_body_size 20m;
         location / {
           proxy_pass http://127.0.0.1:8001;
@@ -2841,14 +2844,14 @@ configuración corte el acceso (400 DisallowedHost / CSRF).
           proxy_read_timeout 120s;
         }
       Recargar con `nginx -s reload`. Con `Host $host` (sin puerto),
-      `ALLOWED_HOSTS` solo necesita `15.15.2.45` para :80 y :8001.
+      `ALLOWED_HOSTS` solo necesita `192.0.2.10` para :80 y :8001.
 
   28.2 CONFIGURACIÓN (commit ecc54e4)
     - ALLOWED_HOSTS ahora por env (antes `["*"]` fijo en settings.py:45):
-      `.env` → ALLOWED_HOSTS=15.15.2.45,localhost,127.0.0.1
+      `.env` → ALLOWED_HOSTS=192.0.2.10,localhost,127.0.0.1
       (falta la IP → 400 DisallowedHost).
     - CSRF_TRUSTED_ORIGINS por env:
-      .env → http://15.15.2.45,http://15.15.2.45:8001
+      .env → http://192.0.2.10,http://192.0.2.10:8001
     - Rate-limit de login por env (antes hardcodeado 5/300 en
       autenticacion/views.py): LOGIN_MAX_INTENTOS=3,
       LOGIN_BLOQUEO_SEGUNDOS=300.
@@ -2869,15 +2872,15 @@ configuración corte el acceso (400 DisallowedHost / CSRF).
       Credenciales de AD y cookies de sesión viajan en claro por la
       LAN → aceptable SOLO en LAN confiable/aislada; nunca exponer a
       internet en HTTP.
-    - Propuesta futura HTTPS: la IP privada 15.15.2.45 NO sirve
+    - Propuesta futura HTTPS: la IP privada 192.0.2.10 NO sirve
       Let's Encrypt → certificado self-signed (aviso del navegador) o
       CA interna (distribuir la raíz a los clientes). Pasos al activar:
-        1) generar certificado con SAN=IP:15.15.2.45;
+        1) generar certificado con SAN=IP:192.0.2.10;
         2) nginx: listen 443 ssl + redirect 80→443;
         3) .env: SECURE_SSL_REDIRECT=True, SESSION_COOKIE_SECURE=True,
            CSRF_COOKIE_SECURE=True, SECURE_PROXY_SSL_HEADER=X-Forwarded-Proto,https,
            SECURE_HSTS_SECONDS=31536000 (tras probar);
-        4) CSRF_TRUSTED_ORIGINS en https://15.15.2.45.
+        4) CSRF_TRUSTED_ORIGINS en https://192.0.2.10.
 
   28.4 RIESGO DE LOCKOUT EN AD (importante)
     - El throttle de login (3 intentos / 5 min por IP+usuario) NO es la
