@@ -12,7 +12,7 @@
       <div class="sidebar-group is-open{% if sidebar_grupo_activo == 'documentacion' %} has-active{% endif %}" data-group="documentacion">
         <button type="button" class="sidebar-item sidebar-group-toggle"
                 aria-expanded="true" aria-controls="sidebar-group-documentacion"
-                data-tooltip="Documentación" data-tooltip-position="right">
+                >
           <i class="fa-solid fa-folder-tree" aria-hidden="true"></i><span>Documentación</span>
           <i class="fa-solid fa-chevron-down sidebar-group-chevron" aria-hidden="true"></i>
         </button>
@@ -24,6 +24,21 @@
             <a href="{% url 'documentos:mis_documentos' %}" class="sidebar-item sidebar-item--child {% if url_name == 'mis_documentos' %}active{% endif %}"{% if url_name == 'mis_documentos' %} aria-current="page"{% endif %}>
               <i class="fa-solid fa-file-lines" aria-hidden="true"></i><span>Mis Documentos</span>
             </a>
+            {% if nav_docs_personales %}
+            <a href="{% url 'documentos:documentos_personales' %}" class="sidebar-item sidebar-item--child {% if url_name == 'documentos_personales' %}active{% endif %}"{% if url_name == 'documentos_personales' %} aria-current="page"{% endif %}>
+              <i class="fa-solid fa-user-lock" aria-hidden="true"></i><span>Mis documentos personales</span>
+            </a>
+            {% endif %}
+            {% if nav_docs_sgc_sin_codigo %}
+            <a href="{% url 'documentos:documentos_sgc_sin_codigo' %}" class="sidebar-item sidebar-item--child {% if url_name == 'documentos_sgc_sin_codigo' %}active{% endif %}"{% if url_name == 'documentos_sgc_sin_codigo' %} aria-current="page"{% endif %}>
+              <i class="fa-solid fa-box-archive" aria-hidden="true"></i><span>Documentos sin código</span>
+            </a>
+            {% endif %}
+            {% if nav_lista_maestra %}
+            <a href="{% url 'documentos:lista_maestra' %}" class="sidebar-item sidebar-item--child {% if 'lista_maestra' in url_name %}active{% endif %}"{% if url_name == 'lista_maestra' %} aria-current="page"{% endif %}>
+              <i class="fa-solid fa-list-check" aria-hidden="true"></i><span>Lista Maestra</span>
+            </a>
+            {% endif %}
             <a href="{% url 'documentos:registros_lista' %}" class="sidebar-item sidebar-item--child {% if 'registro' in url_name %}active{% endif %}"{% if 'registro' in url_name %} aria-current="page"{% endif %}>
               <i class="fa-solid fa-clipboard-check" aria-hidden="true"></i><span>Registros</span>
             </a>
@@ -46,7 +61,7 @@
         <button type="button" class="sidebar-item sidebar-group-toggle"
                 aria-expanded="{% if sidebar_grupo_activo == 'configuracion' %}true{% else %}false{% endif %}"
                 aria-controls="sidebar-group-configuracion"
-                data-tooltip="Configuración" data-tooltip-position="right">
+                >
           <i class="fa-solid fa-gear" aria-hidden="true"></i><span>Configuración</span>
           <i class="fa-solid fa-chevron-down sidebar-group-chevron" aria-hidden="true"></i>
         </button>

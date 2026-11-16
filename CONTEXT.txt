@@ -2949,13 +2949,19 @@ origen (p. ej. en CI, donde `documentacion/` no está versionado),
 `--forzar-estructura` recrea secciones/campos (borra ediciones de la UI).
 
   29.1 ALCANCE IMPLEMENTADO
-    - SGC-FOR-002 (Control de Distribución) y SGC-FOR-003 (Tabla de cambios
-      y modificaciones, §29.7). Los demás SGC-FOR-004…018 quedan pendientes
-      (el comando los omite con aviso). No hay catálogo/menú de "Formatos
-      SGC": cada FOR se genera desde su flujo (el FOR-003 sí aparece en
+    - SGC-FOR-002 (Control de Distribución), SGC-FOR-003 (Tabla de cambios
+      y modificaciones, §29.7), SGC-FOR-004 (Acta de desincorporación de
+      archivos inactivos, §29.8) y SGC-FOR-006 (Lista Maestra de Documentos,
+      §29.10). Los demás SGC-FOR-005…018 quedan pendientes (el comando los
+      omite con aviso). No hay catálogo/menú de "Formatos SGC": cada FOR se
+      genera desde su flujo (FOR-003, FOR-004 y FOR-006 aparecen en
       Configuración → Formatos con badge "Planilla automática").
       `Formato.requiere_firma` NO existe todavía; la firma se decide por la
       existencia de la plantilla FOR-002.
+    - Documentos sin código (no ISO): entidad aparte `DocumentoSinCodigo`
+      (§29.9), con ámbitos `sgc` (soportes/registros de fuente) y `personal`.
+      NO se crea un `TipoDocumento` ISO nuevo: el catálogo y el procedimiento
+      ISO no se tocan.
     - For-002 no aplica a los flujos de aprobación
       (`aplica_creacion/modificacion/eliminacion=False`); en la lista de
       formatos aparece el badge "Planilla automática".
@@ -3076,6 +3082,96 @@ origen (p. ej. en CI, donde `documentacion/` no está versionado),
       al vuelo si falta).
     - Tests: `tests_for_003` (20) con plantilla sintética (incluye hoja
       instructivo) para CI, sin depender de `documentacion/`.
+
+  29.8 SGC-FOR-004 — ACTA DE DESINCORPORACIÓN DE ARCHIVOS INACTIVOS (mig. 0064)
+    - Formato `SGC-FOR-004` (v1/e1) con `aplica_*=False`; la plantilla
+      oficial (hoja `SGC-FOR-004` + instructivo `SGC-IDL-010` con imágenes)
+      se copia a MEDIA con `integrar_formatos_sgc --solo=004 --apply`.
+    - Disparador: cuando un `documento_relacionado` pasa a `obsoleto`, la
+      ficha del padre muestra el modal "Generar Acta" (recordado con
+      `sessionStorage` + botón persistente). El aviso se dispara desde las
+      TRES rutas de inactivación (aprobación de solicitud, cron de
+      vencimientos —que usa `.update()` y no emite señales— y eliminación de
+      la última versión) más notificaciones agrupadas por padre.
+    - Modelos (mig. 0064): `ActaDesincorporacion` (padre SET_NULL, snapshots
+      de código/nombre/departamento, fecha, propósito oficial, estado
+      borrador/pendiente_firma/firmada/aplicada/anulada, firmas SES
+      Elaborado/Aprobado, XLSX/PDF, aplicada_en, anulada_en/motivo),
+      `ParticipanteActa` (4 filas: capacidad REAL de la plantilla; la fila 15
+      es el encabezado) y `RegistroDesincorporado` (9 por hoja, snapshots de
+      fechas). Constraint parcial: **una sola acta abierta por padre**.
+    - Firmantes asignados: Elaborado = creador; Aprobado = jefe efectivo del
+      departamento (editable en el modal). Firma híbrida con el motor SES:
+      el rol viaja explícito en `FirmaElectronica.datos['rol']` (no se
+      infiere del usuario); la misma persona en ambos roles firma UNA vez y
+      esa firma se imprime en los dos bloques.
+    - La relación se retira del padre SOLO al quedar ambas firmas (`aplicar_acta`
+      con `select_for_update`, idempotente y revalidando que los registros
+      sigan `obsoleto`). Reactivación/renovación de un registro o su
+      eliminación (pre_delete) anulan el acta abierta.
+    - Generación (`services/for_004.py`): hoja oficial sin alterar el layout
+      (fecha en letras fila 13; participantes 16-19; propósito fila 21;
+      registros 23-31; área fila 33; firmas 40-41; sello SES fila 42 solo con
+      ambas firmas). Multifila: >9 registros → hojas `SGC-FOR-004 (2)…` con
+      `PAGINA k DE n`; la hoja instructiva se conserva. PDF vía LibreOffice.
+    - Guardas: una relación retirada por un acta `aplicada` no se reincorpora
+      desde `aplicar_planilla_al_documento` ni desde referencias de la
+      edición (`filtrar_relaciones_bloqueadas`, con aviso). El hash de la
+      firma es el JSON canónico del acta (no el PDF regenerado).
+    - Notificaciones: `desincorporacion_pendiente` (relacionado inactivo /
+      acta por firmar) y `desincorporacion_aplicada`.
+    - Tests: `tests_for_004` (46) con plantilla sintética (incluye hoja
+      instructivo); cubren detección/avisos, alta, XLSX multi-hoja y sello,
+      firma PIN y token, aplicación, anulación, vistas y guardas.
+
+  29.9 DOCUMENTOS SIN CÓDIGO (PERSONAL / SOPORTES SGC) (mig. 0065)
+    - §29.1: POLIDOC gestiona también documentación NO controlada por ISO.
+      `DocumentoSinCodigo` (identidad = `uuid`, SIN `codigo`) con `ambito`:
+      `sgc` (soportes/registros de fuente institucionales; van a FOR-006 como
+      **Ext** con "N/A") y `personal` (privado del dueño; NO va a FOR-006).
+    - Campos: titulo, descripcion, archivo, tipo_archivo, referencia, empresa,
+      departamento, propietario, responsable_texto (texto libre, p. ej.
+      "Junta Directiva"), fecha, periodo_retencion, ubicacion, activo,
+      marcado_para_eliminar_en, eliminado_en. No entra al catálogo ISO ni a
+      `mis_documentos`.
+    - Permisos: crear personal = cualquier usuario; crear SGC = admin/jefe.
+      Ver: personal = dueño (+admin); SGC = admin/jefe. La **bandeja** aparece
+      solo con >=1 registro (el crear está siempre en "+ Nuevo Documento").
+    - CRUD + subir/descargar (sin PDF ni versiones). Eliminación soft.
+    - Purga por inactividad (mig. 0066 + autenticación 0012): avisos a los
+      60 y 80 días al **jefe directo** (o admin si no hay jefe) con email al
+      usuario; purga a los 90 días SOLO `ambito='personal'`; se reinicia al
+      iniciar sesión (`user_logged_in`). Tarea Celery diaria
+      (`purgar_documentos_personales`) y comando `purgar_personales
+      --dry-run`. Umbrales: `PERSONAL_DOCS_*_DIAS` en settings.
+    - Tests: `tests_documentos_sin_codigo` (17) y `tests_purga_personales` (8).
+
+  29.10 SGC-FOR-006 — LISTA MAESTRA DE DOCUMENTOS (mig. 0067)
+    - Formato `SGC-FOR-006` "Lista Maestra de Documentos" (`aplica_*=False`,
+      `permite_registros=False`); plantilla oficial (hoja `SGC-FOR-006` +
+      instructivo `SGC-IDL-012` con imágenes) copiada con
+      `integrar_formatos_sgc --solo=006 --apply`.
+    - **Registro vivo** (`RegistroFormato`, contexto `sistema`/`lista-maestra`)
+      con `respuestas['documentos']` (JSON). Cada fila:
+      `_clave`, `_origen_tipo` (`documento`/`sin_codigo`/`manual`) y `_manual`
+      (columnas editadas a mano). NO se regenera el XLSX por cambios de la app.
+    - Fuentes: `Documento` activo no plantilla → **Int** (B); 
+      `DocumentoSinCodigo` sgc activo → **Ext** (A) con `N/A`; filas manuales.
+    - Signals `post_save`/`post_delete` (on_commit, idempotentes) insertan,
+      actualizan o quitan la fila. "Sincronizar (combinar)" refresca solo las
+      columnas con `origen` y respeta `_manual`; "reemplazar" reconstruye.
+    - Columnas configurables en JSON (`CampoFormato.config_tabla.columnas`:
+      `tipo`, `celda`, `origen`, `opciones`), editables en el Constructor
+      (el editor de columnas ahora soporta tipo/opciones). Dropdowns = 
+      "respuestas recientes" (valores ya usados) + escritura libre.
+    - Vista exclusiva `/documentos/lista-maestra/` con acceso **por persona**
+      (`AccesoListaMaestra`, mig. 0067; admin siempre), grid paginado, guardado
+      por fila (AJAX) y panel Historial. Acceso se administra desde la sesión
+      del admin. Generación XLSX/PDF SOLO con botón (hoja continua, cabecera
+      repetida al imprimir, conserva el instructivo). 
+    - **NO** se crea un `TipoDocumento` ISO para "registros sin código".
+    - Tests: `tests_for_006` (34); cubren integración/config, sync y signals,
+      generación (>22 filas), acceso multi-persona y vista/AJAX.
 
 -------------------------------------------------------------------
 30. FIRMA ELECTRÓNICA DE DISTRIBUCIÓN (SES)
@@ -3361,6 +3457,15 @@ alternativas en docs/adr/0001-modelo-documento-formato-registro.md.
     - SGC-FOR-003 Tabla de cambios y modificaciones (migración 0063):
       multifila en la planilla, autorización SES, XLSX/PDF multi-hoja y
       descargas desde planilla y ficha (§29.7).
+    - SGC-FOR-004 Acta de desincorporación de archivos inactivos
+      (migración 0064): modal desde la ficha del padre, acta multifila
+      firmada (PIN/link) y retiro de la relación al completar ambas firmas
+      (§29.8).
+    - Documentos sin código (migración 0065): `DocumentoSinCodigo` (sgc /
+      personal), bandejas y purga por inactividad (§29.9).
+    - SGC-FOR-006 Lista Maestra de Documentos (migración 0067): registro vivo
+      con sync/signals, vista exclusiva con acceso por persona y XLSX/PDF
+      bajo demanda (§29.10).
     - Pendiente de P1: campaña de revisión masiva (§34) y validación legal
       de los textos de aviso.
   35.4 P2

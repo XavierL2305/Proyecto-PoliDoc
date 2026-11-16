@@ -94,6 +94,89 @@ FOR_003_TABLA = {
 #: Celda del sello de firma electrónica (debajo de la tabla de 33 filas).
 FOR_002_SELLO_CELDA = 'A52'
 
+#: SGC-FOR-004 — Acta de desincorporación de archivos inactivos (P1).
+#: Se genera desde el acta (multifila), no desde el flujo de aprobación.
+FOR_004_XLSX = 'SGC-FOR-004 Acta desinc Arch Inac.xlsx'
+FOR_004_PARTICIPANTES_TABLA = {
+    'fila_inicio': 16,
+    'fila_fin': 19,
+    'max_filas': 4,
+    'columnas': [
+        {'clave': 'nombre', 'etiqueta': 'Nombre', 'celda': 'A'},
+        {'clave': 'cargo', 'etiqueta': 'Cargo', 'celda': 'F'},
+    ],
+}
+FOR_004_REGISTROS_TABLA = {
+    'fila_inicio': 23,
+    'fila_fin': 31,
+    'max_filas': 9,
+    'columnas': [
+        {'clave': 'descripcion', 'etiqueta': 'Registro inactivo', 'celda': 'A'},
+    ],
+}
+
+
+
+#: SGC-FOR-006 — Lista Maestra de Documentos (P1).
+#: Se genera desde el registro vivo (multifila en una hoja continua).
+FOR_006_XLSX = 'SGC-FOR-006 Lista Maestra.xlsx'
+FOR_006_TABLA = {
+    'fila_inicio': 13,
+    'fila_fin': 34,
+    'max_filas': 22,
+    'hoja_continua': True,
+    'columnas': [
+        {'clave': 'ext_int', 'etiqueta': 'Documento de fuente',
+         'tipo': 'si_no', 'celda_si': 'B', 'celda_no': 'A',
+         'origen': 'ext_int'},
+        {'clave': 'codigo', 'etiqueta': 'No. de identificación',
+         'tipo': 'texto', 'celda': 'C', 'origen': 'codigo'},
+        {'clave': 'titulo', 'etiqueta': 'Título',
+         'tipo': 'texto', 'celda': 'D', 'origen': 'nombre'},
+        {'clave': 'uso', 'etiqueta': 'Uso/confidencial',
+         'tipo': 'combo', 'celda': 'E', 'origen': 'uso',
+         'opciones': ['Interno/Confidencial', 'Interno/No Confidencial']},
+        {'clave': 'fecha', 'etiqueta': 'Fecha',
+         'tipo': 'fecha', 'celda': 'F', 'origen': 'fecha_vigencia'},
+        {'clave': 'edicion', 'etiqueta': 'Nº Edición',
+         'tipo': 'texto', 'celda': 'G', 'origen': 'edicion'},
+        {'clave': 'version', 'etiqueta': 'No. Versión',
+         'tipo': 'texto', 'celda': 'H', 'origen': 'version'},
+        {'clave': 'permanencia_activo', 'etiqueta': 'Permanencia Activo',
+         'tipo': 'combo', 'celda': 'I', 'origen': 'permanencia_activo',
+         'opciones': [
+             'Hasta que cambie de versión o edición', 'Permanente',
+             '1 año', '2 años', '5 años', '10 años', 'N/A',
+         ]},
+        {'clave': 'permanencia_inactivo', 'etiqueta': 'Permanencia Inactivo',
+         'tipo': 'combo', 'celda': 'J', 'origen': 'permanencia_inactivo',
+         'opciones': [
+             'Permanente', '1 año', '2 años', '5 años', '8 años',
+             '10 años', 'N/A',
+         ]},
+        {'clave': 'forma_archivo', 'etiqueta': 'Forma de Archivo y Ubicación',
+         'tipo': 'combo', 'celda': 'K',
+         'opciones': [
+             'Digital/ Carpeta SGC',
+             'Físico/ Expediente del paciente',
+             'Digital y Físico/ Carpeta compartida',
+         ]},
+        {'clave': 'distribucion', 'etiqueta': 'Distribución',
+         'tipo': 'textarea', 'celda': 'L'},
+        {'clave': 'responsable', 'etiqueta': 'Responsable',
+         'tipo': 'combo', 'celda': 'M', 'origen': 'responsable',
+         'opciones': [
+             'Gerente General', 'Gerente de Talento Humano',
+             'Jefe de Servicios', 'Junta Directiva',
+         ]},
+        {'clave': 'empresa', 'etiqueta': 'Empresa',
+         'tipo': 'combo', 'celda': 'N', 'origen': 'empresa',
+         'opciones': [
+             'PTCA', 'Policlínica Táchira Hospitalización', 'Farmacia',
+             'Fuente de Soda', 'Empresas del Grupo',
+         ]},
+    ],
+}
 
 class Command(BaseCommand):
     help = (
@@ -148,6 +231,8 @@ class Command(BaseCommand):
         implementados = {
             'SGC-FOR-002': self._integrar_for_002,
             'SGC-FOR-003': self._integrar_for_003,
+            'SGC-FOR-004': self._integrar_for_004,
+            'SGC-FOR-006': self._integrar_for_006,
         }
         for codigo in codigos:
             if codigo not in implementados:
@@ -169,7 +254,9 @@ class Command(BaseCommand):
 
     def _codigos(self, crudo):
         crudo = (crudo or '').strip()
-        implementados = ['SGC-FOR-002', 'SGC-FOR-003']
+        implementados = [
+            'SGC-FOR-002', 'SGC-FOR-003', 'SGC-FOR-004', 'SGC-FOR-006',
+        ]
         if not crudo:
             return implementados
         resultado = []
@@ -463,6 +550,250 @@ class Command(BaseCommand):
                     'Una fila por página o ítem modificado. La versión, '
                     'fecha, realizado por y autorizado por se completan '
                     'automáticamente desde la planilla.'
+                ),
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # SGC-FOR-004
+    # ------------------------------------------------------------------
+
+    def _integrar_for_004(self, aplicar, forzar, forzar_estructura=False,
+                          plantilla=''):
+        self.stdout.write(self.style.HTTP_INFO(
+            '\n=== SGC-FOR-004 — Acta de desincorporación de archivos inactivos ==='
+        ))
+
+        origen = plantilla or self._ruta_plantilla(FOR_004_XLSX)
+        if not os.path.exists(origen):
+            raise CommandError(
+                f'No se encontró la plantilla del FOR-004: {origen}\n'
+                + (
+                    'Revisa la ruta indicada con --plantilla.'
+                    if plantilla else
+                    'Coloca el XLSX en documentacion/ o indica su ruta con '
+                    '--plantilla.'
+                )
+            )
+
+        existente = Formato.objects.filter(codigo='SGC-FOR-004').first()
+        estado = 'ACTUALIZAR' if existente else 'CREAR'
+        self.stdout.write(f'Formato: {estado} (plantilla {os.path.basename(origen)})')
+        self.stdout.write(
+            f'  Participantes: {FOR_004_PARTICIPANTES_TABLA["max_filas"]} filas '
+            f'({FOR_004_PARTICIPANTES_TABLA["fila_inicio"]}-'
+            f'{FOR_004_PARTICIPANTES_TABLA["fila_fin"]}); '
+            f'registros: {FOR_004_REGISTROS_TABLA["max_filas"]} filas '
+            f'({FOR_004_REGISTROS_TABLA["fila_inicio"]}-'
+            f'{FOR_004_REGISTROS_TABLA["fila_fin"]})'
+        )
+
+        if not aplicar:
+            self.stdout.write(self.style.WARNING(
+                '  [dry-run] No se modificó la base de datos. '
+                'Repite con --apply para escribir.'
+            ))
+            return
+
+        formato, _creado = Formato.objects.update_or_create(
+            codigo='SGC-FOR-004',
+            defaults={
+                'nombre': 'Acta de Desincorporación de Archivos Inactivos',
+                'version': '1',
+                'edicion': '1',
+                # Se genera desde el acta de desincorporación.
+                'aplica_creacion': False,
+                'aplica_modificacion': False,
+                'aplica_eliminacion': False,
+                'activo': True,
+                'instructivo_html': '',
+            },
+        )
+
+        if forzar or not formato.plantilla_xlsx:
+            destino = self._destino_media('SGC-FOR-004')
+            os.makedirs(os.path.dirname(destino), exist_ok=True)
+            shutil.copy2(origen, destino)
+            formato.plantilla_xlsx = os.path.relpath(destino, settings.MEDIA_ROOT)
+            formato.save(update_fields=['plantilla_xlsx'])
+            self.stdout.write(self.style.SUCCESS(
+                f'  Plantilla copiada a MEDIA: {formato.plantilla_xlsx}'
+            ))
+        else:
+            self.stdout.write(
+                '  Plantilla ya existe; no se sobrescribe (usa --forzar-plantilla).'
+            )
+
+        self._recrear_estructura_004(formato, forzar=forzar_estructura)
+        self.stdout.write(self.style.SUCCESS(
+            '  Estructura y metadatos de SGC-FOR-004 listos.'
+        ))
+
+    def _recrear_estructura_004(self, formato, forzar=False):
+        """Secciones informativas (fecha, participantes, registros, área).
+
+        La generación real la hace ``services/for_004.py`` sobre la plantilla;
+        esta estructura mantiene coherente al Constructor de formatos.
+        """
+        if not forzar and CampoFormato.objects.filter(
+            seccion__formato=formato, clave='participantes',
+        ).exists():
+            self.stdout.write('  Estructura existente conservada.')
+            return
+
+        if forzar:
+            formato.secciones.all().delete()
+
+        seccion, _ = SeccionFormato.objects.update_or_create(
+            formato=formato, titulo='Acta de desincorporación',
+            defaults={'orden': 1},
+        )
+        CampoFormato.objects.update_or_create(
+            seccion=seccion, clave='fecha',
+            defaults={
+                'etiqueta': 'Fecha del acta', 'tipo': 'fecha',
+                'origen': 'usuario', 'celda_excel': 'A13',
+                'requerido': True, 'orden': 1,
+            },
+        )
+        CampoFormato.objects.update_or_create(
+            seccion=seccion, clave='participantes',
+            defaults={
+                'etiqueta': 'Participantes', 'tipo': 'tabla',
+                'origen': 'usuario', 'celda_excel': 'A16',
+                'requerido': True, 'orden': 2,
+                'config_tabla': copy.deepcopy(FOR_004_PARTICIPANTES_TABLA),
+            },
+        )
+        CampoFormato.objects.update_or_create(
+            seccion=seccion, clave='proposito',
+            defaults={
+                'etiqueta': 'Propósito', 'tipo': 'texto',
+                'origen': 'usuario', 'celda_excel': 'A21',
+                'requerido': False, 'orden': 3,
+            },
+        )
+        CampoFormato.objects.update_or_create(
+            seccion=seccion, clave='registros',
+            defaults={
+                'etiqueta': 'Registros inactivos', 'tipo': 'tabla',
+                'origen': 'usuario', 'celda_excel': 'A23',
+                'requerido': True, 'orden': 4,
+                'config_tabla': copy.deepcopy(FOR_004_REGISTROS_TABLA),
+            },
+        )
+        CampoFormato.objects.update_or_create(
+            seccion=seccion, clave='departamento',
+            defaults={
+                'etiqueta': 'Departamento / Coordinación / Área',
+                'tipo': 'texto', 'origen': 'usuario',
+                'celda_excel': 'A33', 'requerido': False, 'orden': 5,
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # SGC-FOR-006
+    # ------------------------------------------------------------------
+
+    def _integrar_for_006(self, aplicar, forzar, forzar_estructura=False,
+                          plantilla=''):
+        self.stdout.write(self.style.HTTP_INFO(
+            '\n=== SGC-FOR-006 — Lista Maestra de Documentos ==='
+        ))
+
+        origen = plantilla or self._ruta_plantilla(FOR_006_XLSX)
+        if not os.path.exists(origen):
+            raise CommandError(
+                f'No se encontró la plantilla del FOR-006: {origen}\n'
+                + (
+                    'Revisa la ruta indicada con --plantilla.'
+                    if plantilla else
+                    'Coloca el XLSX en documentacion/ o indica su ruta con '
+                    '--plantilla.'
+                )
+            )
+
+        existente = Formato.objects.filter(codigo='SGC-FOR-006').first()
+        estado = 'ACTUALIZAR' if existente else 'CREAR'
+        self.stdout.write(f'Formato: {estado} (plantilla {os.path.basename(origen)})')
+        self.stdout.write(
+            f'  Tabla: {FOR_006_TABLA["max_filas"]} filas '
+            f'({FOR_006_TABLA["fila_inicio"]}-{FOR_006_TABLA["fila_fin"]}), '
+            f'{len(FOR_006_TABLA["columnas"])} columnas (hoja continua)'
+        )
+
+        if not aplicar:
+            self.stdout.write(self.style.WARNING(
+                '  [dry-run] No se modificó la base de datos. '
+                'Repite con --apply para escribir.'
+            ))
+            return
+
+        formato, _creado = Formato.objects.update_or_create(
+            codigo='SGC-FOR-006',
+            defaults={
+                'nombre': 'Lista Maestra de Documentos',
+                'version': '1',
+                'edicion': '1',
+                # Se genera desde un registro vivo (no desde el flujo de
+                # aprobación). La vista es propia, no el formulario genérico.
+                'aplica_creacion': False,
+                'aplica_modificacion': False,
+                'aplica_eliminacion': False,
+                'permite_registros': False,
+                'activo': True,
+                'instructivo_html': '',
+            },
+        )
+
+        if forzar or not formato.plantilla_xlsx:
+            destino = self._destino_media('SGC-FOR-006')
+            os.makedirs(os.path.dirname(destino), exist_ok=True)
+            shutil.copy2(origen, destino)
+            formato.plantilla_xlsx = os.path.relpath(destino, settings.MEDIA_ROOT)
+            formato.save(update_fields=['plantilla_xlsx'])
+            self.stdout.write(self.style.SUCCESS(
+                f'  Plantilla copiada a MEDIA: {formato.plantilla_xlsx}'
+            ))
+        else:
+            self.stdout.write(
+                '  Plantilla ya existe; no se sobrescribe (usa --forzar-plantilla).'
+            )
+
+        self._recrear_estructura_006(formato, forzar=forzar_estructura)
+        self.stdout.write(self.style.SUCCESS(
+            '  Estructura y metadatos de SGC-FOR-006 listos.'
+        ))
+
+    def _recrear_estructura_006(self, formato, forzar=False):
+        """Una sección con la tabla multifila de la Lista Maestra."""
+        if not forzar and CampoFormato.objects.filter(
+            seccion__formato=formato, clave='documentos',
+        ).exists():
+            self.stdout.write('  Estructura existente conservada.')
+            return
+
+        if forzar:
+            formato.secciones.all().delete()
+
+        seccion, _ = SeccionFormato.objects.update_or_create(
+            formato=formato, titulo='Lista Maestra',
+            defaults={'orden': 1},
+        )
+        CampoFormato.objects.update_or_create(
+            seccion=seccion, clave='documentos',
+            defaults={
+                'etiqueta': 'Lista de documentos',
+                'tipo': 'tabla',
+                'origen': 'usuario',
+                'celda_excel': 'A13',
+                'requerido': False,
+                'orden': 1,
+                'config_tabla': copy.deepcopy(FOR_006_TABLA),
+                'ayuda': (
+                    'Una fila por documento. Las columnas con “origen” se '
+                    'autocompletan desde el registro de documentos; las demás '
+                    'se editan a mano (con respuestas recientes).'
                 ),
             },
         )

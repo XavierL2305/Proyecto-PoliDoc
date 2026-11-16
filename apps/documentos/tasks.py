@@ -259,6 +259,14 @@ def verificar_vencimientos(self):
             campos['fecha_destruccion'] = _sumar_meses(hoy, doc.periodo_retencion.meses)
         Documento.objects.filter(pk=doc.pk).update(**campos)
         vencidos += 1
+        # SGC-FOR-004: el update() de arriba no dispara señales, así que el
+        # aviso de desincorporación para los padres se dispara aquí a mano.
+        try:
+            from .services.for_004 import avisar_desincorporacion
+
+            avisar_desincorporacion(doc)
+        except Exception as e:
+            logger.error(f"Aviso desincorporación vencimiento {doc.codigo}: {e}")
         # Notificar propietario
         notifs.append(Notificacion(
             usuario=doc.propietario,
@@ -624,4 +632,85 @@ def generar_for_003_planilla(self, planilla_id):
         return {'success': False, 'error': 'Planilla inexistente'}
     except Exception as exc:  # noqa: BLE001
         logger.error('Error generando FOR-003: %s', exc)
+        return {'success': False, 'error': str(exc)}
+
+
+@shared_task(bind=True, max_retries=1)
+def generar_for_004_acta(self, acta_id, forzar=True):
+    """Genera el XLSX/PDF del acta de desincorporación (SGC-FOR-004).
+
+    Se dispara al crear el acta y tras cada firma. Nunca lanza: la descarga
+    regenera al vuelo si la tarea no corrió (fallback del servicio).
+    """
+    from django.core.exceptions import ObjectDoesNotExist
+
+    try:
+        from .models import ActaDesincorporacion
+        from .services.for_004 import generar_y_guardar
+
+        acta = ActaDesincorporacion.objects.get(pk=acta_id)
+        resultado = generar_y_guardar(acta, forzar=forzar)
+        if resultado.get('success'):
+            logger.info('FOR-004 generado para acta %s', acta.codigo)
+        else:
+            logger.warning(
+                'FOR-004 no generado para acta %s: %s',
+                acta.codigo, resultado.get('error'),
+            )
+        return resultado
+    except ObjectDoesNotExist:
+        return {'success': False, 'error': 'Acta inexistente'}
+    except Exception as exc:  # noqa: BLE001
+        logger.error('Error generando FOR-004: %s', exc)
+        return {'success': False, 'error': str(exc)}
+
+
+@shared_task(bind=True, max_retries=1)
+def purgar_documentos_personales(self, dry_run=False):
+    """Avisa (60/80 días) y purga (90) documents personales por inactividad.
+
+    Solo ``ambito='personal'``. Nunca toca soportes SGC ni documentos ISO.
+    Nunca lanza: devuelve un resumen o ``{'error': ...}``.
+    """
+    from .services.documentos_sin_codigo import procesar_purga_personal
+
+    try:
+        resumen = procesar_purga_personal(dry_run=dry_run)
+        logger.info('Purga de documentos personales: %s', resumen)
+        return resumen
+    except Exception as exc:  # noqa: BLE001
+        logger.error('Error en la purga de documentos personales: %s', exc)
+        return {'error': str(exc)}
+
+
+@shared_task(bind=True, max_retries=1)
+def generar_for_006_lista(self, registro_id=None, forzar=True):
+    """Genera el XLSX/PDF de la Lista Maestra (SGC-FOR-006).
+
+    Solo se ejecuta cuando el usuario pulsa el botón; nunca por cambios de la
+    app. Nunca lanza: devuelve el resultado del servicio.
+    """
+    from .models import RegistroFormato
+    from .services import for_006 as svc
+
+    try:
+        if registro_id:
+            registro = RegistroFormato.objects.filter(pk=registro_id).first()
+        else:
+            registro = svc.registro_lista_maestra()
+        if registro is None:
+            return {
+                'success': False, 'error': 'Registro de Lista Maestra inexistente',
+            }
+        resultado = svc.generar_y_guardar(registro, forzar=forzar)
+        if resultado.get('success'):
+            logger.info('FOR-006 generado para registro %s', registro.pk)
+        else:
+            logger.warning(
+                'FOR-006 no generado (registro %s): %s',
+                registro.pk, resultado.get('error'),
+            )
+        return resultado
+    except Exception as exc:  # noqa: BLE001
+        logger.error('Error generando FOR-006: %s', exc)
         return {'success': False, 'error': str(exc)}

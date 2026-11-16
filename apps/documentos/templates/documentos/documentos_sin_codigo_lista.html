@@ -1,0 +1,102 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}{% if es_sgc %}Documentos sin código (SGC){% else %}Mis documentos personales{% endif %} - POLIDOC{% endblock %}
+
+{% block app_content %}
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
+  <div>
+    <h1 style="font-size:1.25rem;margin:0;">
+      {% if es_sgc %}Documentos sin código · SGC{% else %}Mis documentos personales{% endif %}
+    </h1>
+    <p style="color:var(--color-muted);font-size:.875rem;margin:.35rem 0 0;">
+      {% if es_sgc %}
+      Soportes y registros de fuente institucionales que no llevan código ISO.
+      Se incluyen en la Lista Maestra como documentos de origen externo (N/A).
+      {% else %}
+      Archivos de uso personal. Solo tú los ves. No forman parte de la
+      documentación controlada ni de la Lista Maestra.
+      {% endif %}
+    </p>
+  </div>
+  <a href="{% url 'documentos:documento_sin_codigo_crear' ambito=ambito %}" class="btn btn--primary btn--sm">
+    <i class="fa-solid fa-plus"></i>
+    {% if es_sgc %}Nuevo documento sin código{% else %}Nuevo documento personal{% endif %}
+  </a>
+</div>
+
+<form method="get" class="form-card"
+      style="padding:1rem;margin-bottom:1rem;display:flex;gap:.75rem;flex-wrap:wrap;align-items:flex-end;">
+  <div class="form-group" style="margin:0;flex:1 1 260px;">
+    <label class="form-label">Buscar</label>
+    <input type="text" name="q" value="{{ q }}" class="form-input"
+           placeholder="Título o referencia">
+  </div>
+  <button type="submit" class="btn btn--primary">Filtrar</button>
+</form>
+
+<div class="form-card">
+  <div class="form-card-body" style="padding:0;">
+    {% if documentos %}
+    <div style="overflow-x:auto;">
+      <table class="table" style="width:100%;">
+        <thead>
+          <tr>
+            <th>Título</th>
+            {% if es_sgc %}
+            <th>Referencia</th>
+            <th>Empresa</th>
+            {% endif %}
+            <th>Fecha</th>
+            <th>Archivo</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for d in documentos %}
+          <tr>
+            <td><strong>{{ d.titulo }}</strong></td>
+            {% if es_sgc %}
+            <td>{{ d.referencia|default:"—" }}</td>
+            <td>{{ d.empresa|default:"—" }}</td>
+            {% endif %}
+            <td>{{ d.fecha|date:"d/m/Y"|default:"—" }}</td>
+            <td>
+              {% if d.archivo %}
+              <a href="{% url 'documentos:documento_sin_codigo_descargar' uuid=d.uuid %}"
+                 class="btn btn--ghost btn--sm" title="Descargar">
+                <i class="fa-solid fa-download"></i>
+              </a>
+              {% else %}—{% endif %}
+            </td>
+            <td style="text-align:right;white-space:nowrap;">
+              <a href="{% url 'documentos:documento_sin_codigo_detalle' uuid=d.uuid %}"
+                 class="btn btn--ghost btn--sm">Ver</a>
+              <a href="{% url 'documentos:documento_sin_codigo_editar' uuid=d.uuid %}"
+                 class="btn btn--ghost btn--sm">Editar</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state" style="padding:2rem;text-align:center;color:var(--color-muted);">
+      <p>No hay documentos{% if q %} con esos filtros{% endif %}.</p>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{% if page_obj.has_other_pages %}
+<div style="display:flex;gap:.5rem;justify-content:center;margin-top:1rem;">
+  {% if page_obj.has_previous %}
+  <a class="btn btn--ghost btn--sm" href="?page={{ page_obj.previous_page_number }}&q={{ q }}">Anterior</a>
+  {% endif %}
+  <span class="badge">Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</span>
+  {% if page_obj.has_next %}
+  <a class="btn btn--ghost btn--sm" href="?page={{ page_obj.next_page_number }}&q={{ q }}">Siguiente</a>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

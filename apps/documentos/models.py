@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 import uuid
@@ -9,6 +10,8 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 
 from .validators import validar_archivo_acuse, validar_archivo_documento
+
+logger = logging.getLogger(__name__)
 
 
 #: Extensión permitida → valor de `Documento.tipo_archivo`.
@@ -1670,6 +1673,7 @@ class SolicitudAprobacionDocumento(models.Model):
             else:
                 doc.estado = 'obsoleto'
                 doc.save(update_fields=['estado'])
+                self._avisar_desincorporacion(doc)
 
     def _aplicar_renovacion(self, doc):
         """Aplica la fecha propuesta (ISO 9001:7.5.3.2, control de cambios).
@@ -1703,6 +1707,25 @@ class SolicitudAprobacionDocumento(models.Model):
             observacion=self.observaciones or '',
         )
 
+    def _avisar_desincorporacion(self, doc):
+        """Avisa a los responsables de cada padre si ``doc`` quedó obsoleto.
+
+        El aviso es parte del flujo SGC-FOR-004: sin él, un documento
+        inactivado por aprobación nunca llegaría al modal de acta de su
+        padre. Nunca rompe la aplicación del cambio.
+        """
+        try:
+            from .services.for_004 import avisar_desincorporacion
+
+            avisar_desincorporacion(
+                doc, excluir=self.aprobador or self.solicitante,
+            )
+        except Exception as exc:  # noqa: BLE001 - el cambio no depende del aviso
+            logger.error(
+                'No se pudo avisar la desincorporación de %s: %s',
+                getattr(doc, 'codigo', doc.pk), exc,
+            )
+
     def aplicar_cambio(self):
         """Aplica al documento el resultado de la aprobación de esta solicitud.
 
@@ -1721,6 +1744,7 @@ class SolicitudAprobacionDocumento(models.Model):
                 doc.fecha_retencion = hoy
                 doc.fecha_destruccion = _sumar_meses(hoy, doc.periodo_retencion.meses)
             doc.save(update_fields=['estado', 'fecha_retencion', 'fecha_destruccion'])
+            self._avisar_desincorporacion(doc)
         elif self.accion_solicitud == 'reactivar':
             # Reactivar limpia la disposición programada: estando activo el
             # documento no debe quedar en cola para destrucción.
@@ -2601,6 +2625,7 @@ FIRMA_ORIGEN_POR_MODELO = {
     'aprobacionplanilla': 'aprobacion_planilla',
     'solicitudaprobaciondocumento': 'solicitud_aprobacion_documento',
     'registroformato': 'registro_formato',
+    'actadesincorporacion': 'acta_desincorporacion',
 }
 
 #: ``origen_tipo`` → ``_meta.model_name``.
@@ -2986,3 +3011,461 @@ class DistribucionRegistro(models.Model):
     def firmas(self):
         """QuerySet de ``FirmaElectronica`` de esta distribución."""
         return FirmaElectronica.para(self)
+
+
+# ---------------------------------------------------------------------------
+# SGC-FOR-004 — Acta de desincorporación de archivos inactivos
+# ---------------------------------------------------------------------------
+
+#: Texto oficial de la finalidad (plantilla real, no se altera).
+PROPOSITO_FOR_004 = (
+    'Con el propósito de llevar a cabo el acto de desincorporación o '
+    'destrucción de los siguientes registros inactivos, por haber finalizado '
+    'su tiempo de retención:'
+)
+
+#: Estados en los que un acta "abierta" ocupa la única plaza por documento.
+ESTADOS_ACTA_ABIERTA = ('borrador', 'pendiente_firma')
+
+
+class ActaDesincorporacion(models.Model):
+    """Acta de desincorporación de archivos inactivos (SGC-FOR-004).
+
+    Se genera desde la ficha de un documento **padre** cuando uno de sus
+    ``documentos_relacionados`` pasa a ``obsoleto``. La relación solo se
+    retira del padre cuando el acta queda ``aplicada`` (ambas firmas SES
+    registradas).
+
+    Un solo acta "abierta" por padre (constraint parcial): si ya hay una en
+    borrador/pendiente de firma, la vista ofrece reanudarla en lugar de
+    crear una segunda.
+    """
+
+    ESTADO_CHOICES = [
+        ('borrador', 'Borrador'),
+        ('pendiente_firma', 'Pendiente de firma'),
+        ('firmada', 'Firmada'),
+        ('aplicada', 'Aplicada'),
+        ('anulada', 'Anulada'),
+    ]
+
+    uuid = models.UUIDField(
+        default=uuid.uuid4, editable=False, unique=True, verbose_name='UUID',
+    )
+    codigo = models.CharField(
+        max_length=40, unique=True, verbose_name='Código del acta',
+    )
+    #: Documento padre sobre cuya ficha se abre el acta. ``None`` si el padre
+    #: fue eliminado: el acta conserva los snapshots y sigue siendo evidencia.
+    padre = models.ForeignKey(
+        Documento, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='actas_desincorporacion', verbose_name='Documento padre',
+    )
+    #: Instantánea del padre al crear el acta (el código nunca se imprime,
+    #: pero el nombre sí forma parte del registro).
+    documento_codigo = models.CharField(
+        max_length=50, blank=True, default='', verbose_name='Código (snapshot)',
+    )
+    documento_nombre = models.CharField(
+        max_length=300, blank=True, default='', verbose_name='Nombre (snapshot)',
+    )
+    departamento = models.ForeignKey(
+        Departamento, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='actas_desincorporacion', verbose_name='Departamento',
+    )
+    departamento_nombre = models.CharField(
+        max_length=200, blank=True, default='',
+        verbose_name='Departamento (snapshot)',
+    )
+    fecha = models.DateField(
+        default=timezone.localdate, verbose_name='Fecha del acta',
+        help_text='Día en que se realiza la desincorporación.',
+    )
+    proposito = models.TextField(
+        default=PROPOSITO_FOR_004, blank=True, verbose_name='Propósito',
+    )
+    estado = models.CharField(
+        max_length=20, choices=ESTADO_CHOICES, default='borrador',
+        verbose_name='Estado',
+    )
+    #: Rol de cada firma en ``FirmaElectronica.datos`` (``elaborado`` y
+    #: ``aprobado``): la clave no se infiere del usuario para que la misma
+    #: persona pueda ocupar ambos roles con UNA sola firma.
+    firma_elaborado = models.ForeignKey(
+        'FirmaElectronica', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='actas_elaboradas', verbose_name='Firma (Elaborado)',
+    )
+    firma_aprobado = models.ForeignKey(
+        'FirmaElectronica', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='actas_aprobadas', verbose_name='Firma (Aprobado)',
+    )
+    xlsx = models.FileField(
+        upload_to='actas_desincorporacion/xlsx/%Y/%m/', blank=True, null=True,
+        validators=[validar_archivo_documento],
+        verbose_name='XLSX generado',
+    )
+    pdf = models.FileField(
+        upload_to='actas_desincorporacion/pdf/%Y/%m/', blank=True, null=True,
+        verbose_name='PDF generado',
+    )
+    creado_por = models.ForeignKey(
+        User, on_delete=models.PROTECT,
+        related_name='actas_desincorporacion_creadas', verbose_name='Creado por',
+    )
+    #: Quién firma el bloque "Elaborado" (por defecto el creador).
+    elaborado_por = models.ForeignKey(
+        User, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='actas_elaboradas', verbose_name='Elabora',
+    )
+    #: Quién firma el bloque "Aprobado" (por defecto el jefe efectivo del
+    #: departamento; editable al crear el acta).
+    aprobado_por = models.ForeignKey(
+        User, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='actas_aprobadas', verbose_name='Aprueba',
+    )
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+    aplicada_en = models.DateTimeField(
+        null=True, blank=True, verbose_name='Aplicada en',
+        help_text='Momento en que se retiró la relación (ambas firmas).',
+    )
+    anulada_en = models.DateTimeField(null=True, blank=True, verbose_name='Anulada en')
+    anulada_motivo = models.TextField(
+        blank=True, default='', verbose_name='Motivo de anulación',
+    )
+
+    class Meta:
+        verbose_name = 'Acta de Desincorporación (SGC-FOR-004)'
+        verbose_name_plural = 'Actas de Desincorporación (SGC-FOR-004)'
+        ordering = ['-creado']
+        indexes = [
+            models.Index(fields=['padre', 'estado'], name='acta_desinc_padre_estado_idx'),
+        ]
+        constraints = [
+            # Una sola acta "abierta" por padre. Los actas firmadas/aplicadas/
+            # anuladas no compiten (histórico ilimitado).
+            models.UniqueConstraint(
+                fields=['padre'],
+                condition=models.Q(estado__in=ESTADOS_ACTA_ABIERTA),
+                name='acta_desinc_unica_abierta',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.codigo} ({self.get_estado_display()})'
+
+    @property
+    def esta_abierta(self):
+        """True mientras el acta puede editarse/firmarse (no cerrada)."""
+        return self.estado in ESTADOS_ACTA_ABIERTA
+
+    @property
+    def firmas_completas(self):
+        """True cuando ambas firmas SES están registradas."""
+        return bool(self.firma_elaborado_id and self.firma_aprobado_id)
+
+    @property
+    def rol_firmante(self):
+        """Rol de la última firma registrada (para saber qué falta)."""
+        if not self.firma_elaborado_id:
+            return 'elaborado'
+        if not self.firma_aprobado_id:
+            return 'aprobado'
+        return ''
+
+    def rol_para(self, usuario):
+        """Rol que ``usuario`` aún puede firmar (o ``''`` si ninguno).
+
+        La misma persona en ambos roles firma UNA sola vez: el motor enlaza
+        esa firma con los dos bloques (ver ``services/firmables.py``).
+        """
+        if usuario is None or not self.esta_abierta:
+            return ''
+        mismo_elabora = self.elaborado_por_id == usuario.id
+        mismo_aprueba = self.aprobado_por_id == usuario.id
+        if mismo_elabora and not self.firma_elaborado_id:
+            return 'elaborado'
+        if mismo_aprueba and not self.firma_aprobado_id:
+            return 'aprobado'
+        return ''
+
+    def firmante_asignado(self, rol):
+        """Usuario asignado al ``rol`` (``elaborado``/``aprobado``)."""
+        if rol == 'elaborado':
+            return self.elaborado_por
+        if rol == 'aprobado':
+            return self.aprobado_por
+        return None
+
+    @property
+    def url_descarga(self):
+        if not self.padre_id:
+            return ''
+        return (
+            f'/documentos/{self.padre.tipo_id}/{self.padre.uuid}/'
+            f'acta-desincorporacion/{self.uuid}/'
+        )
+
+
+class ParticipanteActa(models.Model):
+    """Fila de la tabla NOMBRE/CARGO del acta (filas 16–19 de la plantilla).
+
+    La plantilla real tiene **4** filas de datos (la fila 15 es el encabezado);
+    ese es el techo del formulario (no se insertan filas para no alterar el
+    layout oficial).
+    """
+
+    acta = models.ForeignKey(
+        ActaDesincorporacion, on_delete=models.CASCADE,
+        related_name='participantes', verbose_name='Acta',
+    )
+    nombre = models.CharField(max_length=200, verbose_name='Nombre')
+    cargo = models.CharField(
+        max_length=200, blank=True, default='', verbose_name='Cargo',
+    )
+    orden = models.PositiveIntegerField(default=0, verbose_name='Orden')
+
+    class Meta:
+        verbose_name = 'Participante del Acta'
+        verbose_name_plural = 'Participantes del Acta'
+        ordering = ['orden', 'id']
+
+    def __str__(self):
+        return f'{self.nombre} — {self.cargo}'
+
+
+class RegistroDesincorporado(models.Model):
+    """Fila de la lista de registros inactivos (filas 23–31 de la plantilla).
+
+    9 filas por hoja; con más registros se agregan hojas ``SGC-FOR-004 (2)…``
+    (mismo criterio que el FOR-003). Los datos se **snapshotan** al crear el
+    acta: si el documento relacionado se elimina, el acta conserva código,
+    nombre y fechas (``documento_relacionado`` pasa a ``NULL``).
+    """
+
+    acta = models.ForeignKey(
+        ActaDesincorporacion, on_delete=models.CASCADE,
+        related_name='registros', verbose_name='Acta',
+    )
+    documento_relacionado = models.ForeignKey(
+        Documento, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='registros_desincorporacion',
+        verbose_name='Documento relacionado',
+    )
+    codigo = models.CharField(
+        max_length=50, blank=True, default='', verbose_name='Código (snapshot)',
+    )
+    nombre = models.CharField(
+        max_length=300, blank=True, default='', verbose_name='Nombre (snapshot)',
+    )
+    fecha_vencimiento = models.DateField(
+        null=True, blank=True, verbose_name='Fecha de vencimiento (snapshot)',
+    )
+    fecha_retencion = models.DateField(
+        null=True, blank=True, verbose_name='Fecha de retención (snapshot)',
+    )
+    fecha_destruccion = models.DateField(
+        null=True, blank=True, verbose_name='Fecha de destrucción (snapshot)',
+    )
+    orden = models.PositiveIntegerField(default=0, verbose_name='Orden')
+
+    class Meta:
+        verbose_name = 'Registro Desincorporado'
+        verbose_name_plural = 'Registros Desincorporados'
+        ordering = ['orden', 'id']
+
+    def __str__(self):
+        return f'{self.codigo} {self.nombre}'.strip()
+
+
+# ---------------------------------------------------------------------------
+# Documentos sin código (no forman parte del catálogo ISO)
+# ---------------------------------------------------------------------------
+
+def generar_ruta_documento_sin_codigo(instance, filename):
+    """Ruta de un documento sin código (identidad = uuid, no hay código)."""
+    extension = os.path.splitext(filename)[1] if filename else '.pdf'
+    return f'documentos_sin_codigo/{instance.uuid.hex}{extension}'
+
+
+class DocumentoSinCodigo(models.Model):
+    """Documento que NO es información documentada controlada por ISO.
+
+    Dos ámbitos:
+
+    * ``sgc`` — soportes/registros de fuente institucionales (facturas,
+      órdenes, tickets, etc.). Se incluyen en la Lista Maestra (SGC-FOR-006)
+      como origen **Ext** con ``N/A`` en el número de identificación.
+    * ``personal`` — archivos de uso personal del usuario. Privados del
+      dueño (y del administrador), **no** se incluyen en la Lista Maestra.
+
+    No tiene ``codigo`` (la identidad es el ``uuid``) y no entra en el
+    catálogo de documentos ISO (`Documento`) ni en ``mis_documentos``.
+    """
+
+    AMBITO_CHOICES = [
+        ('sgc', 'Institucional / SGC'),
+        ('personal', 'Personal'),
+    ]
+
+    uuid = models.UUIDField(
+        default=uuid.uuid4, editable=False, unique=True, verbose_name='UUID',
+    )
+    titulo = models.CharField(max_length=200, verbose_name='Título')
+    descripcion = models.TextField(blank=True, default='', verbose_name='Descripción')
+    archivo = models.FileField(
+        upload_to=generar_ruta_documento_sin_codigo, blank=True, null=True,
+        validators=[validar_archivo_documento], verbose_name='Archivo',
+    )
+    tipo_archivo = models.CharField(
+        max_length=10, choices=Documento.TIPO_ARCHIVO_CHOICES, default='pdf',
+        verbose_name='Tipo de archivo',
+    )
+    #: Referencia externa opcional (nº de factura, ticket, orden…).
+    referencia = models.CharField(
+        max_length=200, blank=True, default='', verbose_name='Referencia externa',
+    )
+    ambito = models.CharField(
+        max_length=20, choices=AMBITO_CHOICES, default='personal',
+        verbose_name='Ámbito',
+    )
+    clasificacion = models.CharField(
+        max_length=20, choices=Documento.CLASIFICACION_CHOICES,
+        default='interno', verbose_name='Clasificación',
+    )
+    empresa = models.CharField(
+        max_length=150, blank=True, default='', verbose_name='Empresa',
+        help_text='Empresa o razón social a la que pertenece el documento.',
+    )
+    departamento = models.ForeignKey(
+        Departamento, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='documentos_sin_codigo', verbose_name='Departamento',
+    )
+    propietario = models.ForeignKey(
+        User, on_delete=models.PROTECT, related_name='documentos_sin_codigo',
+        verbose_name='Propietario',
+    )
+    #: Responsable como texto libre (puede no ser un usuario, p. ej.
+    #: "Junta Directiva"). Para la Lista Maestra alimenta la columna
+    #: Responsable.
+    responsable_texto = models.CharField(
+        max_length=300, blank=True, default='', verbose_name='Responsable (texto)',
+    )
+    fecha = models.DateField(null=True, blank=True, verbose_name='Fecha del documento')
+    periodo_retencion = models.ForeignKey(
+        Periodo, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='documentos_sin_codigo_retencion',
+        verbose_name='Período de retención',
+    )
+    #: "Forma de archivo y ubicación" (texto libre).
+    ubicacion = models.CharField(
+        max_length=300, blank=True, default='', verbose_name='Forma de archivo y ubicación',
+    )
+    activo = models.BooleanField(default=True, verbose_name='Activo')
+    #: Purga de personales: fecha en que se avisó/marcó para eliminar.
+    marcado_para_eliminar_en = models.DateTimeField(
+        null=True, blank=True, verbose_name='Marcado para eliminar en',
+    )
+    eliminado_en = models.DateTimeField(
+        null=True, blank=True, verbose_name='Eliminado en',
+    )
+    creado_por = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='documentos_sin_codigo_creados', verbose_name='Creado por',
+    )
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Documento sin código'
+        verbose_name_plural = 'Documentos sin código'
+        ordering = ['-creado']
+        indexes = [
+            models.Index(fields=['ambito', 'activo'], name='doc_sincod_ambito_idx'),
+            models.Index(
+                fields=['propietario', 'activo'], name='doc_sincod_prop_idx',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.titulo} ({self.get_ambito_display()})'
+
+    @property
+    def es_personal(self):
+        """True si es un documento personal (privado del dueño)."""
+        return self.ambito == 'personal'
+
+    @property
+    def es_sgc(self):
+        """True si es un soporte/registro institucional del SGC."""
+        return self.ambito == 'sgc'
+
+    @property
+    def incluir_en_lista_maestra(self):
+        """Solo los soportes SGC activos entran en la Lista Maestra (Ext)."""
+        return self.ambito == 'sgc' and self.activo
+
+
+class AvisoPurgaPersonal(models.Model):
+    """Estado de avisos de purga para los documentos personales de un usuario.
+
+    Una fila por usuario (OneToOne). Se crea al enviar el primer aviso y se
+    elimina si el usuario vuelve a iniciar sesión antes del umbral (el contador
+    de inactividad se reinicia con ``User.last_login``).
+    """
+
+    usuario = models.OneToOneField(
+        User, on_delete=models.CASCADE, related_name='aviso_purga_personal',
+        verbose_name='Usuario',
+    )
+    aviso_60_en = models.DateTimeField(
+        null=True, blank=True, verbose_name='Aviso de 60 días enviado en',
+    )
+    aviso_80_en = models.DateTimeField(
+        null=True, blank=True, verbose_name='Segundo aviso (80 días) enviado en',
+    )
+
+    class Meta:
+        verbose_name = 'Aviso de purga de documentos personales'
+        verbose_name_plural = 'Avisos de purga de documentos personales'
+
+    def __str__(self):
+        return f'Avisos de {self.usuario.username}'
+
+
+class AccesoListaMaestra(models.Model):
+    """Concesión de acceso a la vista exclusiva de la Lista Maestra.
+
+    Se administra desde la sesión del admin (por PERSONA, no por rol). Quien
+    tenga una concesión activa puede ver/editar/sincronizar/regenerar/descargar
+    la Lista Maestra; el administrador siempre tiene acceso total.
+    """
+
+    formato = models.ForeignKey(
+        Formato, on_delete=models.PROTECT, related_name='accesos_lista',
+        verbose_name='Formato',
+    )
+    usuario = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='accesos_lista_maestra',
+        verbose_name='Usuario',
+    )
+    activo = models.BooleanField(default=True, verbose_name='Activo')
+    creado_por = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='accesos_lista_creados', verbose_name='Creado por',
+    )
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Acceso a la Lista Maestra'
+        verbose_name_plural = 'Accesos a la Lista Maestra'
+        ordering = ['usuario__first_name', 'usuario__last_name', 'usuario__username']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['formato', 'usuario'],
+                name='acceso_lista_formato_usuario_unico',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.usuario.username} → {self.formato.codigo}'

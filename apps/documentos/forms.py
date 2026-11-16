@@ -6,6 +6,7 @@ from .models import (
     Documento, SolicitudDescarga, SolicitudAccesoDocumento,
     PlanillaCambios, AsignacionDocumento, Departamento, TipoDocumento, Periodo,
     Formato, SeccionFormato, CampoFormato, SolicitudCambio, RegistroFormato,
+    DocumentoSinCodigo,
 )
 from .icons import ICONOS_DISPONIBLES, ICONO_POR_DEFECTO
 
@@ -782,3 +783,67 @@ def validar_respuestas_guardadas(formato, respuestas):
                 errores.append(f'El valor "{valor}" no es válido para "{campo.etiqueta}".')
 
     return errores
+
+
+class DocumentoSinCodigoForm(forms.ModelForm):
+    """Alta/edición de un documento sin código (personal o soporte SGC).
+
+    El campo ``ambito`` no se edita aquí: lo fija la vista. Para ``personal``
+    se ocultan los campos institucionales (empresa, departamento, referencia,
+    retención, ubicación…), que forman parte del soporte SGC / Lista Maestra.
+    """
+
+    class Meta:
+        model = DocumentoSinCodigo
+        fields = [
+            'titulo', 'descripcion', 'archivo', 'referencia', 'clasificacion',
+            'empresa', 'departamento', 'responsable_texto', 'fecha',
+            'periodo_retencion', 'ubicacion',
+        ]
+        widgets = {
+            'titulo': forms.TextInput(attrs={
+                'class': 'form-input', 'placeholder': 'Ej. Factura proveedor 0012',
+            }),
+            'descripcion': forms.Textarea(attrs={
+                'class': 'form-input', 'rows': 3, 'placeholder': ' ',
+            }),
+            'archivo': forms.FileInput(attrs={'class': 'form-input'}),
+            'referencia': forms.TextInput(attrs={
+                'class': 'form-input', 'placeholder': 'Nº de factura, ticket, orden…',
+            }),
+            'clasificacion': forms.Select(attrs={'class': 'form-input'}),
+            'empresa': forms.TextInput(attrs={'class': 'form-input'}),
+            'departamento': forms.Select(attrs={'class': 'form-input'}),
+            'responsable_texto': forms.TextInput(attrs={
+                'class': 'form-input', 'placeholder': 'Ej. Junta Directiva',
+            }),
+            'fecha': forms.DateInput(attrs={'class': 'form-input', 'type': 'date'}),
+            'periodo_retencion': forms.Select(attrs={'class': 'form-input'}),
+            'ubicacion': forms.TextInput(attrs={
+                'class': 'form-input',
+                'placeholder': 'Ej. Digital/ Carpeta SGC',
+            }),
+        }
+
+    #: Campos exclusivos del soporte institucional (SGC).
+    CAMPOS_SGC = (
+        'referencia', 'clasificacion', 'empresa', 'departamento',
+        'responsable_texto', 'periodo_retencion', 'ubicacion',
+    )
+
+    def __init__(self, *args, ambito='personal', **kwargs):
+        super().__init__(*args, **kwargs)
+        self.ambito = ambito
+        # Al crear, el archivo es obligatorio (es un documento a resguardar).
+        if not self.instance.pk:
+            self.fields['archivo'].required = True
+        if ambito == 'personal':
+            for nombre in self.CAMPOS_SGC:
+                self.fields.pop(nombre, None)
+        else:
+            self.fields['departamento'].queryset = Departamento.objects.filter(
+                activo=True,
+            )
+            self.fields['periodo_retencion'].queryset = Periodo.objects.filter(
+                activo=True,
+            )

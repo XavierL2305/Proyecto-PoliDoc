@@ -1,0 +1,115 @@
+================================================================================
+POLIDOC — PLANES (documento vivo)
+================================================================================
+Estado : COMPLETADO (2026-11-16)
+Regla  : una fase a la vez; se marca [x] solo cuando la fase está probada.
+Fuera de alcance por ahora: firma SES en FOR-006, resumen IA en personales,
+                           versiones/PDF de documentos personales.
+
+--------------------------------------------------------------------------------
+DECISIONES CERRADAS
+--------------------------------------------------------------------------------
+- FOR-006 = Lista Maestra de Documentos (SGC-FOR-006 + instructivo SGC-IDL-012).
+- Se reutiliza `RegistroFormato` como registro vivo (JSON) + traza de auditoría.
+- Columnas/widgets configurables en JSON (`CampoFormato.config_tabla.columnas`),
+  editables desde el Constructor (sin programador para cambios ISO).
+- Dropdowns = "respuestas recientes" (valores ya usados) + escritura libre.
+- Sincronización "combinar": refresca columnas con `origen`, respeta `_manual`.
+- Acceso por PERSONA (admin siempre; personas asignadas hacen todo en la vista).
+- XLSX en UNA hoja continua; se regenera solo con botón (no por cambios de app).
+- Documentos sin código: entidad SEPARADA (fuera del catálogo ISO), sin `codigo`.
+  - ámbito 'sgc' -> va a FOR-006 como Ext con "N/A".
+  - ámbito 'personal' -> privado del dueño, no va a FOR-006.
+- Purga de personales: avisos a 60 y 80 días al jefe directo; purga a 90 días.
+- No se crea un `TipoDocumento` ISO nuevo (no tocar el catálogo/procedimiento ISO).
+- Sin firma SES en FOR-006.
+
+--------------------------------------------------------------------------------
+FASE 1 — Documentos sin código: entidad base
+--------------------------------------------------------------------------------
+[x] Migración 0065: modelo `DocumentoSinCodigo`
+      uuid, titulo, descripcion, archivo, tipo_archivo, referencia,
+      ambito ('sgc'|'personal'), clasificacion, empresa, departamento,
+      propietario, responsable_texto, fecha, periodo_retencion, ubicacion,
+      activo, eliminado_en, marcado_para_eliminar_en,
+      creado/actualizado/creado_por
+[x] Sin campo `codigo` (identidad = uuid); no entra a catálogo ISO.
+[x] Settings de purga: PERSONAL_DOCS_AVISO_DIAS=60,
+      PERSONAL_DOCS_SEGUNDO_AVISO_DIAS=80, PERSONAL_DOCS_PURGE_DIAS=90.
+[x] `check` + `makemigrations --check` limpios y migración aplicada en demo.
+
+--------------------------------------------------------------------------------
+FASE 2 — Documentos sin código: CRUD, bandejas y permisos
+--------------------------------------------------------------------------------
+[x] Servicio permisos/visibilidad (sgc: admin+jefe; personal: dueño+admin).
+[x] Acción "Crear documento personal" SIEMPRE visible (cualquier usuario).
+[x] Acción "Crear documento sin código SGC" (admin/jefe).
+[x] Bandeja "Mis documentos personales" (visible solo si el usuario tiene >=1).
+[x] Bandeja "Documentos sin código SGC" (visible si hay >=1 y es admin/jefe).
+[x] Filtros, paginación y detalle (ver/descargar/editar/eliminar soft).
+[x] Subir/descargar archivo (sin PDF ni versiones).
+[x] Flujo de creación en "+ Nuevo Documento" (personal / sgc).
+[x] Menú en sidebar + context_processors (bandejas según conteo).
+[x] Tests (tests_documentos_sin_codigo).
+
+--------------------------------------------------------------------------------
+FASE 3 — Purga de personales + avisos al jefe
+--------------------------------------------------------------------------------
+[x] Tarea Celery diaria (avisos 60/80 y purga 90).
+[x] Aviso al jefe directo (o admin/GG si no hay jefe) a 60 y 80 días.
+[x] Email al usuario en cada aviso (60 y 80 días).
+[x] Purga a 90 días (solo ambito='personal'), auditoría ISO.
+[x] Comando `purgar_personales --dry-run`.
+[x] Tests (inactividad, reset al iniciar sesión, no tocar sgc).
+
+--------------------------------------------------------------------------------
+FASE 4 — FOR-006: formato y configuración (JSON)
+--------------------------------------------------------------------------------
+[x] `integrar_formatos_sgc --solo=006` (Formato/Seccion/Campo).
+[x] `config_tabla`: 13 columnas lógicas (14 físicas A:N; Ext/Int comparten
+      fila) con tipo, celda, origen y opciones.
+[x] Extender editor de columnas del Constructor (tipo/opciones).
+[x] Tests de integración del comando.
+
+--------------------------------------------------------------------------------
+FASE 5 — FOR-006: servicio y signals
+--------------------------------------------------------------------------------
+[x] services/for_006.py: catálogo `origen`, upsert/quitar, sincronizar(combinar).
+[x] Generación XLSX en una hoja continua + PDF (solo con botón).
+[x] Signals `Documento` y `DocumentoSinCodigo` (on_commit, idempotente).
+[x] Respetar overrides `_manual` en sync.
+[x] Tests (insertar/actualizar/quitar, combinar, >22 filas).
+
+--------------------------------------------------------------------------------
+FASE 6 — FOR-006: vista exclusiva + acceso por persona
+--------------------------------------------------------------------------------
+[x] `AccesoListaMaestra` (admin + personas asignadas; acceso total).
+[x] Vista grid paginada + widgets combo "respuestas recientes".
+[x] Guardado por fila (AJAX) + panel Historial.
+[x] Página admin de Acceso.
+[x] Botones Sincronizar / Regenerar / Descargar.
+[x] Tests (multi-persona SGC/GG, sin acceso, datalist recientes).
+
+--------------------------------------------------------------------------------
+FASE 7 — Auditoría con checkboxes multi-filtro
+--------------------------------------------------------------------------------
+[x] Filtros accion_tipo / accion_categoria como checkboxes.
+[x] Backend getlist + `$in` en obtener_logs.
+[x] Replicar en PDF y paginación.
+[x] Tests.
+
+--------------------------------------------------------------------------------
+FASE 8 — Documentación y verificación final
+--------------------------------------------------------------------------------
+[x] CONTEXT.txt §29.9/§29.10.
+[x] docs/adr/0004-sgc-for-006-lista-maestra.md.
+[x] `check` + `makemigrations --check`.
+[x] Suite completa (documentos/autenticacion/auditoria).
+
+--------------------------------------------------------------------------------
+COMANDOS DE VERIFICACIÓN
+--------------------------------------------------------------------------------
+python manage.py check --settings=polidoc.test_settings
+python manage.py makemigrations --check --dry-run --settings=polidoc.test_settings
+python manage.py test auditoria documentos autenticacion \
+    --settings=polidoc.test_settings --noinput

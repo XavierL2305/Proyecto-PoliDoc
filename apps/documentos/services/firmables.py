@@ -6,6 +6,8 @@ firma. Agregar un documento nuevo = una clase aquí; el resto del motor
 """
 import json
 
+from django.utils import timezone
+
 from .firmas import ErrorFirma, Firmable, registrar_firmable
 
 
@@ -330,3 +332,139 @@ class FirmaDistribucionRegistro(Firmable):
             obj.fecha_entrega = obj.fecha_acuse
             campos.append('fecha_entrega')
         obj.save(update_fields=campos)
+
+
+@registrar_firmable
+class FirmaActaDesincorporacion(Firmable):
+    """SGC-FOR-004: firma del acta de desincorporación (Elaborado/Aprobado).
+
+    Firma **híbrida**: interna con PIN (``metodo='pin'``) o externa con el
+    token de ``InvitacionFirma`` (``metodo='token'``). El rol de cada firma
+    viaja explícito en ``FirmaElectronica.datos['rol']``: no se infiere del
+    usuario, de modo que la misma persona puede ocupar ambos roles con UNA
+    sola firma (el motor la enlaza a los dos bloques del acta).
+
+    El contenido firmado es el **JSON canónico del acta** (no el XLSX/PDF,
+    que se regenera tras cada firma): así el hash es estable y verificable.
+    """
+
+    tipo = 'acta_desincorporacion'
+    audit_accion = 'firma_acta_desincorporacion'
+    audit_categoria = 'documento'
+
+    def documento(self, obj):
+        return obj.padre
+
+    def firmante(self, obj, usuario):
+        info = super().firmante(obj, usuario)
+        from ..models import _cargo_usuario
+
+        info['firmante_cargo'] = _cargo_usuario(usuario)
+        return info
+
+    def puede_firmar(self, obj, usuario):
+        from ..models import ActaDesincorporacion
+        from .for_004 import validar_para_firmar
+
+        actual = ActaDesincorporacion.objects.filter(pk=obj.pk).first()
+        if actual is None:
+            raise ErrorFirma('Este acta ya no existe.')
+        validar_para_firmar(actual)
+        if not actual.rol_para(usuario):
+            raise ErrorFirma('No tienes un rol pendiente de firma en este acta.')
+
+    def contenido(self, obj):
+        return _json_canonico({
+            'flujo': self.tipo,
+            'acta': obj.codigo,
+            'padre': obj.documento_codigo,
+            'fecha': str(obj.fecha),
+            'proposito': obj.proposito,
+            'departamento': obj.departamento_nombre,
+            'participantes': [
+                {'nombre': p.nombre, 'cargo': p.cargo}
+                for p in obj.participantes.order_by('orden', 'id')
+            ],
+            'registros': [
+                {
+                    'codigo': r.codigo,
+                    'nombre': r.nombre,
+                    'fecha_vencimiento': str(r.fecha_vencimiento or ''),
+                    'fecha_retencion': str(r.fecha_retencion or ''),
+                    'fecha_destruccion': str(r.fecha_destruccion or ''),
+                }
+                for r in obj.registros.order_by('orden', 'id')
+            ],
+            'elaborado_por': obj.elaborado_por_id,
+            'aprobado_por': obj.aprobado_por_id,
+        })
+
+    def detalles(self, obj):
+        return {
+            'acta_id': obj.id,
+            'acta': obj.codigo,
+            'padre': obj.documento_codigo,
+            'registros': obj.registros.count(),
+        }
+
+    def despues(self, obj, firma, contexto=None):
+        """Asigna la firma a su rol, cierra el acta y la aplica si completa.
+
+        Se relee el acta con ``select_for_update``: la validación se hace
+        contra el estado real, y cualquier violación (rol tomado, registro ya
+        no inactivo, acta cerrada) revierte la firma entera.
+        """
+        from ..models import ActaDesincorporacion
+        from .for_004 import aplicar_acta, regenerar_tras_firma, validar_para_firmar
+
+        rol = (firma.datos or {}).get('rol')
+        if rol not in ('elaborado', 'aprobado'):
+            raise ErrorFirma('Rol de firma no reconocido para el acta.')
+
+        actual = ActaDesincorporacion.objects.select_for_update().get(pk=obj.pk)
+        validar_para_firmar(actual)
+
+        asignado = actual.firmante_asignado(rol)
+        if asignado is None:
+            raise ErrorFirma('Este acta no tiene firmante asignado para ese rol.')
+        if not self._firmante_coincide(asignado, firma):
+            raise ErrorFirma('Esta firma no corresponde al firmante asignado.')
+
+        if rol == 'elaborado':
+            if actual.firma_elaborado_id:
+                raise ErrorFirma('El bloque Elaborado ya fue firmado.')
+            actual.firma_elaborado = firma
+            if actual.elaborado_por_id == actual.aprobado_por_id:
+                actual.firma_aprobado = firma
+        else:
+            if actual.firma_aprobado_id:
+                raise ErrorFirma('El bloque Aprobado ya fue firmado.')
+            actual.firma_aprobado = firma
+            if actual.elaborado_por_id == actual.aprobado_por_id:
+                actual.firma_elaborado = firma
+
+        actual.estado = 'pendiente_firma'
+        actual.save(update_fields=[
+            'firma_elaborado', 'firma_aprobado', 'estado', 'actualizado',
+        ])
+        # Devolver el estado a la instancia que usó el llamador.
+        obj.firma_elaborado = actual.firma_elaborado
+        obj.firma_aprobado = actual.firma_aprobado
+        obj.estado = actual.estado
+
+        if actual.firmas_completas:
+            aplicar_acta(actual)
+        regenerar_tras_firma(actual)
+
+    @staticmethod
+    def _firmante_coincide(asignado, firma):
+        """El firmante de la firma debe ser el usuario asignado al rol.
+
+        Interno: ``firmante`` = usuario. Externo: el correo de la firma debe
+        coincidir con el del asignado (la invitación se emite a su correo).
+        """
+        if firma.firmante_id:
+            return firma.firmante_id == asignado.id
+        email_firma = (firma.firmante_email or '').strip().lower()
+        email_asignado = (asignado.email or '').strip().lower()
+        return bool(email_firma) and email_firma == email_asignado

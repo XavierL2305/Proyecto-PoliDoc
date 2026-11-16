@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 {% load static %}
 
-{% block title %}{% if registro %}Acuse de registro{% else %}Firma de distribución{% endif %} - POLIDOC{% endblock %}
+{% block title %}{% if acta %}Acta de desincorporación{% elif registro %}Acuse de registro{% else %}Firma de distribución{% endif %} - POLIDOC{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -58,7 +58,7 @@
       <div class="brand">POLIDOC</div>
       <h1>
         <i class="fa-solid fa-signature"></i>
-        {% if registro %}Acuse de conformidad del registro{% else %}Firma de conformidad de distribución{% endif %}
+        {% if acta %}Acta de desincorporación — firma {% if firma.datos.rol == 'aprobado' %}Aprobado{% else %}Elaborado{% endif %}{% elif registro %}Acuse de conformidad del registro{% else %}Firma de conformidad de distribución{% endif %}
       </h1>
     </div>
 
@@ -73,12 +73,12 @@
     {% elif revocada %}
     <div class="firma-body">
       <div class="alerta alerta--error">
-        <strong>Enlace bloqueado.</strong> Esta distribución fue revocada por
-        el emisor; el archivo ya no está disponible ni se puede firmar.
+        <strong>Enlace bloqueado.</strong>
+        {% if acta %}El acta ya fue cerrada, anulada o aplicada; este enlace ya no se puede usar.{% else %}Esta distribución fue revocada por el emisor; el archivo ya no está disponible ni se puede firmar.{% endif %}
       </div>
       <div class="detail-row">
-        <span class="detail-label">Registro</span>
-        <span class="detail-value">{{ registro.formato_codigo }} - {{ registro.titulo|default:documento.nombre }}</span>
+        <span class="detail-label">{% if acta %}Acta{% else %}Registro{% endif %}</span>
+        <span class="detail-value">{% if acta %}{{ acta.codigo }} — SGC-FOR-004{% else %}{{ registro.formato_codigo }} - {{ registro.titulo|default:documento.nombre }}{% endif %}</span>
       </div>
     </div>
 
@@ -98,7 +98,11 @@
     <div class="firma-body">
       <div class="alerta alerta--ok">
         <strong>Firma registrada.</strong> Gracias, {{ firma.firmante_nombre }}.
-        {% if registro %}
+        {% if acta %}
+          Tu firma como {% if firma.datos.rol == 'aprobado' %}Aprobado{% else %}Elaborado{% endif %}
+          del acta {{ acta.codigo }} quedó registrada en POLIDOC el
+          {{ firma.fecha_firma|date:"d/m/Y H:i" }}.
+        {% elif registro %}
           Tu acuse quedó registrado en POLIDOC el
           {{ firma.fecha_firma|date:"d/m/Y H:i" }}.
         {% else %}
@@ -136,15 +140,26 @@
         <div class="alerta alerta--error">{{ error }}</div>
         {% endif %}
         <div class="detail-row">
-          <span class="detail-label">{% if registro %}Registro{% else %}Documento{% endif %}</span>
+          <span class="detail-label">{% if acta %}Acta{% elif registro %}Registro{% else %}Documento{% endif %}</span>
           <span class="detail-value">
-            {% if registro %}{{ registro.formato_codigo }} - {{ registro.titulo }}{% else %}{{ documento.codigo }} - {{ documento.nombre }}{% endif %}
+            {% if acta %}{{ acta.codigo }} — SGC-FOR-004{% elif registro %}{{ registro.formato_codigo }} - {{ registro.titulo }}{% else %}{{ documento.codigo }} - {{ documento.nombre }}{% endif %}
           </span>
         </div>
+        {% if acta %}
+        <div class="detail-row">
+          <span class="detail-label">Rol a firmar</span>
+          <span class="detail-value">{% if firma.datos.rol == 'aprobado' %}Aprobado{% else %}Elaborado{% endif %}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Registros</span>
+          <span class="detail-value">{{ acta.registros.count }}</span>
+        </div>
+        {% else %}
         <div class="detail-row">
           <span class="detail-label">Versión</span>
           <span class="detail-value">{% if registro %}{{ registro.formato_version|default:"—" }}{% else %}{{ documento.version_actual }}{% endif %}</span>
         </div>
+        {% endif %}
         <div class="detail-row">
           <span class="detail-label">Firmante</span>
           <span class="detail-value">{{ firma.firmante_nombre }}</span>
@@ -154,8 +169,8 @@
           <span class="detail-value">{{ firma.firmante_email }}</span>
         </div>
         <div class="detail-row">
-          <span class="detail-label">Organización</span>
-          <span class="detail-value">{{ distribucion.organizacion_externa|default:"—" }}</span>
+          <span class="detail-label">{% if acta %}Departamento{% else %}Organización{% endif %}</span>
+          <span class="detail-value">{% if acta %}{{ acta.departamento_nombre|default:"—" }}{% else %}{{ distribucion.organizacion_externa|default:"—" }}{% endif %}</span>
         </div>
         <div class="detail-row">
           <span class="detail-label">Vigencia del enlace</span>
@@ -165,7 +180,11 @@
         <label class="consent">
           <input type="checkbox" name="consentimiento" required>
           <span>
+            {% if acta %}
+            Acepto firmar electrónicamente el acta de desincorporación
+            {% else %}
             Acepto firmar electrónicamente la conformidad de esta distribución
+            {% endif %}
             y que quede registrada en POLIDOC con fecha, hora y datos del
             dispositivo.
           </span>
@@ -178,7 +197,7 @@
         </a>
         <button type="submit" class="btn btn--primary">
           <i class="fa-solid fa-signature"></i>
-          {% if registro %}Firmar acuse{% else %}Firmar conformidad{% endif %}
+          {% if acta %}Firmar acta{% elif registro %}Firmar acuse{% else %}Firmar conformidad{% endif %}
         </button>
       </div>
     </form>

@@ -1,0 +1,47 @@
+{% load static %}
+<div class="firma-card">
+  <h4>{{ titulo }}</h4>
+  <div class="firma-meta">
+    {% if asignado %}
+      {{ asignado.get_full_name|default:asignado.username }}
+      {% if asignado.email %}<br>{{ asignado.email }}{% endif %}
+    {% else %}
+      Sin firmante asignado
+    {% endif %}
+  </div>
+
+  {% if firma and firma.estado == 'firmada' %}
+  <div class="firma-meta" style="margin-top: 0.5rem; color: var(--color-success);">
+    <i class="fa-solid fa-circle-check"></i>
+    Firmado el {{ firma.fecha_firma|date:"d/m/Y H:i" }}<br>
+    SES #{{ firma.id }}
+    {% if firma.hash_contenido %}<br>SHA-256 {{ firma.hash_contenido|slice:":16" }}…{% endif %}
+  </div>
+  {% elif acta.esta_abierta %}
+  <div class="firma-acciones">
+    {% if rol_actual == rol %}
+    <form id="form-firmar-{{ rol }}" method="post"
+          action="{% url 'documentos:firmar_acta_desincorporacion' tipo=tipo documento_id=documento.uuid acta_uuid=acta.uuid %}">
+      {% csrf_token %}
+      <input type="hidden" name="rol" value="{{ rol }}">
+      <input type="hidden" name="pin" value="">
+      <button type="button" class="btn btn--primary btn--sm" onclick="firmarActa('{{ rol }}')">
+        <i class="fa-solid fa-signature"></i> Firmar con PIN
+      </button>
+    </form>
+    {% endif %}
+    {% if puede_gerenciar and asignado.email %}
+    <form method="post"
+          action="{% url 'documentos:invitar_acta_desincorporacion' tipo=tipo documento_id=documento.uuid acta_uuid=acta.uuid %}">
+      {% csrf_token %}
+      <input type="hidden" name="rol" value="{{ rol }}">
+      <button type="submit" class="btn btn--ghost btn--sm">
+        <i class="fa-solid fa-envelope"></i> Enviar enlace
+      </button>
+    </form>
+    {% endif %}
+  </div>
+  {% else %}
+  <div class="firma-meta" style="margin-top: 0.5rem;">Pendiente de firma.</div>
+  {% endif %}
+</div>

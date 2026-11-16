@@ -381,7 +381,13 @@ def aplicar_planilla_al_documento(planilla, usuario=None):
     asociados = [
         da.documento for da in planilla.documentos_asociados.all() if da.documento_id
     ]
-    documento.documentos_relacionados.set(asociados)
+    # SGC-FOR-004: una relación retirada por un acta ya aplicada no se
+    # reincorpora desde una planilla (la evidencia quedaría contradicha).
+    from .for_004 import filtrar_relaciones_bloqueadas
+
+    documento.documentos_relacionados.set(
+        filtrar_relaciones_bloqueadas(documento, asociados)
+    )
 
     # Referencias pendientes (códigos aún inexistentes): si el destino ya
     # existe y es accesible se enlaza; si no, queda como referencia a resolver.
@@ -395,7 +401,9 @@ def aplicar_planilla_al_documento(planilla, usuario=None):
             or destino.departamento_id == documento.departamento_id
         )
         if accesible:
-            documento.documentos_relacionados.add(destino)
+            permitidos = filtrar_relaciones_bloqueadas(documento, [destino])
+            if permitidos:
+                documento.documentos_relacionados.add(*permitidos)
         else:
             ReferenciaDocumento.objects.get_or_create(
                 documento=documento, codigo_destino=codigo,

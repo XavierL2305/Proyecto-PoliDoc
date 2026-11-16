@@ -1,0 +1,118 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}{{ documento.titulo }} - POLIDOC{% endblock %}
+
+{% block app_content %}
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap;margin-bottom:1.5rem;">
+  <div>
+    <h1 style="font-size:1.25rem;margin:0;">{{ documento.titulo }}</h1>
+    <p style="color:var(--color-muted);font-size:.875rem;margin:.35rem 0 0;">
+      {% if es_sgc %}Documento sin código · SGC{% else %}Documento personal{% endif %}
+    </p>
+  </div>
+  <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
+    <a class="btn btn--ghost btn--sm"
+       href="{% if es_sgc %}{% url 'documentos:documentos_sgc_sin_codigo' %}{% else %}{% url 'documentos:documentos_personales' %}{% endif %}">
+      <i class="fa-solid fa-arrow-left"></i> Volver
+    </a>
+    {% if puede_editar %}
+    <a class="btn btn--ghost btn--sm"
+       href="{% url 'documentos:documento_sin_codigo_editar' uuid=documento.uuid %}">Editar</a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="detail-card">
+  <div class="detail-header"><h3>Información</h3></div>
+  <div class="detail-body">
+    <div class="detail-row">
+      <span class="detail-label">Ámbito</span>
+      <span class="detail-value">{{ documento.get_ambito_display }}</span>
+    </div>
+    <div class="detail-row">
+      <span class="detail-label">Propietario</span>
+      <span class="detail-value">{{ documento.propietario.get_full_name|default:documento.propietario.username }}</span>
+    </div>
+    {% if es_sgc %}
+    <div class="detail-row">
+      <span class="detail-label">Referencia externa</span>
+      <span class="detail-value">{{ documento.referencia|default:"—" }}</span>
+    </div>
+    <div class="detail-row">
+      <span class="detail-label">Empresa</span>
+      <span class="detail-value">{{ documento.empresa|default:"—" }}</span>
+    </div>
+    <div class="detail-row">
+      <span class="detail-label">Departamento</span>
+      <span class="detail-value">{{ documento.departamento|default:"—" }}</span>
+    </div>
+    <div class="detail-row">
+      <span class="detail-label">Responsable</span>
+      <span class="detail-value">{{ documento.responsable_texto|default:"—" }}</span>
+    </div>
+    <div class="detail-row">
+      <span class="detail-label">Clasificación</span>
+      <span class="detail-value">{{ documento.get_clasificacion_display }}</span>
+    </div>
+    <div class="detail-row">
+      <span class="detail-label">Período de retención</span>
+      <span class="detail-value">{{ documento.periodo_retencion|default:"—" }}</span>
+    </div>
+    <div class="detail-row">
+      <span class="detail-label">Forma de archivo y ubicación</span>
+      <span class="detail-value">{{ documento.ubicacion|default:"—" }}</span>
+    </div>
+    {% endif %}
+    <div class="detail-row">
+      <span class="detail-label">Fecha del documento</span>
+      <span class="detail-value">{{ documento.fecha|date:"d/m/Y"|default:"—" }}</span>
+    </div>
+    <div class="detail-row">
+      <span class="detail-label">Creado</span>
+      <span class="detail-value">{{ documento.creado|date:"d/m/Y H:i" }}</span>
+    </div>
+    {% if documento.descripcion %}
+    <div class="detail-row" style="display:block;">
+      <span class="detail-label">Descripción</span>
+      <p style="margin:.5rem 0 0;font-size:.875rem;white-space:pre-wrap;">{{ documento.descripcion }}</p>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="detail-card">
+  <div class="detail-header"><h3>Archivo</h3></div>
+  <div class="detail-body" style="display:flex;gap:.75rem;flex-wrap:wrap;align-items:center;">
+    {% if documento.archivo %}
+    <a class="btn btn--primary btn--sm"
+       href="{% url 'documentos:documento_sin_codigo_descargar' uuid=documento.uuid %}">
+      <i class="fa-solid fa-download"></i> Descargar archivo
+    </a>
+    <span style="font-size:.8rem;color:var(--color-muted);">{{ documento.archivo.name }}</span>
+    {% else %}
+    <span style="font-size:.85rem;color:var(--color-muted);">Sin archivo.</span>
+    {% endif %}
+  </div>
+</div>
+
+{% if puede_editar %}
+<div class="detail-card">
+  <div class="detail-header"><h3>Eliminar</h3></div>
+  <div class="detail-body">
+    <form method="post"
+          action="{% url 'documentos:documento_sin_codigo_eliminar' uuid=documento.uuid %}"
+          onsubmit="return confirm('¿Eliminar este documento?');">
+      {% csrf_token %}
+      <p style="font-size:.85rem;color:var(--color-muted);margin:0 0 .75rem;">
+        Se ocultará de las bandejas. Los documentos personales pueden eliminarse
+        definitivamente por inactividad.
+      </p>
+      <button type="submit" class="btn btn--danger btn--sm">
+        <i class="fa-solid fa-trash"></i> Eliminar documento
+      </button>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

@@ -688,9 +688,39 @@
                   <a href="{% url 'documentos:detalle' tipo=doc_rel.tipo_id documento_id=doc_rel.uuid %}" style="color: var(--color-primary); text-decoration: none;">
                     <i class="fa-solid fa-link" style="margin-right: 0.5rem;"></i>{{ doc_rel.codigo }} - {{ doc_rel.nombre }}
                   </a>
+                  {% if doc_rel.estado == 'obsoleto' %}
+                  <span class="badge badge--warning" style="margin-left: 0.5rem;">Inactivo</span>
+                  {% endif %}
                 </span>
               </div>
               {% endfor %}
+
+              {% if acta_desincorporacion_abierta %}
+              <div class="alert alert--warning" style="margin-top: 1rem; display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap;">
+                <span>
+                  <i class="fa-solid fa-file-signature"></i>
+                  Hay un acta de desincorporación en curso:
+                  <strong>{{ acta_desincorporacion_abierta.codigo }}</strong>
+                  ({{ acta_desincorporacion_abierta.get_estado_display }}).
+                </span>
+                <a class="btn btn--primary btn--sm" href="{% url 'documentos:acta_desincorporacion' tipo=tipo documento_id=documento.uuid acta_uuid=acta_desincorporacion_abierta.uuid %}">
+                  Reanudar acta
+                </a>
+              </div>
+              {% elif relacionados_desincorporar and puede_gerenciar_acta %}
+              <div class="alert alert--warning" style="margin-top: 1rem; display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap;">
+                <span>
+                  <i class="fa-solid fa-triangle-exclamation"></i>
+                  {{ relacionados_desincorporar|length }} registro(s) relacionado(s)
+                  quedaron inactivos. Puedes generar el acta SGC-FOR-004 para
+                  desincorporarlos.
+                </span>
+                <button type="button" class="btn btn--primary btn--sm"
+                        onclick="document.getElementById('modal-acta-desincorporacion').classList.add('active')">
+                  <i class="fa-solid fa-file-signature"></i> Generar acta
+                </button>
+              </div>
+              {% endif %}
             </div>
           </div>
           {% endif %}
@@ -1235,6 +1265,74 @@
       </div>
       {% endif %}
 
+      <!-- Modal SGC-FOR-004: Acta de desincorporación de archivos inactivos -->
+      {% if relacionados_desincorporar and puede_gerenciar_acta %}
+      <div id="modal-acta-desincorporacion" class="modal">
+        <div class="modal-content" style="background: var(--color-surface); border-radius: var(--radius-lg); padding: 1.5rem; max-width: 720px; width: 100%; box-shadow: var(--shadow-lg); max-height: 90vh; overflow: auto;">
+          <h3 style="margin: 0 0 0.25rem; font-size: 1.05rem;">Generar Acta de Desincorporación</h3>
+          <p style="font-size: 0.8rem; color: var(--color-muted); margin: 0 0 1rem;">
+            SGC-FOR-004 · Se firmará como <strong>Elaborado</strong> por ti y
+            como <strong>Aprobado</strong> por el jefe del departamento.
+            La relación se retira cuando ambas firmas estén registradas.
+          </p>
+          <form method="post" action="{% url 'documentos:crear_acta_desincorporacion' tipo=tipo documento_id=documento.uuid %}">
+            {% csrf_token %}
+
+            <div class="form-group" style="margin-bottom: 1rem;">
+              <label class="form-label">Fecha del acta *</label>
+              <input type="date" name="fecha" class="form-input" value="{{ hoy|date:'Y-m-d' }}" required>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 1rem;">
+              <label class="form-label">Registros inactivos a desincorporar *</label>
+              <div style="border: 1px solid var(--color-border); border-radius: var(--radius); padding: 0.5rem 0.75rem; max-height: 220px; overflow: auto;">
+                {% for rel in relacionados_desincorporar %}
+                <label style="display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0; font-size: 0.85rem;">
+                  <input type="checkbox" name="registros" value="{{ rel.id }}" checked>
+                  <span><strong>{{ rel.codigo }}</strong> — {{ rel.nombre }}</span>
+                </label>
+                {% endfor %}
+              </div>
+              <p class="form-help">Máximo {{ max_registros_acta }} por hoja; se agregan hojas si hace falta.</p>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 1rem;">
+              <label class="form-label">Participantes (máx. {{ max_participantes_acta }})</label>
+              {% for i in "0123" %}
+              <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
+                <input type="text" name="participante_nombre_{{ i }}" class="form-input"
+                       placeholder="Nombre y apellido"
+                       {% if i == '0' %}value="{{ request.user.get_full_name|default:request.user.username }}"{% endif %}>
+                <input type="text" name="participante_cargo_{{ i }}" class="form-input"
+                       placeholder="Cargo"
+                       {% if i == '0' %}value="{{ participante_sugerido_cargo }}"{% endif %}>
+              </div>
+              {% endfor %}
+            </div>
+
+            <div class="form-group" style="margin-bottom: 1.5rem;">
+              <label class="form-label">Firmante Aprobado</label>
+              <select name="aprobado_por" class="form-input">
+                {% for u in usuarios_firma %}
+                <option value="{{ u.id }}" {% if u.id == aprobador_sugerido.id %}selected{% endif %}>
+                  {{ u.get_full_name|default:u.username }}{% if u.email %} — {{ u.email }}{% endif %}
+                </option>
+                {% endfor %}
+              </select>
+              <p class="form-help">Recibirá el acta para firmar (PIN o enlace de correo).</p>
+            </div>
+
+            <div style="display: flex; gap: 0.75rem; justify-content: flex-end;">
+              <button type="button" class="btn btn--ghost" onclick="dismissActaModal()">Ahora no</button>
+              <button type="submit" class="btn btn--primary">
+                <i class="fa-solid fa-file-signature"></i> Generar acta
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+      {% endif %}
+
       <style>
       .modal { display: none; }
       .modal.active {
@@ -1541,6 +1639,26 @@ document.addEventListener('DOMContentLoaded', function() {
 window.addEventListener('pagehide', function() {
   if (_resumenIATimer) { clearTimeout(_resumenIATimer); _resumenIATimer = null; }
 });
+{% endif %}
+
+{% if relacionados_desincorporar and puede_gerenciar_acta %}
+(function () {
+  var modal = document.getElementById('modal-acta-desincorporacion');
+  if (!modal) return;
+  var clave = 'acta-desinc-dismiss-{{ documento.uuid }}';
+  window.dismissActaModal = function () {
+    modal.classList.remove('active');
+    try { sessionStorage.setItem(clave, '1'); } catch (e) {}
+  };
+  // Se muestra una vez por sesión de navegador; "Ahora no" lo silencia.
+  var descartado = false;
+  try { descartado = sessionStorage.getItem(clave) === '1'; } catch (e) {}
+  if (!descartado) {
+    document.addEventListener('DOMContentLoaded', function () {
+      modal.classList.add('active');
+    });
+  }
+})();
 {% endif %}
 
 </script>

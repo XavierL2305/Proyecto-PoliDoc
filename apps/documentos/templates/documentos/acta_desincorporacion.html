@@ -1,0 +1,183 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Acta {{ acta.codigo }} - POLIDOC{% endblock %}
+
+{% block extra_css %}
+<style>
+  .page-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 2rem; flex-wrap: wrap; }
+  .page-header h1 { font-size: 1.5rem; font-weight: 700; color: var(--color-text); margin: 0; }
+  .detail-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); margin-bottom: 1.5rem; }
+  .detail-header { padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--color-border); display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+  .detail-header h3 { font-size: 1rem; font-weight: 600; color: var(--color-text); margin: 0; }
+  .detail-body { padding: 1.5rem; }
+  .detail-row { display: flex; justify-content: space-between; gap: 1rem; padding: 0.75rem 0; border-bottom: 1px solid var(--color-border); }
+  .detail-row:last-child { border-bottom: none; }
+  .detail-label { font-size: 0.875rem; color: var(--color-muted); font-weight: 500; }
+  .detail-value { font-size: 0.875rem; color: var(--color-text); font-weight: 500; text-align: right; }
+  .firma-card { border: 1px solid var(--color-border); border-radius: var(--radius); padding: 1rem 1.25rem; margin-bottom: 0.75rem; background: var(--color-bg); }
+  .firma-card h4 { margin: 0 0 0.5rem; font-size: 0.9rem; font-weight: 600; }
+  .firma-meta { font-size: 0.8rem; color: var(--color-muted); line-height: 1.6; }
+  .firma-acciones { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.75rem; }
+  .registro-item { padding: 0.5rem 0; border-bottom: 1px dashed var(--color-border); font-size: 0.85rem; }
+  .registro-item:last-child { border-bottom: none; }
+</style>
+{% endblock %}
+
+{% block app_content %}
+<div class="page-header">
+  <div>
+    <h1>Acta {{ acta.codigo }}</h1>
+    <p style="font-size: 0.875rem; color: var(--color-muted); margin: 0.25rem 0 0;">
+      SGC-FOR-004 · Acta de desincorporación de archivos inactivos
+    </p>
+  </div>
+  <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+    <span class="badge">{{ acta.get_estado_display }}</span>
+    <a href="{% url 'documentos:detalle' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost btn--sm">
+      <i class="fa-solid fa-arrow-left"></i> Volver al documento
+    </a>
+  </div>
+</div>
+
+{% if acta.estado == 'aplicada' %}
+<div style="margin-bottom: 1.5rem; padding: 1rem; background: var(--color-success-light); border-radius: var(--radius); font-size: 0.875rem;">
+  <i class="fa-solid fa-circle-check"></i>
+  Acta firmada y <strong>aplicada</strong> el {{ acta.aplicada_en|date:"d/m/Y H:i" }}.
+  Las relaciones de los registros fueron retiradas del documento.
+</div>
+{% elif acta.estado == 'anulada' %}
+<div style="margin-bottom: 1.5rem; padding: 1rem; background: var(--color-warning-light); border-radius: var(--radius); font-size: 0.875rem;">
+  <i class="fa-solid fa-ban"></i>
+  Acta <strong>anulada</strong> el {{ acta.anulada_en|date:"d/m/Y H:i" }}.
+  {% if acta.anulada_motivo %}<br>Motivo: {{ acta.anulada_motivo }}{% endif %}
+</div>
+{% endif %}
+
+<div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem; align-items: start;">
+  <div>
+    <div class="detail-card">
+      <div class="detail-header"><h3>Información del acta</h3></div>
+      <div class="detail-body">
+        <div class="detail-row">
+          <span class="detail-label">Documento padre</span>
+          <span class="detail-value">
+            <a href="{% url 'documentos:detalle' tipo=tipo documento_id=documento.uuid %}" style="color: var(--color-primary); text-decoration: none;">
+              {{ acta.documento_codigo }} — {{ acta.documento_nombre }}
+            </a>
+          </span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Departamento</span>
+          <span class="detail-value">{{ acta.departamento_nombre|default:"—" }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Fecha del acta</span>
+          <span class="detail-value">{{ acta.fecha|date:"d/m/Y" }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Creada por</span>
+          <span class="detail-value">{{ acta.creado_por.get_full_name|default:acta.creado_por.username }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Registros</span>
+          <span class="detail-value">{{ registros|length }}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="detail-card">
+      <div class="detail-header"><h3>Participantes</h3></div>
+      <div class="detail-body">
+        {% for p in participantes %}
+        <div class="detail-row">
+          <span class="detail-label">{{ p.nombre }}</span>
+          <span class="detail-value">{{ p.cargo|default:"—" }}</span>
+        </div>
+        {% empty %}
+        <p style="font-size: 0.875rem; color: var(--color-muted);">Sin participantes registrados.</p>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="detail-card">
+      <div class="detail-header"><h3>Registros inactivos</h3></div>
+      <div class="detail-body">
+        {% for r in registros %}
+        <div class="registro-item">
+          <strong>{{ r.codigo }}</strong> — {{ r.nombre }}
+          <span style="color: var(--color-muted);">
+            {% if r.fecha_vencimiento %}(vencimiento {{ r.fecha_vencimiento|date:"d/m/Y" }}){% endif %}
+          </span>
+        </div>
+        {% empty %}
+        <p style="font-size: 0.875rem; color: var(--color-muted);">Sin registros.</p>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="detail-card">
+      <div class="detail-header"><h3>Firmas</h3></div>
+      <div class="detail-body">
+        {% include 'documentos/_firma_acta_bloque.html' with rol='elaborado' titulo='Elaborado por' asignado=acta.elaborado_por firma=acta.firma_elaborado %}
+        {% include 'documentos/_firma_acta_bloque.html' with rol='aprobado' titulo='Aprobado por' asignado=acta.aprobado_por firma=acta.firma_aprobado %}
+
+        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 1rem;">
+          <a href="{% url 'documentos:descarga_acta_desincorporacion' tipo=tipo documento_id=documento.uuid acta_uuid=acta.uuid formato='xlsx' %}" class="btn btn--ghost btn--sm">
+            <i class="fa-solid fa-file-excel"></i> XLSX
+          </a>
+          <a href="{% url 'documentos:descarga_acta_desincorporacion' tipo=tipo documento_id=documento.uuid acta_uuid=acta.uuid formato='pdf' %}" class="btn btn--ghost btn--sm">
+            <i class="fa-solid fa-file-pdf"></i> PDF
+          </a>
+        </div>
+      </div>
+    </div>
+
+    {% if acta.esta_abierta and puede_gerenciar %}
+    <div class="detail-card">
+      <div class="detail-header"><h3>Anular acta</h3></div>
+      <div class="detail-body">
+        <form method="post" action="{% url 'documentos:anular_acta_desincorporacion' tipo=tipo documento_id=documento.uuid acta_uuid=acta.uuid %}">
+          {% csrf_token %}
+          <div class="form-group" style="margin-bottom: 0.75rem;">
+            <label class="form-label">Motivo *</label>
+            <textarea name="motivo" class="form-input" rows="2" required placeholder="Motivo de la anulación..."></textarea>
+          </div>
+          <button type="submit" class="btn btn--danger btn--sm" onclick="return confirm('¿Anular esta acta?')">
+            <i class="fa-solid fa-ban"></i> Anular acta
+          </button>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="detail-card">
+      <div class="detail-header"><h3>Enlaces de firma</h3></div>
+      <div class="detail-body">
+        {% for inv in invitaciones %}
+        <div class="firma-meta" style="margin-bottom: 0.5rem;">
+          {{ inv.firma.firmante_email }} —
+          {% if inv.usado %}usado{% elif inv.esta_vigente %}vence {{ inv.expira|date:"d/m/Y H:i" }}{% else %}vencido{% endif %}
+        </div>
+        {% empty %}
+        <p style="font-size: 0.8rem; color: var(--color-muted);">Sin enlaces enviados.</p>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+async function firmarActa(rol) {
+  const pin = await window.pedirPinFirma('Ingresa tu PIN para firmar como ' + (rol === 'aprobado' ? 'Aprobado' : 'Elaborado') + '.');
+  if (pin === null) return;
+  const form = document.getElementById('form-firmar-' + rol);
+  form.querySelector('input[name="pin"]').value = pin;
+  form.submit();
+}
+</script>
+{% endblock %}

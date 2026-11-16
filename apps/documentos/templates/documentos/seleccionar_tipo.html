@@ -103,4 +103,23 @@
   </a>
   {% endfor %}
 </div>
+
+{% if sin_codigo_opciones %}
+<h2 style="font-size:1rem;margin:2rem 0 .25rem;">Documentos sin código</h2>
+<p style="color:var(--color-muted);font-size:.85rem;margin:0 0 1rem;">
+  Archivos que NO son información documentada controlada por ISO. No llevan
+  código.
+</p>
+<div class="tipo-grid">
+  {% for op in sin_codigo_opciones %}
+  <a href="{% url 'documentos:documento_sin_codigo_crear' ambito=op.ambito %}" class="tipo-card">
+    <div class="tipo-card__icon" style="background: var(--color-{{ op.color }}-light); color: var(--color-{{ op.color }});">
+      <i class="fa-solid fa-{{ op.icono }}"></i>
+    </div>
+    <h3 class="tipo-card__title">{{ op.nombre }}</h3>
+    <p class="tipo-card__desc">{{ op.descripcion }}</p>
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
 {% endblock %}

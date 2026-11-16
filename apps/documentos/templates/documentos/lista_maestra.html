@@ -1,0 +1,219 @@
+{% extends 'base_app.html' %}
+{% load static formato_extras %}
+
+{% block title %}Lista Maestra de Documentos - POLIDOC{% endblock %}
+
+{% block extra_css %}
+<style>
+  .lm-actions { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
+  .lm-wrap { overflow-x: auto; }
+  table.lm { width: 100%; min-width: 1300px; border-collapse: collapse; }
+  table.lm th, table.lm td { border: 1px solid var(--color-border); padding: .3rem .35rem; vertical-align: top; }
+  table.lm th { background: var(--color-bg-alt); font-size: .72rem; text-align: left; position: sticky; top: 0; }
+  table.lm td { font-size: .78rem; }
+  table.lm input, table.lm select, table.lm textarea {
+    width: 100%; box-sizing: border-box; font-size: .78rem; padding: .25rem .3rem;
+    border: 1px solid var(--color-border); border-radius: 4px; background: var(--color-surface);
+    color: var(--color-text);
+  }
+  table.lm textarea { min-height: 2.2rem; resize: vertical; }
+  .lm-row-status { font-size: .68rem; color: var(--color-success); min-height: .9rem; }
+  .lm-toolbar { display: flex; gap: .5rem; justify-content: space-between; flex-wrap: wrap; margin-bottom: 1rem; }
+</style>
+{% endblock %}
+
+{% block app_content %}
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
+  <div>
+    <h1 style="font-size:1.25rem;margin:0;">Lista Maestra de Documentos</h1>
+    <p style="color:var(--color-muted);font-size:.85rem;margin:.35rem 0 0;">
+      SGC-FOR-006 · {{ total_filas }} fila(s). Las columnas automáticas se
+      actualizan al sincronizar; las que edites a mano se conservan.
+    </p>
+  </div>
+  <div class="lm-actions">
+    <form method="post" action="{% url 'documentos:lista_maestra_sincronizar' %}">
+      {% csrf_token %}
+      <button type="submit" class="btn btn--primary btn--sm">
+        <i class="fa-solid fa-arrows-rotate"></i> Sincronizar
+      </button>
+    </form>
+    <form method="post" action="{% url 'documentos:lista_maestra_generar' %}">
+      {% csrf_token %}
+      <button type="submit" class="btn btn--ghost btn--sm">
+        <i class="fa-solid fa-file-arrow-down"></i> Regenerar XLSX/PDF
+      </button>
+    </form>
+    <a class="btn btn--ghost btn--sm"
+       href="{% url 'documentos:lista_maestra_descargar' formato='xlsx' %}">
+      <i class="fa-solid fa-file-excel"></i> XLSX
+    </a>
+    <a class="btn btn--ghost btn--sm"
+       href="{% url 'documentos:lista_maestra_descargar' formato='pdf' %}">
+      <i class="fa-solid fa-file-pdf"></i> PDF
+    </a>
+    {% if puede_gestionar_acceso %}
+    <a class="btn btn--ghost btn--sm"
+       href="{% url 'documentos:lista_maestra_acceso' %}">
+      <i class="fa-solid fa-user-shield"></i> Acceso
+    </a>
+    {% endif %}
+  </div>
+</div>
+
+<form method="get" class="form-card"
+      style="padding:.75rem;margin-bottom:1rem;display:flex;gap:.75rem;flex-wrap:wrap;align-items:flex-end;">
+  <div class="form-group" style="margin:0;flex:1 1 260px;">
+    <label class="form-label">Buscar</label>
+    <input type="text" name="q" value="{{ q }}" class="form-input"
+           placeholder="Código, título, responsable…">
+  </div>
+  <button type="submit" class="btn btn--primary">Filtrar</button>
+</form>
+
+<form method="post" action="{% url 'documentos:lista_maestra_agregar_fila' %}"
+      style="margin:0 0 1rem;">
+  {% csrf_token %}
+  <button type="submit" class="btn btn--ghost btn--sm">
+    <i class="fa-solid fa-plus"></i> Nueva fila
+  </button>
+</form>
+
+{# Datalists de "respuestas recientes" por columna #}
+{% for col in definiciones %}
+{% if col.tipo == 'combo' or col.tipo == 'select' %}
+<datalist id="dl-{{ col.clave }}">
+  {% for op in sugerencias|get_item:col.clave %}<option value="{{ op }}">{% endfor %}
+</datalist>
+{% endif %}
+{% endfor %}
+
+<div class="form-card">
+  <div class="form-card-body" style="padding:0;">
+    <div class="lm-wrap">
+      <table class="lm">
+        <thead>
+          <tr>
+            {% for col in definiciones %}<th>{{ col.etiqueta }}</th>{% endfor %}
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for fila in filas %}
+          {% with clave=fila|get_item:'_clave' %}
+          <tr data-clave="{{ clave }}"
+              data-url="{% url 'documentos:lista_maestra_editar_fila' clave=clave %}">
+            {% for col in definiciones %}
+            {% with valor=fila|get_item:col.clave tipo=col.tipo %}
+            <td>
+              {% if tipo == 'si_no' %}
+              <select data-col="{{ col.clave }}">
+                <option value="si" {% if valor == 'si' %}selected{% endif %}>Interno</option>
+                <option value="no" {% if valor == 'no' %}selected{% endif %}>Externo</option>
+              </select>
+              {% elif tipo == 'fecha' %}
+              <input type="date" data-col="{{ col.clave }}" value="{{ valor|default:'' }}">
+              {% elif tipo == 'textarea' %}
+              <textarea data-col="{{ col.clave }}">{{ valor|default:'' }}</textarea>
+              {% elif tipo == 'select' %}
+              <select data-col="{{ col.clave }}">
+                <option value=""></option>
+                {% for op in col.opciones %}
+                <option value="{{ op }}" {% if valor == op %}selected{% endif %}>{{ op }}</option>
+                {% endfor %}
+              </select>
+              {% elif tipo == 'combo' %}
+              <input type="text" data-col="{{ col.clave }}" list="dl-{{ col.clave }}"
+                     value="{{ valor|default:'' }}">
+              {% else %}
+              <input type="text" data-col="{{ col.clave }}" value="{{ valor|default:'' }}">
+              {% endif %}
+            </td>
+            {% endwith %}
+            {% endfor %}
+            <td style="white-space:nowrap;">
+              <button type="button" class="btn btn--primary btn--sm"
+                      onclick="guardarFila(this)">Guardar</button>
+              {% if fila|get_item:'_origen_tipo' == 'manual' %}
+              <form method="post" style="display:inline;"
+                    action="{% url 'documentos:lista_maestra_eliminar_fila' clave=clave %}"
+                    onsubmit="return confirm('¿Eliminar esta fila?');">
+                {% csrf_token %}
+                <button type="submit" class="btn btn--danger btn--sm" title="Eliminar fila">✕</button>
+              </form>
+              {% endif %}
+              <div class="lm-row-status"></div>
+            </td>
+          </tr>
+          {% endwith %}
+          {% empty %}
+          <tr><td colspan="{{ definiciones|length|add:1 }}"
+                  style="text-align:center;color:var(--color-muted);padding:1.5rem;">
+            No hay filas. Usa “Sincronizar” o “Nueva fila”.
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% if page_obj.has_other_pages %}
+<div style="display:flex;gap:.5rem;justify-content:center;margin-top:1rem;">
+  {% if page_obj.has_previous %}
+  <a class="btn btn--ghost btn--sm" href="?page={{ page_obj.previous_page_number }}&q={{ q }}">Anterior</a>
+  {% endif %}
+  <span class="badge">Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</span>
+  {% if page_obj.has_next %}
+  <a class="btn btn--ghost btn--sm" href="?page={{ page_obj.next_page_number }}&q={{ q }}">Siguiente</a>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if historial %}
+<div class="form-card" style="margin-top:1rem;">
+  <div class="form-card-header"><h3>Historial</h3></div>
+  <div class="form-card-body">
+    {% for log in historial %}
+    <div style="font-size:.78rem;color:var(--color-muted);padding:.2rem 0;border-bottom:1px dashed var(--color-border);">
+      {{ log.timestamp }} · {{ log.accion.tipo }} ·
+      {{ log.usuario.username|default:"sistema" }}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<form id="lm-csrf" style="display:none;">{% csrf_token %}</form>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function _csrf() {
+  var el = document.querySelector('#lm-csrf input[name="csrfmiddlewaretoken"]');
+  return el ? el.value : '';
+}
+
+async function guardarFila(btn) {
+  var tr = btn.closest('tr');
+  var url = tr.getAttribute('data-url');
+  var estado = tr.querySelector('.lm-row-status');
+  var datos = new FormData();
+  tr.querySelectorAll('[data-col]').forEach(function (campo) {
+    datos.append('valor_' + campo.getAttribute('data-col'), campo.value);
+  });
+  if (estado) estado.textContent = 'Guardando…';
+  try {
+    var resp = await fetch(url, {
+      method: 'POST',
+      headers: {'X-CSRFToken': _csrf()},
+      body: datos,
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    if (estado) estado.textContent = 'Guardado';
+  } catch (e) {
+    if (estado) estado.textContent = 'Error al guardar';
+  }
+}
+</script>
+{% endblock %}

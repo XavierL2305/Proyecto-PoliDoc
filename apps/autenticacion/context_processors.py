@@ -17,6 +17,15 @@ URLS_DOCUMENTACION = frozenset({
     'registro_revocar_distribucion', 'registro_constancia',
     'bandeja_aprobaciones',
     'documentos_departamento',
+    'documentos_personales', 'documentos_sgc_sin_codigo',
+    'documento_sin_codigo_crear', 'documento_sin_codigo_detalle',
+    'documento_sin_codigo_editar', 'documento_sin_codigo_eliminar',
+    'documento_sin_codigo_descargar',
+    'lista_maestra', 'lista_maestra_agregar_fila',
+    'lista_maestra_editar_fila', 'lista_maestra_eliminar_fila',
+    'lista_maestra_sincronizar', 'lista_maestra_generar',
+    'lista_maestra_descargar', 'lista_maestra_acceso',
+    'lista_maestra_revocar',
 })
 
 #: ``url_name`` de páginas que pertenecen al grupo "Configuración".
@@ -44,7 +53,13 @@ URLS_CONFIGURACION = frozenset({
 
 
 def navegacion(request):
-    """Agrega ``sidebar_grupo_activo`` (``''``/``documentacion``/``configuracion``)."""
+    """Contexto de la barra lateral.
+
+    Agrega ``sidebar_grupo_activo`` (``''``/``documentacion``/``configuracion``)
+    y las banderas de las bandejas de documentos sin código (la bandeja se
+    muestra solo si hay al menos un registro visible; el botón de crear no
+    depende de esto).
+    """
     match = getattr(request, 'resolver_match', None)
     url_name = (getattr(match, 'url_name', '') or '')
     if url_name in URLS_CONFIGURACION:
@@ -53,4 +68,23 @@ def navegacion(request):
         grupo = 'documentacion'
     else:
         grupo = ''
-    return {'sidebar_grupo_activo': grupo}
+
+    contexto = {'sidebar_grupo_activo': grupo}
+    usuario = getattr(request, 'user', None)
+    if usuario is not None and usuario.is_authenticated:
+        try:
+            from documentos.services import documentos_sin_codigo as svc
+            contexto.update(svc.context_menu(usuario))
+        except Exception:  # noqa: BLE001 - el menú nunca debe romper la página
+            contexto.update({
+                'nav_docs_personales': False,
+                'nav_docs_sgc_sin_codigo': False,
+                'nav_puede_crear_personal': True,
+                'nav_puede_crear_sgc': False,
+            })
+        try:
+            from documentos.services import lista_maestra as lm
+            contexto.update(lm.context_menu(usuario))
+        except Exception:  # noqa: BLE001
+            contexto['nav_lista_maestra'] = False
+    return contexto

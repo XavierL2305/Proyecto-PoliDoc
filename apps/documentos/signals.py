@@ -1,5 +1,6 @@
 import logging
-from django.db.models.signals import post_save, post_delete, pre_save
+from django.contrib.auth.signals import user_logged_in
+from django.db.models.signals import post_save, post_delete, pre_save, pre_delete
 from django.dispatch import receiver
 
 from .models import (
@@ -7,7 +8,7 @@ from .models import (
     AsignacionDocumento, SolicitudAccesoDocumento,
     PlanillaCambios, AprobacionPlanilla,
     Departamento, DistribucionDocumento,
-    TipoDocumento, Periodo,
+    TipoDocumento, Periodo, DocumentoSinCodigo,
 )
 from .cache_utils import (
     invalidar_tipos, invalidar_periodos, invalidar_departamentos,
@@ -95,6 +96,59 @@ def documento_creado_o_editado(sender, instance, created, **kwargs):
 
 
 post_save.connect(documento_creado_o_editado, sender=Documento)
+
+
+# =============================================================================
+# SIGNALS SGC-FOR-004 — ACTA DE DESINCORPORACIÓN
+# =============================================================================
+
+@receiver(post_save, sender=Documento)
+def anular_acta_por_reactivacion(sender, instance, **kwargs):
+    """Anula los actas abiertas que listan ``instance`` como registro.
+
+    Cubre TODAS las rutas que devuelven un documento de ``obsoleto`` a
+    ``activo`` (reactivación, renovación de vencimiento, aprobación de
+    planilla…): el acta ya no describiría la realidad. El pre_save
+    ``capturar_estado_previo`` deja el estado anterior en la instancia.
+    """
+    if kwargs.get('created'):
+        return
+    update_fields = kwargs.get('update_fields')
+    # Un guardado parcial que no toca ``estado`` no puede ser una reactivación
+    # (evita anular por una instancia en memoria desactualizada).
+    if update_fields is not None and 'estado' not in update_fields:
+        return
+    anterior = getattr(instance, '_estado_anterior', None)
+    if anterior != 'obsoleto' or instance.estado == 'obsoleto':
+        return
+    try:
+        from .services.for_004 import anular_por_reactivacion
+
+        anular_por_reactivacion(instance)
+    except Exception as exc:  # noqa: BLE001 - la anulación no rompe el guardado
+        logger.error(
+            'No se pudieron anular actas al reactivar %s: %s',
+            instance.codigo, exc,
+        )
+
+
+@receiver(pre_delete, sender=Documento)
+def anular_acta_por_eliminacion(sender, instance, **kwargs):
+    """Anula actas abiertas cuyo padre o registro es el documento borrado.
+
+    Se usa ``pre_delete`` (no ``post_delete``) porque Django nulifica los FK
+    ``SET_NULL`` del acta **después** de ``pre_delete`` y antes de
+    ``post_delete``: en ``post_delete`` ya no se podría identificar el acta.
+    """
+    try:
+        from .services.for_004 import anular_por_eliminacion
+
+        anular_por_eliminacion(instance)
+    except Exception as exc:  # noqa: BLE001 - la anulación no rompe el borrado
+        logger.error(
+            'No se pudieron anular actas al eliminar %s: %s',
+            instance.codigo, exc,
+        )
 
 
 # =============================================================================
@@ -378,3 +432,152 @@ for _sender, _handler in (
 ):
     post_save.connect(_handler, sender=_sender)
     post_delete.connect(_handler, sender=_sender)
+
+
+# =============================================================================
+# SIGNAL — REINICIO DE AVISOS DE PURGA DE DOCUMENTOS PERSONALES
+# =============================================================================
+
+@receiver(user_logged_in)
+def reiniciar_aviso_purga_personal(sender, request, user, **kwargs):
+    """Al iniciar sesión se reinicia el contador de inactividad de personales."""
+    try:
+        from .models import AvisoPurgaPersonal, DocumentoSinCodigo
+
+        borrados, _ = AvisoPurgaPersonal.objects.filter(usuario=user).delete()
+        if borrados:
+            DocumentoSinCodigo.objects.filter(
+                propietario=user, ambito='personal',
+                marcado_para_eliminar_en__isnull=False,
+            ).update(marcado_para_eliminar_en=None)
+    except Exception as exc:  # noqa: BLE001 - nunca romper el login
+        logger.error(
+            'No se pudo reiniciar el aviso de purga de %s: %s',
+            getattr(user, 'username', user), exc,
+        )
+
+
+# =============================================================================
+# SIGNALS SGC-FOR-006 — LISTA MAESTRA (registro vivo)
+# =============================================================================
+
+def _lista_maestra_habilitada():
+    try:
+        from .services import for_006 as svc
+
+        return svc.formato_for_006() is not None
+    except Exception as exc:  # noqa: BLE001
+        logger.error('No se pudo verificar el formato FOR-006: %s', exc)
+        return False
+
+
+@receiver(post_save, sender=Documento)
+def lista_maestra_documento_guardado(sender, instance, **kwargs):
+    """Inserta/actualiza (o quita) la fila del documento en la Lista Maestra.
+
+    Se ejecuta tras el commit y relee el documento para reflejar su estado
+    final. Nunca genera el XLSX: solo actualiza el registro vivo (JSON).
+    """
+    if not _lista_maestra_habilitada():
+        return
+    from django.db import transaction
+
+    pk = instance.pk
+
+    def _run():
+        try:
+            from .models import Documento as _Documento
+            from .services import for_006 as svc
+
+            documento = _Documento.objects.filter(pk=pk).first()
+            if documento is None:
+                return
+            if documento.es_plantilla or documento.estado != 'activo':
+                svc.quitar_documento(documento)
+            else:
+                svc.upsert_documento(documento)
+        except Exception as exc:  # noqa: BLE001
+            logger.error('Lista Maestra (Documento %s): %s', pk, exc)
+
+    transaction.on_commit(_run)
+
+
+@receiver(post_delete, sender=Documento)
+def lista_maestra_documento_eliminado(sender, instance, **kwargs):
+    if not _lista_maestra_habilitada():
+        return
+    from django.db import transaction
+
+    try:
+        from .services import for_006 as svc
+
+        clave = svc.clave_documento(instance)
+    except Exception as exc:  # noqa: BLE001
+        logger.error('Lista Maestra (clave Documento): %s', exc)
+        return
+
+    def _run():
+        try:
+            from .services import for_006 as svc
+
+            registro = svc.registro_lista_maestra()
+            if registro is not None:
+                svc.quitar_fila(registro, clave)
+        except Exception as exc:  # noqa: BLE001
+            logger.error('Lista Maestra (eliminar %s): %s', clave, exc)
+
+    transaction.on_commit(_run)
+
+
+@receiver(post_save, sender=DocumentoSinCodigo)
+def lista_maestra_sin_codigo_guardado(sender, instance, **kwargs):
+    """Solo los soportes SGC activos entran en la Lista Maestra (Ext)."""
+    if not _lista_maestra_habilitada():
+        return
+    from django.db import transaction
+
+    pk = instance.pk
+
+    def _run():
+        try:
+            from .models import DocumentoSinCodigo as _Modelo
+            from .services import for_006 as svc
+
+            documento = _Modelo.objects.filter(pk=pk).first()
+            if documento is None:
+                return
+            if documento.ambito == 'sgc' and documento.activo:
+                svc.upsert_sin_codigo(documento)
+            else:
+                svc.quitar_sin_codigo(documento)
+        except Exception as exc:  # noqa: BLE001
+            logger.error('Lista Maestra (DocumentoSinCodigo %s): %s', pk, exc)
+
+    transaction.on_commit(_run)
+
+
+@receiver(post_delete, sender=DocumentoSinCodigo)
+def lista_maestra_sin_codigo_eliminado(sender, instance, **kwargs):
+    if not _lista_maestra_habilitada():
+        return
+    from django.db import transaction
+
+    try:
+        from .services import for_006 as svc
+
+        clave = svc.clave_sin_codigo(instance)
+    except Exception as exc:  # noqa: BLE001
+        logger.error('Lista Maestra (clave DocumentoSinCodigo): %s', exc)
+        return
+
+    def _run():
+        try:
+            from .services import for_006 as svc
+
+            registro = svc.registro_lista_maestra()
+            if registro is not None:
+                svc.quitar_fila(registro, clave)
+        except Exception as exc:  # noqa: BLE001
+            logger.error('Lista Maestra (eliminar %s): %s', clave, exc)
+
+    transaction.on_commit(_run)

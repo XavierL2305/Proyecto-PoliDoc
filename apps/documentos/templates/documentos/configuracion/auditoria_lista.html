@@ -116,6 +116,10 @@
     opacity: 0.4;
     pointer-events: none;
   }
+  .filter-group--full { flex-basis: 100%; }
+  .filter-checks { display: flex; gap: .75rem 1.25rem; flex-wrap: wrap; margin-top: .35rem; }
+  .filter-check { display: inline-flex; align-items: center; gap: .35rem; font-size: .85rem; color: var(--color-text); cursor: pointer; }
+  .filter-check input { width: auto; }
 </style>
 {% endblock %}
 
@@ -123,7 +127,7 @@
 <div class="page-header">
   <h1>Auditoría ISO 9001:9.2</h1>
   <div class="actions">
-    <a href="{% url 'documentos:auditoria_reporte_pdf' %}?tipo=registro&fecha_inicio={{ fecha_inicio }}&fecha_fin={{ fecha_fin }}{% if usuario_filtro %}&usuario={{ usuario_filtro }}{% endif %}{% if accion_tipo %}&accion_tipo={{ accion_tipo }}{% endif %}{% if accion_categoria %}&accion_categoria={{ accion_categoria }}{% endif %}" class="btn btn--success btn--sm export-btn">
+    <a href="{% url 'documentos:auditoria_reporte_pdf' %}?tipo=registro&fecha_inicio={{ fecha_inicio }}&fecha_fin={{ fecha_fin }}{% if usuario_filtro %}&usuario={{ usuario_filtro|urlencode }}{% endif %}{% for v in accion_tipo %}&accion_tipo={{ v|urlencode }}{% endfor %}{% for v in accion_categoria %}&accion_categoria={{ v|urlencode }}{% endfor %}" class="btn btn--success btn--sm export-btn">
       <i class="fa-solid fa-file-pdf"></i> Exportar PDF
     </a>
     {% if request.user.perfil.es_administrador %}
@@ -187,17 +191,29 @@
       <input type="text" name="usuario" value="{{ usuario_filtro }}" class="form-input" placeholder="Username">
     </div>
     {% endif %}
-    <div class="filter-group">
+    <div class="filter-group filter-group--full">
       <label>Tipo de Acción</label>
-      <select name="accion_tipo" class="form-input">
-        <option value="">Todas</option>
-        <option value="login" {% if accion_tipo == 'login' %}selected{% endif %}>Login</option>
-        <option value="logout" {% if accion_tipo == 'logout' %}selected{% endif %}>Logout</option>
-        <option value="creacion" {% if accion_tipo == 'creacion' %}selected{% endif %}>Creación</option>
-        <option value="edicion" {% if accion_tipo == 'edicion' %}selected{% endif %}>Edición</option>
-        <option value="eliminacion" {% if accion_tipo == 'eliminacion' %}selected{% endif %}>Eliminación</option>
-        <option value="descarga" {% if accion_tipo == 'descarga' %}selected{% endif %}>Descarga</option>
-      </select>
+      <div class="filter-checks">
+        {% for valor, etiqueta in acciones_disponibles %}
+        <label class="filter-check">
+          <input type="checkbox" name="accion_tipo" value="{{ valor }}"
+                 {% if valor in accion_tipo %}checked{% endif %}>
+          {{ etiqueta }}
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="filter-group filter-group--full">
+      <label>Categoría</label>
+      <div class="filter-checks">
+        {% for valor, etiqueta in categorias_disponibles %}
+        <label class="filter-check">
+          <input type="checkbox" name="accion_categoria" value="{{ valor }}"
+                 {% if valor in accion_categoria %}checked{% endif %}>
+          {{ etiqueta }}
+        </label>
+        {% endfor %}
+      </div>
     </div>
     <button type="submit" class="btn btn--primary btn--sm">
       <i class="fa-solid fa-filter"></i> Filtrar
@@ -261,7 +277,7 @@
 {% if logs.has_other_pages %}
 <div class="pagination">
   {% if logs.has_previous %}
-  <a href="?pagina={{ logs.previous_page_number }}&fecha_inicio={{ fecha_inicio }}&fecha_fin={{ fecha_fin }}&accion_tipo={{ accion_tipo }}{% if usuario_filtro %}&usuario={{ usuario_filtro }}{% endif %}">
+  <a href="?pagina={{ logs.previous_page_number }}&fecha_inicio={{ fecha_inicio }}&fecha_fin={{ fecha_fin }}{% for v in accion_tipo %}&accion_tipo={{ v|urlencode }}{% endfor %}{% for v in accion_categoria %}&accion_categoria={{ v|urlencode }}{% endfor %}{% if usuario_filtro %}&usuario={{ usuario_filtro|urlencode }}{% endif %}">
     <i class="fa-solid fa-chevron-left"></i>
   </a>
   {% else %}
@@ -272,12 +288,12 @@
     {% if logs.number == num %}
     <span class="active">{{ num }}</span>
     {% elif num > logs.number|add:'-3' and num < logs.number|add:'3' %}
-    <a href="?pagina={{ num }}&fecha_inicio={{ fecha_inicio }}&fecha_fin={{ fecha_fin }}&accion_tipo={{ accion_tipo }}{% if usuario_filtro %}&usuario={{ usuario_filtro }}{% endif %}">{{ num }}</a>
+    <a href="?pagina={{ num }}&fecha_inicio={{ fecha_inicio }}&fecha_fin={{ fecha_fin }}{% for v in accion_tipo %}&accion_tipo={{ v|urlencode }}{% endfor %}{% for v in accion_categoria %}&accion_categoria={{ v|urlencode }}{% endfor %}{% if usuario_filtro %}&usuario={{ usuario_filtro|urlencode }}{% endif %}">{{ num }}</a>
     {% endif %}
   {% endfor %}
 
   {% if logs.has_next %}
-  <a href="?pagina={{ logs.next_page_number }}&fecha_inicio={{ fecha_inicio }}&fecha_fin={{ fecha_fin }}&accion_tipo={{ accion_tipo }}{% if usuario_filtro %}&usuario={{ usuario_filtro }}{% endif %}">
+  <a href="?pagina={{ logs.next_page_number }}&fecha_inicio={{ fecha_inicio }}&fecha_fin={{ fecha_fin }}{% for v in accion_tipo %}&accion_tipo={{ v|urlencode }}{% endfor %}{% for v in accion_categoria %}&accion_categoria={{ v|urlencode }}{% endfor %}{% if usuario_filtro %}&usuario={{ usuario_filtro|urlencode }}{% endif %}">
     <i class="fa-solid fa-chevron-right"></i>
   </a>
   {% else %}

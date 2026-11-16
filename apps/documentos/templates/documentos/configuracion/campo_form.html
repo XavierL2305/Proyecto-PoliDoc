@@ -151,6 +151,7 @@
               <th>Etiqueta *</th>
               <th>Clave *</th>
               <th>Tipo</th>
+              <th class="th-col-opciones" style="display:none;">Opciones</th>
               <th class="th-col-celda">Celda (columna)</th>
               <th class="th-col-sino">Celda SI</th>
               <th class="th-col-sino">Celda NO</th>
@@ -226,19 +227,27 @@
       advCols[i].style.display = av ? '' : 'none';
     }
 
-    var hayNormal = false, haySiNo = false;
+    var hayNormal = false, haySiNo = false, hayOpciones = false;
     var filas = document.querySelectorAll('#tabla-columns-body tr');
     for (var j = 0; j < filas.length; j++) {
       var sel = filas[j].querySelector('.col-tipo');
       var esSiNo = !!sel && sel.value === 'si_no';
+      var esOpciones = !!sel && (sel.value === 'combo' || sel.value === 'select');
       hayNormal = hayNormal || !esSiNo;
       haySiNo = haySiNo || esSiNo;
+      hayOpciones = hayOpciones || esOpciones;
       var celdaCell = filas[j].querySelector('.col-celda-cell');
       if (celdaCell) celdaCell.style.display = (av && !esSiNo) ? '' : 'none';
+      var opCell = filas[j].querySelector('.col-opciones-cell');
+      if (opCell) opCell.style.display = (av && esOpciones) ? '' : 'none';
       var siNos = filas[j].querySelectorAll('.col-sino');
       for (var k = 0; k < siNos.length; k++) {
         siNos[k].style.display = (av && esSiNo) ? '' : 'none';
       }
+    }
+    var thOpciones = document.querySelectorAll('.th-col-opciones');
+    for (var o = 0; o < thOpciones.length; o++) {
+      thOpciones[o].style.display = (av && hayOpciones) ? '' : 'none';
     }
     var thCelda = document.querySelectorAll('.th-col-celda');
     for (var m = 0; m < thCelda.length; m++) {
@@ -313,14 +322,20 @@
     var etiqueta = data.etiqueta || '';
     var clave = data.clave || '';
     var celda = data.celda || '';
-    var tipo = data.tipo === 'si_no' ? 'si_no' : '';
+    var tipo = data.tipo || '';
+    var opciones = Array.isArray(data.opciones) ? data.opciones.join(', ') : '';
     row.innerHTML =
       '<td><input type="text" class="form-input col-etag" placeholder="Ej. Actividad" value="' + escHtml(etiqueta) + '"></td>' +
       '<td><input type="text" class="form-input col-clave" placeholder="Ej. actividad" value="' + escHtml(clave) + '"></td>' +
       '<td><select class="form-input col-tipo" onchange="sincronizar()">' +
-        '<option value="">Valor normal</option>' +
+        '<option value="">Texto</option>' +
+        '<option value="textarea">Área de texto</option>' +
+        '<option value="combo">Combo libre + recientes</option>' +
+        '<option value="select">Selección fija</option>' +
+        '<option value="fecha">Fecha</option>' +
         '<option value="si_no">Marca si/no</option>' +
       '</select></td>' +
+      '<td class="col-opciones-cell" style="display:none;"><input type="text" class="form-input col-opciones" placeholder="Opciones separadas por coma" value="' + escHtml(opciones) + '"></td>' +
       '<td class="col-celda-cell" style="display:none;"><input type="text" class="form-input col-celda" placeholder="A" value="' + escHtml(celda) + '"></td>' +
       '<td class="col-sino" style="display:none;"><input type="text" class="form-input col-celda-si" placeholder="G" value="' + escHtml(data.celda_si || '') + '" title="Celda cuando el valor es sí"></td>' +
       '<td class="col-sino" style="display:none;"><input type="text" class="form-input col-celda-no" placeholder="H" value="' + escHtml(data.celda_no || '') + '" title="Celda cuando el valor es no"></td>' +
@@ -432,11 +447,16 @@
             asignar(obj, 'celda_no', row.querySelector('.col-celda-no').value.trim());
             delete obj.celda;
           } else {
-            delete obj.tipo;
+            if (colTipo) { obj.tipo = colTipo; } else { delete obj.tipo; }
             delete obj.celda_si;
             delete obj.celda_no;
             asignar(obj, 'celda', row.querySelector('.col-celda').value.trim());
           }
+          var opInput = row.querySelector('.col-opciones');
+          var ops = (opInput ? opInput.value : '').split(',')
+            .map(function (v) { return v.trim(); })
+            .filter(function (v) { return v; });
+          if (ops.length) { obj.opciones = ops; } else { delete obj.opciones; }
           cols.push(obj);
         });
         var config = Object.assign({}, configOriginal);

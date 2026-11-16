@@ -1,0 +1,109 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}{% if edicion %}Editar{% else %}Nuevo{% endif %} {% if es_sgc %}documento sin código (SGC){% else %}documento personal{% endif %} - POLIDOC{% endblock %}
+
+{% block app_content %}
+<div class="form-card" style="max-width:820px;margin:0 auto;">
+  <div class="form-card-header">
+    <h3>
+      {% if edicion %}Editar{% else %}Nuevo{% endif %}
+      {% if es_sgc %}documento sin código · SGC{% else %}documento personal{% endif %}
+    </h3>
+    <p style="font-size:.8rem;color:var(--color-muted);margin:.35rem 0 0;">
+      {% if es_sgc %}
+      Se registrará como soporte/registro de fuente y aparecerá en la Lista
+      Maestra como origen externo con “N/A”.
+      {% else %}
+      Solo tú podrás verlo. No se incluye en la Lista Maestra.
+      {% endif %}
+    </p>
+  </div>
+  <form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    <div class="form-card-body">
+      {% if form.non_field_errors %}
+      <div class="alert alert--error">{{ form.non_field_errors|join:', ' }}</div>
+      {% endif %}
+
+      <div class="form-group">
+        <label class="form-label">Título <span style="color:var(--color-danger);">*</span></label>
+        {{ form.titulo }}
+        {% if form.titulo.errors %}<p class="form-error">{{ form.titulo.errors|join:', ' }}</p>{% endif %}
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Descripción</label>
+        {{ form.descripcion }}
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">
+          Archivo {% if not edicion %}<span style="color:var(--color-danger);">*</span>{% endif %}
+        </label>
+        {{ form.archivo }}
+        {% if form.archivo.errors %}<p class="form-error">{{ form.archivo.errors|join:', ' }}</p>{% endif %}
+        {% if edicion and form.instance.archivo %}
+        <p class="form-help">Actual: <a href="{% url 'documentos:documento_sin_codigo_descargar' uuid=form.instance.uuid %}">{{ form.instance.archivo.name }}</a></p>
+        {% endif %}
+      </div>
+
+      {% if es_sgc %}
+      <div style="display:flex;gap:1rem;flex-wrap:wrap;">
+        <div class="form-group" style="flex:1 1 220px;">
+          <label class="form-label">Referencia externa</label>
+          {{ form.referencia }}
+        </div>
+        <div class="form-group" style="flex:1 1 220px;">
+          <label class="form-label">Clasificación</label>
+          {{ form.clasificacion }}
+        </div>
+      </div>
+      <div style="display:flex;gap:1rem;flex-wrap:wrap;">
+        <div class="form-group" style="flex:1 1 220px;">
+          <label class="form-label">Empresa</label>
+          {{ form.empresa }}
+        </div>
+        <div class="form-group" style="flex:1 1 220px;">
+          <label class="form-label">Departamento</label>
+          {{ form.departamento }}
+        </div>
+      </div>
+      <div style="display:flex;gap:1rem;flex-wrap:wrap;">
+        <div class="form-group" style="flex:1 1 220px;">
+          <label class="form-label">Responsable</label>
+          {{ form.responsable_texto }}
+        </div>
+        <div class="form-group" style="flex:1 1 160px;">
+          <label class="form-label">Fecha</label>
+          {{ form.fecha }}
+        </div>
+        <div class="form-group" style="flex:1 1 200px;">
+          <label class="form-label">Período de retención</label>
+          {{ form.periodo_retencion }}
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Forma de archivo y ubicación</label>
+        {{ form.ubicacion }}
+      </div>
+      {% else %}
+      <div class="form-group" style="max-width:220px;">
+        <label class="form-label">Fecha</label>
+        {{ form.fecha }}
+      </div>
+      {% endif %}
+    </div>
+    <div class="form-card-footer">
+      {% if edicion %}
+      <a class="btn btn--ghost"
+         href="{% url 'documentos:documento_sin_codigo_detalle' uuid=form.instance.uuid %}">Cancelar</a>
+      {% else %}
+      <a class="btn btn--ghost"
+         href="{% if es_sgc %}{% url 'documentos:documentos_sgc_sin_codigo' %}{% else %}{% url 'documentos:documentos_personales' %}{% endif %}">Cancelar</a>
+      {% endif %}
+      <button type="submit" class="btn btn--primary">Guardar</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

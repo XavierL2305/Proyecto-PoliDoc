@@ -187,6 +187,9 @@ class Notificacion(models.Model):
         ('cambio_vigencia', 'Vigencia Establecida'),
         ('aprobacion_escalada', 'Aprobación Escalada'),
         ('edicion_formato', 'Nueva Edición de Formato'),
+        ('desincorporacion_pendiente', 'Desincorporación Pendiente'),
+        ('desincorporacion_aplicada', 'Desincorporación Aplicada'),
+        ('documento_personal_aviso', 'Aviso de Documentos Personales'),
         ('sistema', 'Sistema'),
     ]
 

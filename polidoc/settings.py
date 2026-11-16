@@ -445,6 +445,17 @@ AUDITORIA_REPORTES_RETENCION_ANIOS = int(
     os.getenv('AUDITORIA_REPORTES_RETENCION_ANIOS', '10')
 )
 
+# Documentos sin código (ámbito personal): avisos y purga por inactividad.
+# A los PERSONAL_DOCS_AVISO_DIAS se avisa al jefe directo (y al usuario por
+# correo); a los PERSONAL_DOCS_SEGUNDO_AVISO_DIAS se reitera; a los
+# PERSONAL_DOCS_PURGE_DIAS se eliminan SOLO los personales. Nunca toca los
+# documentos institucionales (ambito='sgc') ni los documentos ISO.
+PERSONAL_DOCS_AVISO_DIAS = int(os.getenv('PERSONAL_DOCS_AVISO_DIAS', '60'))
+PERSONAL_DOCS_SEGUNDO_AVISO_DIAS = int(
+    os.getenv('PERSONAL_DOCS_SEGUNDO_AVISO_DIAS', '80')
+)
+PERSONAL_DOCS_PURGE_DIAS = int(os.getenv('PERSONAL_DOCS_PURGE_DIAS', '90'))
+
 # Tareas periódicas (Celery Beat)
 CELERY_BEAT_SCHEDULE = {
     'verificar-vencimientos-diario': {
@@ -470,6 +481,10 @@ CELERY_BEAT_SCHEDULE = {
     'purgar-reportes-auditoria': {
         'task': 'auditoria.tasks.purgar_reportes_auditoria',
         'schedule': crontab(hour=2, minute=0),  # 2:00 AM diario
+    },
+    'purgar-documentos-personales': {
+        'task': 'documentos.tasks.purgar_documentos_personales',
+        'schedule': crontab(hour=3, minute=0),  # 3:00 AM diario
     },
 }
 

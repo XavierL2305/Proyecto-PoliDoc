@@ -25,7 +25,7 @@ from .models import (
     RenovacionVencimiento, ReferenciaDocumento, Formato, SeccionFormato, CampoFormato,
     SolicitudCambio, Periodo, FormatoPublicacion, respuestas_planilla_actual,
     DelegacionJefatura, RegistroFormato, FirmaElectronica,
-    DistribucionRegistro,
+    DistribucionRegistro, DocumentoSinCodigo,
 )
 from .forms import (
     DocumentoForm, PlantillaForm, SolicitudDescargaForm, PlanillaCambiosForm,
@@ -38,7 +38,7 @@ from .services.aprobaciones import (
     notificar_planilla_resuelta, resolver_aprobacion_planilla,
     tomar_paso_esperando,
 )
-from .services.firmas import ErrorFirma, firmar
+from .services.firmas import ErrorFirma, VIGENCIA_INVITACION_DIAS, firmar
 from .services.planillas import invalidar_planillas_documento
 from .services.vigencia import calcular_conteos_vigencia
 from .cache_utils import tipos_activos, periodos_activos, departamentos_activos
@@ -243,7 +243,21 @@ def _procesar_referencias(doc, request, perfil):
             )
 
     if relacionados:
-        doc.documentos_relacionados.add(*relacionados)
+        # SGC-FOR-004: no reenlazar registros ya retirados por un acta
+        # aplicada (la evidencia del acta quedaría contradicha).
+        from .services.for_004 import filtrar_relaciones_bloqueadas
+
+        bloqueados = len(relacionados)
+        relacionados = filtrar_relaciones_bloqueadas(doc, relacionados)
+        bloqueados -= len(relacionados)
+        if bloqueados:
+            messages.warning(
+                request,
+                f'{bloqueados} referencia(s) ya fueron desincorporadas por un '
+                f'acta SGC-FOR-004 aplicada y no se volvieron a relacionar.',
+            )
+        if relacionados:
+            doc.documentos_relacionados.add(*relacionados)
     if pendientes:
         ReferenciaDocumento.objects.bulk_create([
             ReferenciaDocumento(
@@ -805,7 +819,36 @@ def seleccionar_tipo(request):
     return render(request, 'documentos/seleccionar_tipo.html', {
         'tipos': tipos_disponibles,
         'es_plantilla': es_plantilla,
+        'sin_codigo_opciones': _opciones_sin_codigo(request.user, es_plantilla),
     })
+
+
+def _opciones_sin_codigo(usuario, es_plantilla):
+    """Tarjetas de "documento sin código" para el selector de tipo."""
+    if es_plantilla:
+        return []
+    from .services import documentos_sin_codigo as svc
+
+    opciones = []
+    if svc.puede_crear(usuario, svc.AMBITO_PERSONAL):
+        opciones.append({
+            'ambito': svc.AMBITO_PERSONAL,
+            'nombre': 'Documento personal',
+            'descripcion': 'Archivo de uso personal. Solo tú lo ves; no entra '
+                           'a la Lista Maestra.',
+            'icono': 'user-lock',
+            'color': 'info',
+        })
+    if svc.puede_crear(usuario, svc.AMBITO_SGC):
+        opciones.append({
+            'ambito': svc.AMBITO_SGC,
+            'nombre': 'Documento sin código (SGC)',
+            'descripcion': 'Soporte o registro de fuente institucional. Se '
+                           'incluye en la Lista Maestra como Ext (N/A).',
+            'icono': 'box-archive',
+            'color': 'warning',
+        })
+    return opciones
 
 
 def _contexto_preview_plantilla(request, tipo, plantilla):
@@ -1580,6 +1623,25 @@ def detalle_documento(request, tipo, documento_id):
     from .permissions import puede_inhabilitar
     puede_inhab, rol_inhab = puede_inhabilitar(request.user, documento)
 
+    # SGC-FOR-004: relacionados obsoletos por desincorporar y acta en curso.
+    from .models import _cargo_usuario
+    from .services import for_004 as svc_for_004
+
+    acta_desincorporacion_abierta = svc_for_004.acta_abierta(documento)
+    relacionados_desincorporar = list(
+        svc_for_004.pendientes_de_desincorporar(documento)
+    )
+    puede_gerenciar_acta = svc_for_004.puede_gerenciar(request.user, documento)
+    aprobador_sugerido = svc_for_004._aprobador_por_defecto(documento, request.user)
+    if relacionados_desincorporar or acta_desincorporacion_abierta:
+        usuarios_firma = list(
+            User.objects.filter(is_active=True).order_by(
+                'first_name', 'last_name', 'username',
+            )
+        )
+    else:
+        usuarios_firma = []
+
     # Solicitudes de cambio de estado todavía sin resolver: si ya hay una
     # en trámite, la ficha muestra un aviso en lugar de ofrecer de nuevo
     # el botón de solicitud (el API devolvería 409 "duplicado").
@@ -1759,6 +1821,14 @@ def detalle_documento(request, tipo, documento_id):
         'pdf_listo': pdf_listo,
         'documentos_relacionados': documentos_relacionados,
         'referencias_pendientes': referencias_pendientes,
+        'acta_desincorporacion_abierta': acta_desincorporacion_abierta,
+        'relacionados_desincorporar': relacionados_desincorporar,
+        'puede_gerenciar_acta': puede_gerenciar_acta,
+        'aprobador_sugerido': aprobador_sugerido,
+        'usuarios_firma': usuarios_firma,
+        'max_participantes_acta': svc_for_004.MAX_PARTICIPANTES,
+        'max_registros_acta': svc_for_004.MAX_REGISTROS_POR_HOJA,
+        'participante_sugerido_cargo': _cargo_usuario(request.user),
         'documentos_llamado_por': documentos_llamado_por,
         'departamentos_afectados': departamentos_afectados,
         'responsables': responsables,
@@ -3814,6 +3884,347 @@ def documento_for_003(request, tipo, documento_id, formato):
     )
 
 
+# ---------------------------------------------------------------------------
+# SGC-FOR-004 — Acta de desincorporación de archivos inactivos
+# ---------------------------------------------------------------------------
+
+def _acta_o_404(tipo, documento_id, acta_uuid):
+    """Busca el acta dentro del documento padre (404 si no coincide)."""
+    from .models import ActaDesincorporacion
+
+    documento = get_documento(tipo, documento_id)
+    if documento is None:
+        raise Http404
+    acta = get_object_or_404(
+        ActaDesincorporacion, uuid=acta_uuid, padre=documento,
+    )
+    return documento, acta
+
+
+def _puede_ver_acta(usuario, documento, acta):
+    """Ver el acta: acceso al padre o ser firmante asignado de esta acta."""
+    from .permissions import puede_ver_documento
+
+    if puede_ver_documento(usuario, documento):
+        return True
+    return bool(usuario and usuario.id in (
+        acta.elaborado_por_id, acta.aprobado_por_id,
+        acta.creado_por_id,
+    ))
+
+
+@login_required(login_url='/login/')
+def acta_desincorporacion(request, tipo, documento_id, acta_uuid):
+    """Ficha del acta SGC-FOR-004: estados, firmas y descargas."""
+    from .models import FirmaCredencial
+    from .services import for_004 as svc_for_004
+
+    documento, acta = _acta_o_404(tipo, documento_id, acta_uuid)
+    if not _puede_ver_acta(request.user, documento, acta):
+        raise Http404
+
+    firmas = FirmaElectronica.para(acta).order_by('-creado')
+    invitaciones = []
+    for firma in firmas:
+        invitaciones.extend(firma.invitaciones.order_by('-creado'))
+
+    return render(request, 'documentos/acta_desincorporacion.html', {
+        'acta': acta,
+        'documento': documento,
+        'tipo': tipo,
+        'participantes': acta.participantes.all(),
+        'registros': acta.registros.order_by('orden', 'id'),
+        'firmas': firmas,
+        'invitaciones': invitaciones,
+        'rol_actual': acta.rol_para(request.user),
+        'puede_gerenciar': svc_for_004.puede_gerenciar(request.user, documento),
+        'credencial': FirmaCredencial.objects.filter(
+            usuario=request.user,
+        ).first(),
+        'pendientes': list(
+            svc_for_004.pendientes_de_desincorporar(documento)
+        ),
+        'estados_abiertos': ('borrador', 'pendiente_firma'),
+    })
+
+
+@login_required(login_url='/login/')
+@require_POST
+def crear_acta_desincorporacion(request, tipo, documento_id):
+    """Crea el acta SGC-FOR-004 desde el modal de la ficha del padre."""
+    from autenticacion.models import Notificacion
+    from django.db import IntegrityError
+
+    from .models import ActaDesincorporacion
+    from .permissions import puede_ver_documento
+    from .services import for_004 as svc_for_004
+
+    documento = get_documento(tipo, documento_id)
+    if documento is None or not puede_ver_documento(request.user, documento):
+        raise Http404
+    if not svc_for_004.puede_gerenciar(request.user, documento):
+        messages.error(
+            request, 'No tienes permisos para generar el acta de desincorporación.',
+        )
+        return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
+
+    participantes = []
+    for i in range(svc_for_004.MAX_PARTICIPANTES):
+        nombre = (request.POST.get(f'participante_nombre_{i}') or '').strip()
+        cargo = (request.POST.get(f'participante_cargo_{i}') or '').strip()
+        if nombre:
+            participantes.append({'nombre': nombre, 'cargo': cargo})
+
+    registro_ids = []
+    for valor in request.POST.getlist('registros'):
+        try:
+            registro_ids.append(int(valor))
+        except (TypeError, ValueError):
+            continue
+
+    fecha = None
+    fecha_cruda = (request.POST.get('fecha') or '').strip()
+    if fecha_cruda:
+        try:
+            fecha = date.fromisoformat(fecha_cruda)
+        except ValueError:
+            messages.error(request, 'La fecha del acta no es válida.')
+            return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
+
+    aprobado_por = None
+    aprobador_id = request.POST.get('aprobado_por')
+    if aprobador_id:
+        aprobado_por = User.objects.filter(
+            pk=aprobador_id, is_active=True,
+        ).first()
+        if aprobado_por is None:
+            messages.error(request, 'El firmante aprobador no es válido.')
+            return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
+
+    try:
+        acta = svc_for_004.crear_acta(
+            padre=documento,
+            participantes=participantes,
+            registro_ids=registro_ids,
+            creado_por=request.user,
+            fecha=fecha,
+            aprobado_por=aprobado_por,
+        )
+    except ValueError as exc:
+        messages.error(request, str(exc))
+        return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
+    except IntegrityError:
+        messages.warning(
+            request,
+            'Ya existe un acta en curso para este documento; se reanuda esa.',
+        )
+        abierta = svc_for_004.acta_abierta(documento)
+        if abierta:
+            return redirect(
+                'documentos:acta_desincorporacion',
+                tipo=tipo, documento_id=documento.uuid, acta_uuid=abierta.uuid,
+            )
+        return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
+
+    resultado = svc_for_004.generar_y_guardar(acta)
+    if not resultado.get('success'):
+        logger.warning('FOR-004 no generado al crear %s: %s',
+                       acta.codigo, resultado.get('error'))
+
+    # Aviso al aprobador (si es otra persona) de que hay un acta por firmar.
+    if acta.aprobado_por_id and acta.aprobado_por_id != request.user.id:
+        Notificacion.objects.create(
+            usuario=acta.aprobado_por,
+            titulo='Acta de desincorporación por aprobar',
+            mensaje=(
+                f'{request.user.get_full_name() or request.user.username} creó '
+                f'el acta {acta.codigo} (SGC-FOR-004) de '
+                f'"{documento.nombre}" ({documento.codigo}) y requiere tu firma '
+                f'como Aprobado.'
+            ),
+            tipo='desincorporacion_pendiente',
+            url_accion=acta.url_descarga,
+            documento=documento,
+            departamento=documento.departamento,
+        )
+
+    messages.success(
+        request,
+        f'Acta {acta.codigo} creada con {acta.registros.count()} registro(s). '
+        f'Faltan las firmas de Elaborado y Aprobado.',
+    )
+    return redirect(
+        'documentos:acta_desincorporacion',
+        tipo=tipo, documento_id=documento.uuid, acta_uuid=acta.uuid,
+    )
+
+
+@login_required(login_url='/login/')
+@require_POST
+def firmar_acta_desincorporacion(request, tipo, documento_id, acta_uuid):
+    """Firma interna (PIN) de un bloque del acta."""
+    documento, acta = _acta_o_404(tipo, documento_id, acta_uuid)
+
+    rol = (request.POST.get('rol') or '').strip()
+    if rol not in ('elaborado', 'aprobado'):
+        messages.error(request, 'Rol de firma no reconocido.')
+        return redirect(
+            'documentos:acta_desincorporacion',
+            tipo=tipo, documento_id=documento.uuid, acta_uuid=acta.uuid,
+        )
+    if acta.rol_para(request.user) != rol:
+        messages.error(request, 'No tienes ese rol pendiente de firma.')
+        return redirect(
+            'documentos:acta_desincorporacion',
+            tipo=tipo, documento_id=documento.uuid, acta_uuid=acta.uuid,
+        )
+
+    try:
+        firmar(
+            acta,
+            usuario=request.user,
+            pin=request.POST.get('pin', ''),
+            request=request,
+            metodo='pin',
+            datos={'rol': rol},
+            crear=True,
+        )
+        messages.success(request, 'Firma electrónica registrada.')
+    except ErrorFirma as exc:
+        messages.error(request, str(exc))
+    return redirect(
+        'documentos:acta_desincorporacion',
+        tipo=tipo, documento_id=documento.uuid, acta_uuid=acta.uuid,
+    )
+
+
+@login_required(login_url='/login/')
+@require_POST
+def invitar_acta_desincorporacion(request, tipo, documento_id, acta_uuid):
+    """Envía por correo el enlace de firma (token, 7 días) a un rol del acta."""
+    from .services import for_004 as svc_for_004
+
+    documento, acta = _acta_o_404(tipo, documento_id, acta_uuid)
+    if not svc_for_004.puede_gerenciar(request.user, documento):
+        messages.error(request, 'No tienes permisos para gestionar este acta.')
+        return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
+
+    rol = (request.POST.get('rol') or '').strip()
+    if rol not in ('elaborado', 'aprobado'):
+        messages.error(request, 'Rol de firma no reconocido.')
+        return redirect(
+            'documentos:acta_desincorporacion',
+            tipo=tipo, documento_id=documento.uuid, acta_uuid=acta.uuid,
+        )
+
+    try:
+        destinatario = svc_for_004.enviar_invitacion_rol(acta, rol, request)
+        messages.success(
+            request,
+            f'Enlace de firma enviado a {destinatario} (válido por '
+            f'{VIGENCIA_INVITACION_DIAS} días, un solo uso).',
+        )
+    except ValueError as exc:
+        messages.error(request, str(exc))
+    return redirect(
+        'documentos:acta_desincorporacion',
+        tipo=tipo, documento_id=documento.uuid, acta_uuid=acta.uuid,
+    )
+
+
+@login_required(login_url='/login/')
+@require_POST
+def anular_acta_desincorporacion(request, tipo, documento_id, acta_uuid):
+    """Anula un acta abierto (borrador o pendiente de firma)."""
+    from .services import for_004 as svc_for_004
+
+    documento, acta = _acta_o_404(tipo, documento_id, acta_uuid)
+    if not svc_for_004.puede_gerenciar(request.user, documento):
+        messages.error(request, 'No tienes permisos para gestionar este acta.')
+        return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
+    if not acta.esta_abierta:
+        messages.warning(request, 'Este acta ya fue cerrado.')
+        return redirect(
+            'documentos:acta_desincorporacion',
+            tipo=tipo, documento_id=documento.uuid, acta_uuid=acta.uuid,
+        )
+
+    motivo = (request.POST.get('motivo') or '').strip()
+    if not motivo:
+        messages.error(request, 'Debes indicar el motivo de la anulación.')
+        return redirect(
+            'documentos:acta_desincorporacion',
+            tipo=tipo, documento_id=documento.uuid, acta_uuid=acta.uuid,
+        )
+    from .models import ActaDesincorporacion
+
+    with transaction.atomic():
+        bloqueada = ActaDesincorporacion.objects.select_for_update().get(pk=acta.pk)
+        if not bloqueada.esta_abierta:
+            messages.warning(request, 'Este acta ya fue cerrado.')
+        else:
+            bloqueada.estado = 'anulada'
+            bloqueada.anulada_en = timezone.now()
+            bloqueada.anulada_motivo = motivo
+            bloqueada.save(update_fields=[
+                'estado', 'anulada_en', 'anulada_motivo', 'actualizado',
+            ])
+            messages.success(
+                request,
+                f'Acta {bloqueada.codigo} anulada. Puedes generar una nueva '
+                f'desde la ficha del documento.',
+            )
+    return redirect(
+        'documentos:acta_desincorporacion',
+        tipo=tipo, documento_id=documento.uuid, acta_uuid=acta.uuid,
+    )
+
+
+@login_required(login_url='/login/')
+def descarga_acta_desincorporacion(request, tipo, documento_id, acta_uuid,
+                                   formato):
+    """Descarga (generando si hace falta) el XLSX/PDF del acta."""
+    from .services import for_004 as svc_for_004
+
+    documento, acta = _acta_o_404(tipo, documento_id, acta_uuid)
+    if not _puede_ver_acta(request.user, documento, acta):
+        raise Http404
+    if formato not in ('xlsx', 'pdf'):
+        raise Http404
+
+    resultado = svc_for_004.generar_y_guardar(acta)
+    if not resultado.get('success'):
+        messages.error(
+            request,
+            resultado.get('error') or 'No se pudo generar el SGC-FOR-004.',
+        )
+        return redirect(
+            'documentos:acta_desincorporacion',
+            tipo=tipo, documento_id=documento.uuid, acta_uuid=acta.uuid,
+        )
+
+    if formato == 'xlsx':
+        return FileResponse(
+            acta.xlsx.open('rb'), as_attachment=True,
+            filename=svc_for_004.nombre_archivo(acta, 'xlsx'),
+        )
+    if not acta.pdf:
+        svc_for_004.generar_y_guardar(acta, forzar=True)
+    if not acta.pdf:
+        messages.error(
+            request,
+            'No se pudo generar el PDF del SGC-FOR-004 (LibreOffice).',
+        )
+        return redirect(
+            'documentos:acta_desincorporacion',
+            tipo=tipo, documento_id=documento.uuid, acta_uuid=acta.uuid,
+        )
+    return FileResponse(
+        acta.pdf.open('rb'), as_attachment=True,
+        filename=svc_for_004.nombre_archivo(acta, 'pdf'),
+    )
+
+
 @login_required(login_url='/login/')
 @transaction.atomic
 def aprobar_planilla(request, planilla_uuid):
@@ -4227,6 +4638,27 @@ def periodo_reactivar(request, periodo_id):
 
 
 
+#: Opciones de los filtros multi-selección de auditoría.
+ACCIONES_AUDITORIA = [
+    ('login', 'Login'),
+    ('logout', 'Logout'),
+    ('creacion', 'Creación'),
+    ('edicion', 'Edición'),
+    ('eliminacion', 'Eliminación'),
+    ('descarga', 'Descarga'),
+]
+CATEGORIAS_AUDITORIA = [
+    ('documento', 'Documento'),
+    ('distribucion', 'Distribución'),
+    ('seguridad', 'Seguridad'),
+    ('automatizacion', 'Automatización'),
+    ('configuracion', 'Configuración'),
+    ('vencimiento', 'Vencimiento'),
+    ('sistema', 'Sistema'),
+    ('inteligencia_artificial', 'IA'),
+]
+
+
 @login_required(login_url='/login/')
 def auditoria_lista(request):
     if not (request.user.perfil.es_administrador or request.user.perfil.es_jefe):
@@ -4238,8 +4670,8 @@ def auditoria_lista(request):
     fecha_inicio = request.GET.get('fecha_inicio')
     fecha_fin = request.GET.get('fecha_fin')
     usuario = request.GET.get('usuario')
-    accion_tipo = request.GET.get('accion_tipo')
-    accion_categoria = request.GET.get('accion_categoria')
+    accion_tipo = request.GET.getlist('accion_tipo')
+    accion_categoria = request.GET.getlist('accion_categoria')
     pagina = request.GET.get('pagina', 1)
     if not fecha_inicio:
         fecha_inicio = (timezone.now() - timedelta(days=7)).strftime('%Y-%m-%d')
@@ -4279,8 +4711,10 @@ def auditoria_lista(request):
         'total_logins': total_logins, 'total_creaciones': total_creaciones,
         'total_ediciones': total_ediciones, 'total_descargas': total_descargas,
         'fecha_inicio': fecha_inicio, 'fecha_fin': fecha_fin,
-        'usuario_filtro': usuario or '', 'accion_tipo': accion_tipo or '',
-        'accion_categoria': accion_categoria or '',
+        'usuario_filtro': usuario or '', 'accion_tipo': accion_tipo,
+        'accion_categoria': accion_categoria,
+        'acciones_disponibles': ACCIONES_AUDITORIA,
+        'categorias_disponibles': CATEGORIAS_AUDITORIA,
         'mongo_disponible': mongo_disponible,
     })
 
@@ -4340,8 +4774,8 @@ def auditoria_reporte_pdf(request):
     fecha_inicio = request.GET.get('fecha_inicio')
     fecha_fin = request.GET.get('fecha_fin')
     filtro_usuario = request.GET.get('usuario', '').strip()
-    filtro_accion = request.GET.get('accion_tipo', '').strip()
-    filtro_categoria = request.GET.get('accion_categoria', '').strip()
+    filtro_accion = request.GET.getlist('accion_tipo')
+    filtro_categoria = request.GET.getlist('accion_categoria')
     formato = request.GET.get('formato', 'letter')
     orientacion = request.GET.get('orientacion', 'landscape')
 
@@ -4431,6 +4865,8 @@ def auditoria_reporte_pdf(request):
     # ── Logs ──
     logs = obtener_logs(
         usuario=filtro_usuario if filtro_usuario else None,
+        accion_tipo=filtro_accion or None,
+        accion_categoria=filtro_categoria or None,
         fecha_inicio=fecha_inicio_dt, fecha_fin=fecha_fin_dt, limite=500
     )
 
@@ -4461,15 +4897,15 @@ def auditoria_reporte_pdf(request):
     if filtro_usuario:
         filtros_texto.append(f'Usuario: {filtro_usuario}')
     if filtro_accion:
-        filtros_texto.append(f'Acción: {filtro_accion}')
+        filtros_texto.append('Acción: ' + ', '.join(filtro_accion))
     if filtro_categoria:
-        filtros_texto.append(f'Categoría: {filtro_categoria}')
+        filtros_texto.append('Categoría: ' + ', '.join(filtro_categoria))
     filtros_str = ', '.join(filtros_texto) if filtros_texto else 'Todos'
     filtros_dict = {
         'tipo': tipo_reporte,
         'usuario': filtro_usuario or None,
-        'accion_tipo': filtro_accion or None,
-        'accion_categoria': filtro_categoria or None,
+        'accion_tipo': ', '.join(filtro_accion) or None,
+        'accion_categoria': ', '.join(filtro_categoria) or None,
     }
 
     # El PDF se genera en memoria y luego se conserva en disco (storage
@@ -5246,7 +5682,9 @@ def firmar_invitacion(request, token):
     **registros** (acuse del SGC-FOR-010); en ambos casos el mismo token
     permite descargar el archivo hasta la caducidad.
     """
-    from .models import DistribucionDocumento, DistribucionRegistro
+    from .models import (
+        ActaDesincorporacion, DistribucionDocumento, DistribucionRegistro,
+    )
     from .services import firmas
     from .services.avisos import aviso_html
 
@@ -5258,6 +5696,7 @@ def firmar_invitacion(request, token):
 
     firma = invitacion.firma
     origen = firma.origen
+    acta = None
     if isinstance(origen, DistribucionDocumento):
         documento = origen.documento
         registro = None
@@ -5270,11 +5709,18 @@ def firmar_invitacion(request, token):
         documento = documento_de_contexto(registro)
         distribucion = origen
         revocada = origen.revocado
+    elif isinstance(origen, ActaDesincorporacion):
+        # SGC-FOR-004: el enlace solo sirve mientras el acta siga abierta.
+        acta = origen
+        documento = origen.padre
+        registro = None
+        distribucion = None
+        revocada = not origen.esta_abierta
     else:
         return render(request, 'documentos/firmar_invitacion.html', {
             'invalida': True,
         }, status=404)
-    if documento is None and registro is None:
+    if documento is None and registro is None and acta is None:
         return render(request, 'documentos/firmar_invitacion.html', {
             'invalida': True,
         }, status=404)
@@ -5284,7 +5730,7 @@ def firmar_invitacion(request, token):
     ).lower()
     contexto_base = {
         'invitacion': invitacion, 'firma': firma, 'documento': documento,
-        'registro': registro, 'distribucion': distribucion,
+        'registro': registro, 'distribucion': distribucion, 'acta': acta,
         'url_descarga': reverse('documentos:descarga_invitacion', args=[token]),
         'aviso_html': aviso_html(clasificacion),
     }
@@ -6323,7 +6769,31 @@ def descarga_invitacion(request, token):
 
     firma = invitacion.firma
     origen = firma.origen
-    from .models import DistribucionDocumento, DistribucionRegistro
+    from .models import (
+        ActaDesincorporacion, DistribucionDocumento, DistribucionRegistro,
+    )
+
+    if isinstance(origen, ActaDesincorporacion):
+        # SGC-FOR-004: el enlace permite descargar el acta hasta caducar.
+        if not origen.esta_abierta and origen.estado != 'aplicada':
+            raise Http404
+        from .services import for_004 as svc_for_004
+
+        resultado = svc_for_004.generar_y_guardar(origen)
+        if not resultado.get('success'):
+            raise Http404
+        archivo = origen.pdf or origen.xlsx
+        if not archivo:
+            raise Http404
+        extension = 'pdf' if origen.pdf else 'xlsx'
+        response = FileResponse(
+            archivo.open('rb'), as_attachment=True,
+            filename=svc_for_004.nombre_archivo(origen, extension),
+        )
+        response['Cache-Control'] = 'no-store, max-age=0'
+        response['Pragma'] = 'no-cache'
+        response['X-Content-Type-Options'] = 'nosniff'
+        return response
 
     if isinstance(origen, DistribucionDocumento):
         if origen.revocado:
@@ -6369,3 +6839,536 @@ def descarga_invitacion(request, token):
     response['Pragma'] = 'no-cache'
     response['X-Content-Type-Options'] = 'nosniff'
     return response
+
+
+# ---------------------------------------------------------------------------
+# Documentos sin código (personal / soportes SGC)
+# ---------------------------------------------------------------------------
+
+def _lista_sin_codigo(request, ambito):
+    """Listado de una bandeja de documentos sin código con filtro simple."""
+    from .services import documentos_sin_codigo as svc
+
+    if ambito not in (svc.AMBITO_PERSONAL, svc.AMBITO_SGC):
+        raise Http404
+    if not svc.puede_crear(request.user, ambito):
+        messages.error(request, 'No tienes permisos para ver esta sección.')
+        return redirect('documentos:mis_documentos')
+
+    qs = svc.visibles(request.user, ambito)
+    q = (request.GET.get('q') or '').strip()
+    if q:
+        qs = qs.filter(Q(titulo__icontains=q) | Q(referencia__icontains=q))
+    page = Paginator(qs.order_by('-creado'), 20).get_page(request.GET.get('page', 1))
+    return render(request, 'documentos/documentos_sin_codigo_lista.html', {
+        'ambito': ambito,
+        'es_sgc': ambito == svc.AMBITO_SGC,
+        'documentos': page,
+        'page_obj': page,
+        'q': q,
+        'puede_crear': True,
+    })
+
+
+@login_required(login_url='/login/')
+def documentos_personales(request):
+    """Bandeja 'Mis documentos personales' (solo los del usuario)."""
+    return _lista_sin_codigo(request, 'personal')
+
+
+@login_required(login_url='/login/')
+def documentos_sgc_sin_codigo(request):
+    """Bandeja de soportes/registros institucionales sin código (admin/jefe)."""
+    return _lista_sin_codigo(request, 'sgc')
+
+
+def _form_sin_codigo(request, ambito, documento=None):
+    """Alta/edición compartida de un documento sin código."""
+    from .forms import DocumentoSinCodigoForm
+    from .services import documentos_sin_codigo as svc
+
+    if ambito not in (svc.AMBITO_PERSONAL, svc.AMBITO_SGC):
+        raise Http404
+    if not svc.puede_crear(request.user, ambito):
+        messages.error(request, 'No tienes permisos para crear ese documento.')
+        return redirect('documentos:mis_documentos')
+
+    if request.method == 'POST':
+        form = DocumentoSinCodigoForm(
+            request.POST, request.FILES, instance=documento, ambito=ambito,
+        )
+        if form.is_valid():
+            doc = form.save(commit=False)
+            doc.ambito = ambito
+            if documento is None:
+                doc.propietario = request.user
+                doc.creado_por = request.user
+            doc.save()
+            messages.success(
+                request,
+                'Documento guardado correctamente.'
+                if documento is not None else 'Documento creado correctamente.',
+            )
+            return redirect(
+                'documentos:documento_sin_codigo_detalle', uuid=doc.uuid,
+            )
+    else:
+        form = DocumentoSinCodigoForm(instance=documento, ambito=ambito)
+
+    return render(request, 'documentos/documentos_sin_codigo_form.html', {
+        'form': form,
+        'ambito': ambito,
+        'es_sgc': ambito == svc.AMBITO_SGC,
+        'documento': documento,
+        'edicion': documento is not None,
+    })
+
+
+@login_required(login_url='/login/')
+def documento_sin_codigo_crear(request, ambito):
+    return _form_sin_codigo(request, ambito, documento=None)
+
+
+@login_required(login_url='/login/')
+def documento_sin_codigo_detalle(request, uuid):
+    from .services import documentos_sin_codigo as svc
+
+    documento = get_object_or_404(DocumentoSinCodigo, uuid=uuid, activo=True)
+    if not svc.puede_ver(request.user, documento):
+        raise Http404
+    return render(request, 'documentos/documentos_sin_codigo_detalle.html', {
+        'documento': documento,
+        'es_sgc': documento.ambito == svc.AMBITO_SGC,
+        'puede_editar': svc.puede_editar(request.user, documento),
+    })
+
+
+@login_required(login_url='/login/')
+def documento_sin_codigo_editar(request, uuid):
+    from .services import documentos_sin_codigo as svc
+
+    documento = get_object_or_404(DocumentoSinCodigo, uuid=uuid, activo=True)
+    if not svc.puede_editar(request.user, documento):
+        raise Http404
+    return _form_sin_codigo(request, documento.ambito, documento=documento)
+
+
+@login_required(login_url='/login/')
+@require_POST
+def documento_sin_codigo_eliminar(request, uuid):
+    from .services import documentos_sin_codigo as svc
+
+    documento = get_object_or_404(DocumentoSinCodigo, uuid=uuid, activo=True)
+    if not svc.puede_eliminar(request.user, documento):
+        raise Http404
+    documento.activo = False
+    documento.eliminado_en = timezone.now()
+    documento.save(update_fields=['activo', 'eliminado_en', 'actualizado'])
+    messages.success(request, 'Documento eliminado.')
+    if documento.ambito == svc.AMBITO_SGC:
+        return redirect('documentos:documentos_sgc_sin_codigo')
+    return redirect('documentos:documentos_personales')
+
+
+@login_required(login_url='/login/')
+def documento_sin_codigo_descargar(request, uuid):
+    from .services import documentos_sin_codigo as svc
+
+    documento = get_object_or_404(DocumentoSinCodigo, uuid=uuid, activo=True)
+    if not svc.puede_ver(request.user, documento) or not documento.archivo:
+        raise Http404
+    return FileResponse(
+        documento.archivo.open('rb'), as_attachment=True,
+        filename=os.path.basename(documento.archivo.name),
+    )
+
+
+# ---------------------------------------------------------------------------
+# SGC-FOR-006 — Lista Maestra (vista exclusiva)
+# ---------------------------------------------------------------------------
+
+def _registro_lista(crear=False, usuario=None):
+    from .services import for_006 as svc
+
+    return svc.registro_lista_maestra(crear=crear, responsable=usuario)
+
+
+def _auditar_lista(request, registro, accion, detalles=None):
+    """Auditoría ISO de las acciones de la Lista Maestra (no rompe nada)."""
+    try:
+        from auditoria.services import registrar_log_iso
+
+        registrar_log_iso(
+            usuario=request.user,
+            accion_tipo=accion,
+            accion_categoria='documento',
+            recurso_tipo='lista_maestra',
+            recurso_id=str(getattr(registro, 'pk', '')),
+            recurso_codigo='SGC-FOR-006',
+            recurso_nombre='Lista Maestra de Documentos',
+            detalles=detalles or {},
+            resultado_exitoso=True,
+            resultado_mensaje=accion,
+            ip_address=request.META.get('REMOTE_ADDR'),
+            user_agent=request.META.get('HTTP_USER_AGENT', ''),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error('Auditoría Lista Maestra: %s', exc)
+
+
+def _historial_lista(registro):
+    try:
+        from auditoria.services import obtener_logs
+
+        return obtener_logs(
+            recurso_tipo='lista_maestra', recurso_id=str(registro.pk), limite=15,
+        )
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _iso_fecha(valor):
+    texto = str(valor or '').strip()
+    if not texto:
+        return ''
+    if len(texto) >= 10 and texto[4] == '-':
+        return texto[:10]
+    partes = texto.split('/')
+    if len(partes) == 3:
+        try:
+            return (
+                f'{int(partes[2]):04d}-{int(partes[1]):02d}-{int(partes[0]):02d}'
+            )
+        except (TypeError, ValueError):
+            return texto
+    return texto
+
+
+def _sugerencias(filas, definiciones):
+    """Valores recientes por columna (más recientes primero) + opciones."""
+    sugerencias = {}
+    for col in definiciones:
+        clave = col.get('clave')
+        if not clave:
+            continue
+        vistos = []
+        vistos_set = set()
+        for opcion in (col.get('opciones') or []):
+            opcion = str(opcion)
+            if opcion and opcion not in vistos_set:
+                vistos_set.add(opcion)
+                vistos.append(opcion)
+        for fila in reversed(filas):
+            valor = fila.get(clave)
+            if valor is None:
+                continue
+            valor = str(valor)
+            if valor and valor not in vistos_set:
+                vistos_set.add(valor)
+                vistos.append(valor)
+        sugerencias[clave] = vistos[:50]
+    return sugerencias
+
+
+@login_required(login_url='/login/')
+def lista_maestra(request):
+    from .services import for_006 as svc
+    from .services import lista_maestra as acceso
+
+    if not acceso.puede_ver_lista(request.user):
+        messages.error(request, 'No tienes acceso a la Lista Maestra.')
+        return redirect('documentos:mis_documentos')
+    formato = svc.formato_for_006()
+    if formato is None:
+        messages.error(
+            request, 'La Lista Maestra (SGC-FOR-006) no está integrada.',
+        )
+        return redirect('documentos:formatos_lista')
+
+    registro = _registro_lista(crear=True, usuario=request.user)
+    if registro is None:
+        messages.error(request, 'No se pudo abrir el registro de la Lista Maestra.')
+        return redirect('documentos:mis_documentos')
+
+    definiciones = svc.columnas(formato)
+    todas = svc.filas(registro)
+
+    q = (request.GET.get('q') or '').strip()
+    visibles = todas
+    if q:
+        buscado = q.lower()
+        claves = [c.get('clave') for c in definiciones if c.get('clave')]
+        visibles = [
+            fila for fila in todas
+            if any(buscado in str(fila.get(k, '')).lower() for k in claves)
+        ]
+    page = Paginator(visibles, 50).get_page(request.GET.get('page', 1))
+
+    # Convertir fechas (dd/mm/aaaa legacy) a ISO para el input type=date.
+    filas_render = []
+    for fila in page.object_list:
+        copia = dict(fila)
+        for col in definiciones:
+            if col.get('tipo') == 'fecha':
+                clave = col.get('clave')
+                copia[clave] = _iso_fecha(fila.get(clave))
+        filas_render.append(copia)
+
+    return render(request, 'documentos/lista_maestra.html', {
+        'registro': registro,
+        'formato': formato,
+        'definiciones': definiciones,
+        'filas': filas_render,
+        'page_obj': page,
+        'q': q,
+        'sugerencias': _sugerencias(todas, definiciones),
+        'es_admin': acceso.es_administrador(request.user),
+        'puede_gestionar_acceso': acceso.puede_gestionar_acceso(request.user),
+        'historial': _historial_lista(registro),
+        'total_filas': len(todas),
+    })
+
+
+@login_required(login_url='/login/')
+@require_POST
+def lista_maestra_editar_fila(request, clave):
+    from django.db import transaction
+    from .models import RegistroFormato
+    from .services import for_006 as svc
+    from .services import lista_maestra as acceso
+
+    if not acceso.puede_ver_lista(request.user):
+        return JsonResponse({'ok': False, 'error': 'sin_permiso'}, status=403)
+    registro = _registro_lista(crear=True, usuario=request.user)
+    if registro is None:
+        return JsonResponse({'ok': False, 'error': 'sin_registro'}, status=400)
+
+    definiciones = svc.columnas(registro.formato)
+    with transaction.atomic():
+        bloqueado = RegistroFormato.objects.select_for_update().get(pk=registro.pk)
+        filas = svc.filas(bloqueado)
+        fila = next(
+            (f for f in filas if f.get('_clave') == clave), None,
+        )
+        if fila is None:
+            return JsonResponse({'ok': False, 'error': 'no_encontrada'}, status=404)
+        manual = set(fila.get('_manual') or [])
+        for col in definiciones:
+            nombre = col.get('clave')
+            if not nombre:
+                continue
+            nuevo = request.POST.get(f'valor_{nombre}')
+            if nuevo is None:
+                continue
+            nuevo = nuevo.strip() if isinstance(nuevo, str) else nuevo
+            if fila.get(nombre) != nuevo:
+                fila[nombre] = nuevo
+                manual.add(nombre)
+        fila['_manual'] = sorted(manual)
+        bloqueado.respuestas = {
+            **(bloqueado.respuestas or {}), 'documentos': filas,
+        }
+        bloqueado.save(update_fields=['respuestas', 'actualizado'])
+
+    _auditar_lista(request, registro, 'lista_maestra_edicion', {'clave': clave})
+    return JsonResponse({'ok': True})
+
+
+@login_required(login_url='/login/')
+@require_POST
+def lista_maestra_agregar_fila(request):
+    from .services import for_006 as svc
+    from .services import lista_maestra as acceso
+
+    if not acceso.puede_ver_lista(request.user):
+        messages.error(request, 'No tienes acceso a la Lista Maestra.')
+        return redirect('documentos:mis_documentos')
+    registro = _registro_lista(crear=True, usuario=request.user)
+    if registro is not None:
+        valores = {}
+        for col in svc.columnas(registro.formato):
+            clave = col.get('clave')
+            if clave and request.POST.get(f'valor_{clave}') is not None:
+                valores[clave] = (request.POST.get(f'valor_{clave}') or '').strip()
+        svc.agregar_fila_manual(registro, valores, usuario=request.user)
+        _auditar_lista(request, registro, 'lista_maestra_fila_nueva', valores)
+        messages.success(request, 'Fila agregada. Complétala y guarda los cambios.')
+    return redirect('documentos:lista_maestra')
+
+
+@login_required(login_url='/login/')
+@require_POST
+def lista_maestra_eliminar_fila(request, clave):
+    from .services import for_006 as svc
+    from .services import lista_maestra as acceso
+
+    if not acceso.puede_ver_lista(request.user):
+        messages.error(request, 'No tienes acceso a la Lista Maestra.')
+        return redirect('documentos:mis_documentos')
+    registro = _registro_lista()
+    if registro is not None:
+        fila = next(
+            (f for f in svc.filas(registro) if f.get('_clave') == clave), None,
+        )
+        if fila is None or fila.get('_origen_tipo') != svc.ORIGEN_MANUAL:
+            messages.warning(
+                request,
+                'Solo se pueden eliminar filas agregadas a mano; las que vienen '
+                'de documentos se quitan al marcarlos como obsoletos.',
+            )
+        else:
+            svc.quitar_fila(registro, clave)
+            _auditar_lista(request, registro, 'lista_maestra_fila_eliminada',
+                           {'clave': clave})
+            messages.success(request, 'Fila eliminada.')
+    return redirect('documentos:lista_maestra')
+
+
+@login_required(login_url='/login/')
+@require_POST
+def lista_maestra_sincronizar(request):
+    from .services import for_006 as svc
+    from .services import lista_maestra as acceso
+
+    if not acceso.puede_ver_lista(request.user):
+        messages.error(request, 'No tienes acceso a la Lista Maestra.')
+        return redirect('documentos:mis_documentos')
+    registro = _registro_lista(crear=True, usuario=request.user)
+    if registro is None:
+        messages.error(request, 'No se pudo abrir la Lista Maestra.')
+        return redirect('documentos:formatos_lista')
+    resumen = svc.sincronizar(registro, modo='combinar', usuario=request.user)
+    if resumen.get('error'):
+        messages.error(request, resumen['error'])
+    else:
+        _auditar_lista(request, registro, 'lista_maestra_sincronizacion', resumen)
+        messages.success(
+            request,
+            f"Lista sincronizada: {resumen['agregados']} agregados, "
+            f"{resumen['actualizados']} actualizados, "
+            f"{resumen['eliminados']} retirados.",
+        )
+    return redirect('documentos:lista_maestra')
+
+
+@login_required(login_url='/login/')
+@require_POST
+def lista_maestra_generar(request):
+    from .services import for_006 as svc
+    from .services import lista_maestra as acceso
+
+    if not acceso.puede_ver_lista(request.user):
+        messages.error(request, 'No tienes acceso a la Lista Maestra.')
+        return redirect('documentos:mis_documentos')
+    registro = _registro_lista(crear=True, usuario=request.user)
+    if registro is None:
+        messages.error(request, 'No se pudo abrir la Lista Maestra.')
+        return redirect('documentos:formatos_lista')
+    resultado = svc.generar_y_guardar(registro, forzar=True)
+    if not resultado.get('success'):
+        messages.error(
+            request,
+            resultado.get('error') or 'No se pudo generar la Lista Maestra.',
+        )
+    else:
+        _auditar_lista(request, registro, 'lista_maestra_generacion')
+        messages.success(request, 'XLSX/PDF actualizados.')
+    return redirect('documentos:lista_maestra')
+
+
+@login_required(login_url='/login/')
+def lista_maestra_descargar(request, formato):
+    from .services import for_006 as svc
+    from .services import lista_maestra as acceso
+
+    if not acceso.puede_ver_lista(request.user):
+        raise Http404
+    if formato not in ('xlsx', 'pdf'):
+        raise Http404
+    registro = _registro_lista(crear=True, usuario=request.user)
+    if registro is None:
+        raise Http404
+
+    if formato == 'xlsx':
+        if not registro.archivo:
+            svc.generar_y_guardar(registro, forzar=True)
+        if not registro.archivo:
+            messages.error(request, 'No se pudo generar el XLSX.')
+            return redirect('documentos:lista_maestra')
+        return FileResponse(
+            registro.archivo.open('rb'), as_attachment=True,
+            filename=svc.nombre_archivo(registro, 'xlsx'),
+        )
+
+    if not registro.archivo_pdf:
+        svc.generar_y_guardar(registro, forzar=True)
+    if not registro.archivo_pdf:
+        messages.error(
+            request, 'No se pudo generar el PDF (LibreOffice).',
+        )
+        return redirect('documentos:lista_maestra')
+    return FileResponse(
+        registro.archivo_pdf.open('rb'), as_attachment=True,
+        filename=svc.nombre_archivo(registro, 'pdf'),
+    )
+
+
+@login_required(login_url='/login/')
+def lista_maestra_acceso(request):
+    from django.contrib.auth.models import User
+    from .services import lista_maestra as acceso
+
+    if not acceso.puede_gestionar_acceso(request.user):
+        messages.error(request, 'Solo el administrador gestiona estos accesos.')
+        return redirect('documentos:lista_maestra')
+    registro = _registro_lista(crear=True, usuario=request.user)
+
+    if request.method == 'POST':
+        usuario = User.objects.filter(
+            pk=request.POST.get('usuario_id'), is_active=True,
+        ).first()
+        if usuario is None:
+            messages.error(request, 'Selecciona un usuario válido.')
+        else:
+            acceso.otorgar(usuario, otorgado_por=request.user)
+            _auditar_lista(request, registro, 'lista_maestra_acceso_otorgado', {
+                'usuario_id': usuario.id, 'username': usuario.username,
+            })
+            messages.success(
+                request,
+                f'Acceso otorgado a {usuario.get_full_name() or usuario.username}.',
+            )
+        return redirect('documentos:lista_maestra_acceso')
+
+    concesiones = acceso.concesiones()
+    otorgados = set(concesiones.values_list('usuario_id', flat=True))
+    usuarios = User.objects.filter(is_active=True).exclude(
+        id__in=list(otorgados),
+    ).order_by('first_name', 'last_name', 'username')
+    return render(request, 'documentos/lista_maestra_acceso.html', {
+        'registro': registro,
+        'concesiones': concesiones,
+        'usuarios': usuarios,
+    })
+
+
+@login_required(login_url='/login/')
+@require_POST
+def lista_maestra_revocar(request, usuario_id):
+    from django.contrib.auth.models import User
+    from .services import lista_maestra as acceso
+
+    if not acceso.puede_gestionar_acceso(request.user):
+        messages.error(request, 'Solo el administrador gestiona estos accesos.')
+        return redirect('documentos:lista_maestra')
+    usuario = get_object_or_404(User, pk=usuario_id)
+    if acceso.revocar(usuario):
+        registro = _registro_lista()
+        _auditar_lista(request, registro, 'lista_maestra_acceso_revocado', {
+            'usuario_id': usuario.id, 'username': usuario.username,
+        })
+        messages.success(
+            request,
+            f'Acceso revocado a {usuario.get_full_name() or usuario.username}.',
+        )
+    return redirect('documentos:lista_maestra_acceso')

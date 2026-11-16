@@ -1201,6 +1201,22 @@ def verificar_cadena_auditoria(limite=1000):
 # CONSULTA DE LOGS (ACTUALIZADA)
 # =============================================================================
 
+def _filtro_multiple(valor):
+    """Normaliza un filtro simple o múltiple a una lista (o ``None``)."""
+    if valor is None:
+        return None
+    if isinstance(valor, (list, tuple, set, frozenset)):
+        valores = [str(v).strip() for v in valor if str(v).strip()]
+        return valores or None
+    texto = str(valor).strip()
+    return [texto] if texto else None
+
+
+def _condicion_mongo(valores):
+    """``$in`` para varios valores; igualdad para uno solo."""
+    return valores[0] if len(valores) == 1 else {'$in': valores}
+
+
 def obtener_logs(usuario=None, recurso_tipo=None, recurso_id=None,
                  accion_tipo=None, accion_categoria=None,
                  fecha_inicio=None, fecha_fin=None,
@@ -1208,10 +1224,16 @@ def obtener_logs(usuario=None, recurso_tipo=None, recurso_id=None,
     """
     Consulta logs de auditoría con filtros opcionales.
     Retorna logs ordenados por timestamp descendente.
+
+    ``accion_tipo`` y ``accion_categoria`` aceptan un valor o una lista; con
+    varios valores se filtra con ``$in`` (checkboxes multi-selección).
     """
     try:
         db = get_mongo_client()
         query = {}
+
+        tipos = _filtro_multiple(accion_tipo)
+        categorias = _filtro_multiple(accion_categoria)
 
         if usuario:
             query['usuario.username'] = usuario
@@ -1219,10 +1241,10 @@ def obtener_logs(usuario=None, recurso_tipo=None, recurso_id=None,
             query['recurso.tipo'] = recurso_tipo
         if recurso_id:
             query['recurso.id'] = recurso_id
-        if accion_tipo:
-            query['accion.tipo'] = accion_tipo
-        if accion_categoria:
-            query['accion.categoria'] = accion_categoria
+        if tipos:
+            query['accion.tipo'] = _condicion_mongo(tipos)
+        if categorias:
+            query['accion.categoria'] = _condicion_mongo(categorias)
         if correlation_id:
             query['correlation_id'] = correlation_id
         if fecha_inicio or fecha_fin:
