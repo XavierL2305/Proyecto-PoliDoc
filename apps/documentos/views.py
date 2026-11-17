@@ -7207,6 +7207,7 @@ def lista_maestra(request):
         'q': q,
         'sugerencias': _sugerencias(todas, definiciones),
         'es_admin': acceso.es_administrador(request.user),
+        'puede_editar': acceso.puede_editar_lista(request.user),
         'puede_gestionar_acceso': acceso.puede_gestionar_acceso(request.user),
         'historial': _historial_lista(registro),
         'total_filas': len(todas),
@@ -7221,7 +7222,7 @@ def lista_maestra_editar_fila(request, clave):
     from .services import for_006 as svc
     from .services import lista_maestra as acceso
 
-    if not acceso.puede_ver_lista(request.user):
+    if not acceso.puede_editar_lista(request.user):
         return JsonResponse({'ok': False, 'error': 'sin_permiso'}, status=403)
     registro = _registro_lista(crear=True, usuario=request.user)
     if registro is None:
@@ -7264,7 +7265,7 @@ def lista_maestra_agregar_fila(request):
     from .services import for_006 as svc
     from .services import lista_maestra as acceso
 
-    if not acceso.puede_ver_lista(request.user):
+    if not acceso.puede_editar_lista(request.user):
         messages.error(request, 'No tienes acceso a la Lista Maestra.')
         return redirect('documentos:mis_documentos')
     registro = _registro_lista(crear=True, usuario=request.user)
@@ -7286,7 +7287,7 @@ def lista_maestra_eliminar_fila(request, clave):
     from .services import for_006 as svc
     from .services import lista_maestra as acceso
 
-    if not acceso.puede_ver_lista(request.user):
+    if not acceso.puede_editar_lista(request.user):
         messages.error(request, 'No tienes acceso a la Lista Maestra.')
         return redirect('documentos:mis_documentos')
     registro = _registro_lista()
@@ -7314,7 +7315,7 @@ def lista_maestra_sincronizar(request):
     from .services import for_006 as svc
     from .services import lista_maestra as acceso
 
-    if not acceso.puede_ver_lista(request.user):
+    if not acceso.puede_editar_lista(request.user):
         messages.error(request, 'No tienes acceso a la Lista Maestra.')
         return redirect('documentos:mis_documentos')
     registro = _registro_lista(crear=True, usuario=request.user)
@@ -7341,7 +7342,7 @@ def lista_maestra_generar(request):
     from .services import for_006 as svc
     from .services import lista_maestra as acceso
 
-    if not acceso.puede_ver_lista(request.user):
+    if not acceso.puede_editar_lista(request.user):
         messages.error(request, 'No tienes acceso a la Lista Maestra.')
         return redirect('documentos:mis_documentos')
     registro = _registro_lista(crear=True, usuario=request.user)
@@ -7414,13 +7415,18 @@ def lista_maestra_acceso(request):
         if usuario is None:
             messages.error(request, 'Selecciona un usuario válido.')
         else:
-            acceso.otorgar(usuario, otorgado_por=request.user)
+            nivel = request.POST.get('nivel') or 'editar'
+            acceso.otorgar(
+                usuario, otorgado_por=request.user, nivel=nivel,
+            )
             _auditar_lista(request, registro, 'lista_maestra_acceso_otorgado', {
                 'usuario_id': usuario.id, 'username': usuario.username,
+                'nivel': nivel,
             })
             messages.success(
                 request,
-                f'Acceso otorgado a {usuario.get_full_name() or usuario.username}.',
+                f'Acceso otorgado a {usuario.get_full_name() or usuario.username} '
+                f'({nivel}).',
             )
         return redirect('documentos:lista_maestra_acceso')
 
@@ -7456,3 +7462,460 @@ def lista_maestra_revocar(request, usuario_id):
             f'Acceso revocado a {usuario.get_full_name() or usuario.username}.',
         )
     return redirect('documentos:lista_maestra_acceso')
+
+
+# ---------------------------------------------------------------------------
+# SGC-FOR-007 — Programa de Revisión por la Dirección
+# ---------------------------------------------------------------------------
+
+def _formato_007():
+    from .services import for_007 as svc
+
+    return svc.formato_for_007()
+
+
+def _puede_ver_programa(usuario):
+    from .services import acceso_formato
+
+    formato = _formato_007()
+    return bool(formato and acceso_formato.puede_ver(usuario, formato))
+
+
+def _puede_editar_programa(usuario):
+    from .services import acceso_formato
+
+    formato = _formato_007()
+    return bool(formato and acceso_formato.puede_editar(usuario, formato))
+
+
+def _auditar_programa(request, registro, accion, detalles=None):
+    from .services import for_007 as svc
+
+    anio = svc.anio_del_programa(registro)
+    _registrar_auditoria(
+        request, accion=accion, recurso_tipo='programa_revision',
+        recurso_id=getattr(registro, 'pk', ''),
+        recurso_codigo='SGC-FOR-007',
+        recurso_nombre=f'Programa de Revisión {anio or ""}'.strip(),
+        detalles=detalles,
+    )
+
+
+def _registro_programa_007(anio, crear=False, usuario=None, seed_anio=None):
+    from .services import for_007 as svc
+
+    return svc.programa_anual(
+        anio, crear=crear, usuario=usuario, seed_anio=seed_anio,
+    )
+
+
+def _anio_solicitado(request):
+    try:
+        return int(request.GET.get('anio') or request.POST.get('anio')
+                   or timezone.localdate().year)
+    except (TypeError, ValueError):
+        return timezone.localdate().year
+
+
+@login_required(login_url='/login/')
+def programa_revision(request):
+    from .services import for_007 as svc
+    from .services import versiones as svc_versiones
+
+    if not _puede_ver_programa(request.user):
+        messages.error(request, 'No tienes acceso al Programa de Revisión.')
+        return redirect('documentos:mis_documentos')
+    formato = _formato_007()
+    if formato is None:
+        messages.error(
+            request, 'El formato SGC-FOR-007 no está integrado.',
+        )
+        return redirect('documentos:formatos_lista')
+
+    anio = _anio_solicitado(request)
+    registro = _registro_programa_007(anio)
+    puede_editar = _puede_editar_programa(request.user)
+    contexto = {
+        'formato': formato,
+        'anio': anio,
+        'anios_disponibles': svc.anios_disponibles(),
+        'puede_editar': puede_editar,
+        'es_admin': request.user.perfil.es_administrador,
+    }
+    if registro is None:
+        if not puede_editar:
+            messages.error(
+                request, 'El programa de ese año no existe.',
+            )
+            return redirect('documentos:programa_revision')
+        return render(request, 'documentos/programa_revision_crear.html', contexto)
+
+    config = svc.config_for_007(formato)
+    contexto.update({
+        'registro': registro,
+        'aspectos': svc.aspecto(registro),
+        'meses': svc.meses(config),
+        'conforme': (registro.respuestas or {}).get('conforme') or {},
+        'publicado': registro.estado == svc.ESTADO_PUBLICADO,
+        'versiones': svc_versiones.versiones(registro),
+        'version_info': None,
+        'solo_lectura': not puede_editar,
+    })
+    return render(request, 'documentos/programa_revision.html', contexto)
+
+
+@login_required(login_url='/login/')
+@require_POST
+def programa_revision_crear(request):
+    from .services import for_007 as svc
+
+    if not _puede_editar_programa(request.user):
+        messages.error(request, 'No tienes permisos para crear el programa.')
+        return redirect('documentos:programa_revision')
+    anio = _anio_solicitado(request)
+    seed_anio = request.POST.get('seed_anio') or None
+    registro = _registro_programa_007(
+        anio, crear=True, usuario=request.user, seed_anio=seed_anio,
+    )
+    if registro is None:
+        messages.error(request, 'No se pudo crear el programa.')
+    else:
+        _auditar_programa(request, registro, 'programa_revision_creado', {
+            'anio': svc.anio_del_programa(registro),
+            'aspectos': len(svc.aspecto(registro)),
+            'seed_anio': seed_anio,
+        })
+        messages.success(request, f'Programa {anio} creado como borrador.')
+    return redirect(f"{reverse('documentos:programa_revision')}?anio={anio}")
+
+
+def _parsear_aspectos_json(request, config):
+    from .services import for_007 as svc
+
+    claves = {m.get('clave') for m in svc.meses(config)}
+    try:
+        crudos = json.loads(request.POST.get('aspectos_json') or '[]')
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(crudos, list):
+        return None
+    aspectos = []
+    for item in crudos:
+        if not isinstance(item, dict):
+            continue
+        marcas = {
+            str(k): str(v).strip().upper()
+            for k, v in (item.get('marcas') or {}).items()
+            if k in claves and str(v).strip().upper() in ('P', 'V')
+        }
+        etiqueta = str(item.get('etiqueta') or '').strip()
+        informacion = str(item.get('informacion') or '').strip()
+        if not etiqueta and not informacion:
+            continue
+        aspectos.append({
+            'clave': str(item.get('clave') or '').strip(),
+            'etiqueta': etiqueta,
+            'informacion': informacion,
+            'marcas': marcas,
+        })
+    return aspectos
+
+
+@login_required(login_url='/login/')
+@require_POST
+def programa_revision_guardar(request):
+    from .services import for_007 as svc
+
+    if not _puede_editar_programa(request.user):
+        messages.error(request, 'No tienes permisos para editar el programa.')
+        return redirect('documentos:programa_revision')
+    anio = _anio_solicitado(request)
+    registro = _registro_programa_007(
+        anio, crear=True, usuario=request.user,
+    )
+    if registro is None:
+        messages.error(request, 'No se pudo abrir el programa.')
+        return redirect('documentos:programa_revision')
+    config = svc.config_for_007(registro.formato)
+    aspectos = _parsear_aspectos_json(request, config)
+    if aspectos is None:
+        messages.error(request, 'Los datos de la matriz no son válidos.')
+        return redirect(f"{reverse('documentos:programa_revision')}?anio={anio}")
+
+    conforme = {
+        'presidente': request.POST.get('presidente', ''),
+        'gerente': request.POST.get('gerente', ''),
+        'fecha': request.POST.get('fecha', ''),
+    }
+    resultado = svc.guardar_programa(
+        registro, aspectos, conforme=conforme, usuario=request.user,
+    )
+    if resultado.get('cambio'):
+        _auditar_programa(request, registro, 'programa_revision_guardado', {
+            'anio': anio, 'marcas': resultado.get('marcas'),
+            'version': resultado.get('version'),
+        })
+    if request.POST.get('accion') == 'publicar':
+        version = svc.publicar_programa(registro, usuario=request.user)
+        if version is not None:
+            _auditar_programa(
+                request, registro, 'programa_revision_publicado',
+                {'anio': anio, 'version': version.numero},
+            )
+            messages.success(request, f'Programa {anio} publicado.')
+        else:
+            messages.info(request, f'El programa {anio} ya estaba publicado.')
+    else:
+        messages.success(
+            request,
+            'Cambios guardados.' if resultado.get('cambio')
+            else 'No había cambios que guardar.',
+        )
+    return redirect(f"{reverse('documentos:programa_revision')}?anio={anio}")
+
+
+@login_required(login_url='/login/')
+@require_POST
+def programa_revision_copiar(request):
+    from .services import for_007 as svc
+
+    if not _puede_editar_programa(request.user):
+        messages.error(request, 'No tienes permisos para editar el programa.')
+        return redirect('documentos:programa_revision')
+    anio = _anio_solicitado(request)
+    registro = _registro_programa_007(
+        anio, crear=True, usuario=request.user,
+    )
+    if registro is None:
+        messages.error(request, 'No se pudo abrir el programa.')
+        return redirect('documentos:programa_revision')
+    origen = request.POST.get('seed_anio')
+    resultado = svc.cargar_seed(registro, origen, usuario=request.user)
+    if resultado.get('error'):
+        messages.error(request, resultado['error'])
+    else:
+        _auditar_programa(request, registro, 'programa_revision_seed', {
+            'anio': anio, 'seed_anio': origen,
+        })
+        messages.success(
+            request, f'Aspectos copiados desde {origen} (editable).',
+        )
+    return redirect(f"{reverse('documentos:programa_revision')}?anio={anio}")
+
+
+@login_required(login_url='/login/')
+@require_POST
+def programa_revision_generar(request):
+    from .services import for_007 as svc
+
+    if not _puede_ver_programa(request.user):
+        messages.error(request, 'No tienes acceso al Programa de Revisión.')
+        return redirect('documentos:mis_documentos')
+    anio = _anio_solicitado(request)
+    registro = _registro_programa_007(anio)
+    if registro is None:
+        messages.error(request, 'El programa no existe.')
+        return redirect('documentos:programa_revision')
+    resultado = svc.generar_y_guardar(registro, forzar=True)
+    if resultado.get('success'):
+        _auditar_programa(request, registro, 'programa_revision_generado', {
+            'anio': anio,
+        })
+        messages.success(request, 'XLSX/PDF actualizados.')
+    else:
+        messages.error(
+            request,
+            resultado.get('error') or 'No se pudo generar el programa.',
+        )
+    return redirect(f"{reverse('documentos:programa_revision')}?anio={anio}")
+
+
+@login_required(login_url='/login/')
+def programa_revision_descargar(request, formato):
+    from .services import for_007 as svc
+
+    if not _puede_ver_programa(request.user):
+        raise Http404
+    if formato not in ('xlsx', 'pdf'):
+        raise Http404
+    anio = _anio_solicitado(request)
+    registro = _registro_programa_007(anio)
+    if registro is None:
+        raise Http404
+    if formato == 'xlsx':
+        if not registro.archivo:
+            svc.generar_y_guardar(registro, forzar=True)
+        if not registro.archivo:
+            messages.error(request, 'No se pudo generar el XLSX.')
+            return redirect(f"{reverse('documentos:programa_revision')}?anio={anio}")
+        return FileResponse(
+            registro.archivo.open('rb'), as_attachment=True,
+            filename=svc.nombre_archivo(registro, 'xlsx'),
+        )
+    if not registro.archivo_pdf:
+        svc.generar_y_guardar(registro, forzar=True)
+    if not registro.archivo_pdf:
+        messages.error(request, 'No se pudo generar el PDF (LibreOffice).')
+        return redirect(f"{reverse('documentos:programa_revision')}?anio={anio}")
+    return FileResponse(
+        registro.archivo_pdf.open('rb'), as_attachment=True,
+        filename=svc.nombre_archivo(registro, 'pdf'),
+    )
+
+
+@login_required(login_url='/login/')
+def programa_revision_version(request, numero):
+    from .services import for_007 as svc
+    from .services import versiones as svc_versiones
+
+    if not _puede_ver_programa(request.user):
+        raise Http404
+    anio = _anio_solicitado(request)
+    registro = _registro_programa_007(anio)
+    if registro is None:
+        raise Http404
+    version = svc_versiones.version_por_numero(registro, numero)
+    if version is None:
+        raise Http404
+    datos = version.datos or {}
+    respuestas = datos.get('respuestas') or {}
+    config = (datos.get('config') or {})
+    campos = {c.get('clave'): c for c in (config.get('campos') or [])}
+    config_tabla = (campos.get('aspectos') or {}).get('config_tabla') or {}
+    return render(request, 'documentos/programa_revision.html', {
+        'formato': registro.formato,
+        'registro': registro,
+        'anio': anio,
+        'anios_disponibles': svc.anios_disponibles(),
+        'puede_editar': False,
+        'es_admin': request.user.perfil.es_administrador,
+        'aspectos': respuestas.get('aspectos') or [],
+        'meses': config_tabla.get('meses') or svc.meses(svc.config_for_007(
+            registro.formato,
+        )),
+        'conforme': respuestas.get('conforme') or {},
+        'publicado': registro.estado == svc.ESTADO_PUBLICADO,
+        'versiones': svc_versiones.versiones(registro),
+        'version_info': version,
+        'solo_lectura': True,
+    })
+
+
+@login_required(login_url='/login/')
+def programa_revision_parametros(request):
+    from .services import for_007 as svc
+
+    if not request.user.perfil.es_administrador:
+        messages.error(request, 'Solo el administrador gestiona los parámetros.')
+        return redirect('documentos:programa_revision')
+    formato = _formato_007()
+    if formato is None:
+        messages.error(request, 'El formato SGC-FOR-007 no está integrado.')
+        return redirect('documentos:formatos_lista')
+    campo = svc.campo_aspectos(formato)
+    config = svc.config_for_007(formato)
+
+    if request.method == 'POST':
+        seed = []
+        for i in range(0, 500):
+            etiqueta = (request.POST.get(f'seed_etiqueta_{i}') or '').strip()
+            informacion = (
+                request.POST.get(f'seed_informacion_{i}') or ''
+            ).strip()
+            if not etiqueta and not informacion:
+                continue
+            seed.append({
+                'clave': f'seed_{i + 1}',
+                'etiqueta': etiqueta,
+                'informacion': informacion,
+            })
+        if not seed:
+            messages.error(request, 'El seed debe tener al menos un aspecto.')
+        else:
+            config['seed'] = seed
+            try:
+                maximo = int(request.POST.get('max_filas_hoja') or 30)
+            except (TypeError, ValueError):
+                maximo = 30
+            config['max_filas_hoja'] = max(1, min(maximo, 200))
+            campo.config_tabla = config
+            campo.save(update_fields=['config_tabla'])
+            _auditar_programa(request, None, 'programa_revision_parametros', {
+                'seed': len(seed), 'max_filas_hoja': config['max_filas_hoja'],
+            })
+            messages.success(request, 'Parámetros actualizados.')
+        return redirect('documentos:programa_revision_parametros')
+
+    return render(request, 'documentos/programa_revision_parametros.html', {
+        'formato': formato,
+        'seed': config.get('seed') or [],
+        'max_filas_hoja': config.get('max_filas_hoja') or 30,
+    })
+
+
+@login_required(login_url='/login/')
+def programa_revision_acceso(request):
+    from django.contrib.auth.models import User
+    from .services import acceso_formato
+
+    if not request.user.perfil.es_administrador:
+        messages.error(request, 'Solo el administrador gestiona los accesos.')
+        return redirect('documentos:programa_revision')
+    formato = _formato_007()
+    if formato is None:
+        messages.error(request, 'El formato SGC-FOR-007 no está integrado.')
+        return redirect('documentos:formatos_lista')
+
+    if request.method == 'POST':
+        usuario = User.objects.filter(
+            pk=request.POST.get('usuario_id'), is_active=True,
+        ).first()
+        if usuario is None:
+            messages.error(request, 'Selecciona un usuario válido.')
+        else:
+            nivel = request.POST.get('nivel') or 'editar'
+            acceso_formato.otorgar(
+                usuario, formato, nivel=nivel, otorgado_por=request.user,
+            )
+            _auditar_programa(request, None, 'programa_revision_acceso', {
+                'usuario_id': usuario.id, 'nivel': nivel,
+            })
+            messages.success(
+                request,
+                f'Acceso {nivel} otorgado a '
+                f'{usuario.get_full_name() or usuario.username}.',
+            )
+        return redirect('documentos:programa_revision_acceso')
+
+    concesiones = acceso_formato.concesiones(formato)
+    otorgados = set(concesiones.values_list('usuario_id', flat=True))
+    usuarios = User.objects.filter(is_active=True).exclude(
+        id__in=list(otorgados),
+    ).order_by('first_name', 'last_name', 'username')
+    return render(request, 'documentos/programa_revision_acceso.html', {
+        'formato': formato,
+        'concesiones': concesiones,
+        'usuarios': usuarios,
+    })
+
+
+@login_required(login_url='/login/')
+@require_POST
+def programa_revision_revocar(request, usuario_id):
+    from django.contrib.auth.models import User
+    from .services import acceso_formato
+
+    if not request.user.perfil.es_administrador:
+        messages.error(request, 'Solo el administrador gestiona los accesos.')
+        return redirect('documentos:programa_revision')
+    formato = _formato_007()
+    usuario = get_object_or_404(User, pk=usuario_id)
+    if formato is not None and acceso_formato.revocar(usuario, formato):
+        _auditar_programa(request, None, 'programa_revision_acceso_revocado', {
+            'usuario_id': usuario.id,
+        })
+        messages.success(
+            request,
+            f'Acceso revocado a {usuario.get_full_name() or usuario.username}.',
+        )
+    return redirect('documentos:programa_revision_acceso')

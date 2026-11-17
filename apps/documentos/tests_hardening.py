@@ -8,7 +8,7 @@ from django.test import RequestFactory, override_settings
 from tests_base import BaseDocumentosTest, MONGO_PATCH_TARGET
 
 from documentos import views
-from documentos.services import pdf_utils
+from documentos.services import xlsx_comun
 
 TEST_MEDIA = tempfile.mkdtemp(prefix='polidoc_media_hardening_')
 
@@ -53,7 +53,7 @@ class PdfRutaRelativaTest(BaseDocumentosTest):
 
         with patch('documentos.tasks.convertir_a_pdf_sync',
                    return_value=relativa):
-            datos = pdf_utils.xlsx_bytes_a_pdf(b'xlsx')
+            datos = xlsx_comun.xlsx_bytes_a_pdf(b'xlsx')
 
         self.assertEqual(datos, b'%PDF-1.4\n%prueba\n')
         # El PDF temporal se consume y elimina.

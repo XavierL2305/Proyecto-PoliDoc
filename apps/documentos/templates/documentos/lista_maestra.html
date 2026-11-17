@@ -32,6 +32,7 @@
     </p>
   </div>
   <div class="lm-actions">
+    {% if puede_editar %}
     <form method="post" action="{% url 'documentos:lista_maestra_sincronizar' %}">
       {% csrf_token %}
       <button type="submit" class="btn btn--primary btn--sm">
@@ -44,6 +45,7 @@
         <i class="fa-solid fa-file-arrow-down"></i> Regenerar XLSX/PDF
       </button>
     </form>
+    {% endif %}
     <a class="btn btn--ghost btn--sm"
        href="{% url 'documentos:lista_maestra_descargar' formato='xlsx' %}">
       <i class="fa-solid fa-file-excel"></i> XLSX
@@ -71,6 +73,7 @@
   <button type="submit" class="btn btn--primary">Filtrar</button>
 </form>
 
+{% if puede_editar %}
 <form method="post" action="{% url 'documentos:lista_maestra_agregar_fila' %}"
       style="margin:0 0 1rem;">
   {% csrf_token %}
@@ -78,6 +81,7 @@
     <i class="fa-solid fa-plus"></i> Nueva fila
   </button>
 </form>
+{% endif %}
 
 {# Datalists de "respuestas recientes" por columna #}
 {% for col in definiciones %}
@@ -107,16 +111,16 @@
             {% with valor=fila|get_item:col.clave tipo=col.tipo %}
             <td>
               {% if tipo == 'si_no' %}
-              <select data-col="{{ col.clave }}">
+              <select data-col="{{ col.clave }}" {% if not puede_editar %}disabled{% endif %}>
                 <option value="si" {% if valor == 'si' %}selected{% endif %}>Interno</option>
                 <option value="no" {% if valor == 'no' %}selected{% endif %}>Externo</option>
               </select>
               {% elif tipo == 'fecha' %}
-              <input type="date" data-col="{{ col.clave }}" value="{{ valor|default:'' }}">
+              <input type="date" data-col="{{ col.clave }}" value="{{ valor|default:'' }}" {% if not puede_editar %}readonly{% endif %}>
               {% elif tipo == 'textarea' %}
-              <textarea data-col="{{ col.clave }}">{{ valor|default:'' }}</textarea>
+              <textarea data-col="{{ col.clave }}" {% if not puede_editar %}readonly{% endif %}>{{ valor|default:'' }}</textarea>
               {% elif tipo == 'select' %}
-              <select data-col="{{ col.clave }}">
+              <select data-col="{{ col.clave }}" {% if not puede_editar %}disabled{% endif %}>
                 <option value=""></option>
                 {% for op in col.opciones %}
                 <option value="{{ op }}" {% if valor == op %}selected{% endif %}>{{ op }}</option>
@@ -124,14 +128,15 @@
               </select>
               {% elif tipo == 'combo' %}
               <input type="text" data-col="{{ col.clave }}" list="dl-{{ col.clave }}"
-                     value="{{ valor|default:'' }}">
+                     value="{{ valor|default:'' }}" {% if not puede_editar %}readonly{% endif %}>
               {% else %}
-              <input type="text" data-col="{{ col.clave }}" value="{{ valor|default:'' }}">
+              <input type="text" data-col="{{ col.clave }}" value="{{ valor|default:'' }}" {% if not puede_editar %}readonly{% endif %}>
               {% endif %}
             </td>
             {% endwith %}
             {% endfor %}
             <td style="white-space:nowrap;">
+              {% if puede_editar %}
               <button type="button" class="btn btn--primary btn--sm"
                       onclick="guardarFila(this)">Guardar</button>
               {% if fila|get_item:'_origen_tipo' == 'manual' %}
@@ -141,6 +146,7 @@
                 {% csrf_token %}
                 <button type="submit" class="btn btn--danger btn--sm" title="Eliminar fila">✕</button>
               </form>
+              {% endif %}
               {% endif %}
               <div class="lm-row-status"></div>
             </td>

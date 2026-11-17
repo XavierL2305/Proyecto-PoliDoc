@@ -13,11 +13,11 @@ imprime el sello de evidencia de la firma electrónica.
 """
 import io
 import logging
-import os
-import tempfile
 
 from django.db import transaction
 from django.utils import timezone
+from .xlsx_comun import copiar_hoja as _copiar_hoja
+from .xlsx_comun import xlsx_bytes_a_pdf as _xlsx_a_pdf
 
 logger = logging.getLogger(__name__)
 
@@ -270,20 +270,6 @@ def _sello_texto(filas):
     return ' — '.join(partes)
 
 
-def _copiar_hoja(wb, base):
-    """Copia la hoja base conservando merges e imágenes (openpyxl no las copia)."""
-    import copy as _copy
-
-    nueva = wb.copy_worksheet(base)
-    existentes = {str(rango) for rango in nueva.merged_cells.ranges}
-    for rango in base.merged_cells.ranges:
-        if str(rango) not in existentes:
-            nueva.merge_cells(str(rango))
-    for imagen in base._images:
-        nueva._images.append(_copy.deepcopy(imagen))
-    return nueva
-
-
 def generar_xlsx(formato, filas):
     """Bytes del XLSX FOR-003 con todas las filas (multi-hoja si hace falta).
 
@@ -348,31 +334,6 @@ def generar_xlsx(formato, filas):
     salida = io.BytesIO()
     wb.save(salida)
     return salida.getvalue()
-
-
-def _xlsx_a_pdf(xlsx_bytes):
-    """PDF del XLSX usando el conversor del proyecto (o ``None``)."""
-    with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp:
-        tmp.write(xlsx_bytes)
-        ruta_xlsx = tmp.name
-    try:
-        from ..tasks import convertir_a_pdf_sync
-
-        pdf_path = convertir_a_pdf_sync(ruta_xlsx, reparar_sincrono=True)
-        if not pdf_path:
-            return None
-        with open(pdf_path, 'rb') as fh:
-            data = fh.read()
-        try:
-            os.unlink(pdf_path)
-        except OSError:
-            pass
-        return data
-    finally:
-        try:
-            os.unlink(ruta_xlsx)
-        except OSError:
-            pass
 
 
 def generar_pdf(formato, filas):

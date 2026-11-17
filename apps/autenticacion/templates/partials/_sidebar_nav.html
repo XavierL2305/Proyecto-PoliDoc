@@ -39,6 +39,11 @@
               <i class="fa-solid fa-list-check" aria-hidden="true"></i><span>Lista Maestra</span>
             </a>
             {% endif %}
+            {% if nav_programa_revision %}
+            <a href="{% url 'documentos:programa_revision' %}" class="sidebar-item sidebar-item--child {% if 'programa_revision' in url_name %}active{% endif %}"{% if url_name == 'programa_revision' %} aria-current="page"{% endif %}>
+              <i class="fa-solid fa-calendar-days" aria-hidden="true"></i><span>Programa de Revisión</span>
+            </a>
+            {% endif %}
             <a href="{% url 'documentos:registros_lista' %}" class="sidebar-item sidebar-item--child {% if 'registro' in url_name %}active{% endif %}"{% if 'registro' in url_name %} aria-current="page"{% endif %}>
               <i class="fa-solid fa-clipboard-check" aria-hidden="true"></i><span>Registros</span>
             </a>

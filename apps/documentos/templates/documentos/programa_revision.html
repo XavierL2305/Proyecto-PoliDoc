@@ -1,0 +1,302 @@
+{% extends 'base_app.html' %}
+{% load static formato_extras %}
+
+{% block title %}Programa de Revisión {{ anio }} - POLIDOC{% endblock %}
+
+{% block extra_css %}
+<style>
+  .pr-actions { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
+  .pr-wrap { overflow-x: auto; }
+  table.pr { width: 100%; min-width: 1200px; border-collapse: collapse; }
+  table.pr th, table.pr td { border: 1px solid var(--color-border); padding: .3rem .35rem; vertical-align: top; }
+  table.pr th { background: var(--color-bg-alt); font-size: .72rem; text-align: left; }
+  table.pr td { font-size: .78rem; }
+  table.pr input, table.pr textarea, table.pr select {
+    width: 100%; box-sizing: border-box; font-size: .78rem; padding: .25rem .3rem;
+    border: 1px solid var(--color-border); border-radius: 4px;
+    background: var(--color-surface); color: var(--color-text);
+  }
+  table.pr textarea { min-height: 2.4rem; resize: vertical; }
+  table.pr .mes { width: 34px; text-align: center; padding: 0; }
+  table.pr select.asp-mes { padding: .15rem; text-align: center; }
+  .pr-mes-head { writing-mode: vertical-rl; text-orientation: mixed; font-size: .65rem; }
+  .pr-version { background: var(--color-warning-light); border-radius: var(--radius); padding: .75rem 1rem; margin-bottom: 1rem; font-size: .85rem; }
+</style>
+{% endblock %}
+
+{% block app_content %}
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
+  <div>
+    <h1 style="font-size:1.25rem;margin:0;">Programa de Revisión por la Dirección {{ anio }}</h1>
+    <p style="color:var(--color-muted);font-size:.85rem;margin:.35rem 0 0;">
+      SGC-FOR-007 · {% if publicado %}<strong>Publicado</strong>{% else %}Borrador{% endif %} ·
+      {{ aspectos|length }} aspecto(s)
+    </p>
+  </div>
+  <div class="pr-actions">
+    <form method="get" style="display:flex;gap:.35rem;align-items:center;">
+      <input type="number" name="anio" value="{{ anio }}" min="2000" max="2100"
+             class="form-input" style="width:100px;">
+      <button type="submit" class="btn btn--ghost btn--sm">Ir</button>
+    </form>
+    {% if not version_info %}
+    <form method="post" action="{% url 'documentos:programa_revision_generar' %}">
+      {% csrf_token %}
+      <input type="hidden" name="anio" value="{{ anio }}">
+      <button type="submit" class="btn btn--ghost btn--sm">
+        <i class="fa-solid fa-file-arrow-down"></i> Regenerar
+      </button>
+    </form>
+    <a class="btn btn--ghost btn--sm"
+       href="{% url 'documentos:programa_revision_descargar' formato='xlsx' %}?anio={{ anio }}">
+      <i class="fa-solid fa-file-excel"></i> XLSX
+    </a>
+    <a class="btn btn--ghost btn--sm"
+       href="{% url 'documentos:programa_revision_descargar' formato='pdf' %}?anio={{ anio }}">
+      <i class="fa-solid fa-file-pdf"></i> PDF
+    </a>
+    {% if es_admin %}
+    <a class="btn btn--ghost btn--sm" href="{% url 'documentos:programa_revision_parametros' %}">
+      <i class="fa-solid fa-sliders"></i> Parámetros
+    </a>
+    <a class="btn btn--ghost btn--sm" href="{% url 'documentos:programa_revision_acceso' %}">
+      <i class="fa-solid fa-user-shield"></i> Acceso
+    </a>
+    {% endif %}
+    {% endif %}
+  </div>
+</div>
+
+{% if anios_disponibles %}
+<div style="display:flex;gap:.75rem;flex-wrap:wrap;align-items:center;margin-bottom:1rem;font-size:.85rem;">
+  <span style="color:var(--color-muted);">Años:</span>
+  {% for a in anios_disponibles %}
+  <a href="?anio={{ a }}" class="btn btn--ghost btn--sm"
+     {% if a == anio %}style="border-color:var(--color-primary);color:var(--color-primary);"{% endif %}>{{ a }}</a>
+  {% endfor %}
+  {% if puede_editar %}
+  <a href="?anio={{ anio|add:1 }}" class="btn btn--ghost btn--sm">
+    <i class="fa-solid fa-plus"></i> Crear {{ anio|add:1 }}
+  </a>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if version_info %}
+<div class="pr-version">
+  <strong>Versión {{ version_info.numero }}</strong> ·
+  {{ version_info.creado|date:"d/m/Y H:i" }} ·
+  {{ version_info.creado_por.get_full_name|default:version_info.creado_por.username|default:"sistema" }}
+  {% if version_info.resumen %}· {{ version_info.resumen }}{% endif %}
+  <br><span style="font-size:.75rem;color:var(--color-muted);">SHA-256 {{ version_info.hash|slice:":16" }}… (solo lectura)</span>
+  · <a href="{% url 'documentos:programa_revision' %}?anio={{ anio }}">Volver al programa actual</a>
+</div>
+{% endif %}
+
+{% if puede_editar and not version_info %}
+<form id="form-programa" method="post" action="{% url 'documentos:programa_revision_guardar' %}">
+  {% csrf_token %}
+  <input type="hidden" name="anio" value="{{ anio }}">
+  <input type="hidden" name="aspectos_json" id="aspectos_json" value="">
+{% endif %}
+
+<div class="form-card">
+  <div class="form-card-body" style="padding:0;">
+    <div class="pr-wrap">
+      <table class="pr" id="tabla-programa">
+        <thead>
+          <tr>
+            <th style="min-width:260px;">Aspectos del SGC a evaluar</th>
+            <th style="min-width:260px;">Información documentada a revisar</th>
+            {% for mes in meses %}<th class="mes"><span class="pr-mes-head">{{ mes.etiqueta }}</span></th>{% endfor %}
+            {% if puede_editar and not version_info %}<th></th>{% endif %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for fila in aspectos %}
+          <tr data-clave="{{ fila|get_item:'clave' }}">
+            <td>
+              {% if puede_editar and not version_info %}
+              <textarea class="asp-etiqueta">{{ fila|get_item:'etiqueta' }}</textarea>
+              {% else %}{{ fila|get_item:'etiqueta' }}{% endif %}
+            </td>
+            <td>
+              {% if puede_editar and not version_info %}
+              <textarea class="asp-informacion">{{ fila|get_item:'informacion' }}</textarea>
+              {% else %}{{ fila|get_item:'informacion' }}{% endif %}
+            </td>
+            {% for mes in meses %}
+            {% with marca=fila.marcas|get_item:mes.clave %}
+            <td class="mes">
+              {% if puede_editar and not version_info %}
+              <select class="asp-mes" data-mes="{{ mes.clave }}">
+                <option value="" {% if not marca %}selected{% endif %}></option>
+                <option value="P" {% if marca == 'P' %}selected{% endif %}>P</option>
+                <option value="V" {% if marca == 'V' %}selected{% endif %}>V</option>
+              </select>
+              {% else %}{{ marca|default:"—" }}{% endif %}
+            </td>
+            {% endwith %}
+            {% endfor %}
+            {% if puede_editar and not version_info %}
+            <td>
+              <button type="button" class="btn btn--danger btn--sm"
+                      onclick="this.closest('tr').remove()">✕</button>
+            </td>
+            {% endif %}
+          </tr>
+          {% empty %}
+          <tr><td colspan="{{ meses|length|add:3 }}" style="text-align:center;color:var(--color-muted);padding:1rem;">
+            Sin aspectos. Usa “Agregar aspecto”.
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% if puede_editar and not version_info %}
+  <div class="form-card-footer" style="justify-content:space-between;flex-wrap:wrap;gap:.5rem;">
+    <button type="button" class="btn btn--ghost btn--sm" onclick="agregarAspecto()">
+      <i class="fa-solid fa-plus"></i> Agregar aspecto
+    </button>
+    <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
+      <button type="submit" name="accion" value="guardar" class="btn btn--primary">
+        Guardar
+      </button>
+      <button type="submit" name="accion" value="publicar" class="btn btn--success">
+        Guardar y publicar
+      </button>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+{% if puede_editar and not version_info %}
+<div class="form-card" style="margin-top:1rem;">
+  <div class="form-card-header"><h3>Conforme</h3></div>
+  <div class="form-card-body" style="display:flex;gap:1rem;flex-wrap:wrap;">
+    <div class="form-group" style="flex:1 1 240px;">
+      <label class="form-label">Presidente de la Junta Directiva</label>
+      <input type="text" name="presidente" class="form-input" value="{{ conforme.presidente|default:'' }}">
+    </div>
+    <div class="form-group" style="flex:1 1 240px;">
+      <label class="form-label">Gerencia General</label>
+      <input type="text" name="gerente" class="form-input" value="{{ conforme.gerente|default:'' }}">
+    </div>
+    <div class="form-group" style="flex:0 1 180px;">
+      <label class="form-label">Fecha</label>
+      <input type="date" name="fecha" class="form-input" value="{{ conforme.fecha|default:'' }}">
+    </div>
+  </div>
+</div>
+</form>
+{% else %}
+<div class="form-card" style="margin-top:1rem;">
+  <div class="form-card-header"><h3>Conforme</h3></div>
+  <div class="form-card-body">
+    <p style="font-size:.85rem;margin:.2rem 0;">Presidente de la Junta Directiva: {{ conforme.presidente|default:"—" }}</p>
+    <p style="font-size:.85rem;margin:.2rem 0;">Gerencia General: {{ conforme.gerente|default:"—" }}</p>
+    <p style="font-size:.85rem;margin:.2rem 0;">Fecha: {{ conforme.fecha|default:"—" }}</p>
+  </div>
+</div>
+{% endif %}
+
+{% if puede_editar and not version_info and anios_disponibles %}
+<div class="form-card" style="margin-top:1rem;">
+  <div class="form-card-header"><h3>Copiar aspectos de otro año</h3></div>
+  <div class="form-card-body">
+    <form method="post" action="{% url 'documentos:programa_revision_copiar' %}"
+          onsubmit="return confirm('Se reemplazarán los aspectos actuales (se conservan las marcas por clave). ¿Continuar?');"
+          style="display:flex;gap:.75rem;flex-wrap:wrap;align-items:flex-end;">
+      {% csrf_token %}
+      <input type="hidden" name="anio" value="{{ anio }}">
+      <div class="form-group" style="margin:0;flex:0 1 220px;">
+        <label class="form-label">Copiar de</label>
+        <select name="seed_anio" class="form-input" required>
+          <option value="">Selecciona un año…</option>
+          {% for a in anios_disponibles %}
+          {% if a != anio %}<option value="{{ a }}">{{ a }}</option>{% endif %}
+          {% endfor %}
+        </select>
+      </div>
+      <button type="submit" class="btn btn--ghost">Copiar aspectos</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+{% if versiones %}
+<div class="form-card" style="margin-top:1rem;">
+  <div class="form-card-header"><h3>Historial de versiones</h3></div>
+  <div class="form-card-body">
+    {% for v in versiones %}
+    <div style="display:flex;justify-content:space-between;gap:1rem;font-size:.8rem;padding:.3rem 0;border-bottom:1px dashed var(--color-border);">
+      <span>
+        <strong>v{{ v.numero }}</strong> · {{ v.creado|date:"d/m/Y H:i" }} ·
+        {{ v.creado_por.get_full_name|default:v.creado_por.username|default:"sistema" }}
+        {% if v.resumen %}· {{ v.resumen }}{% endif %}
+      </span>
+      <a href="{% url 'documentos:programa_revision_version' numero=v.numero %}?anio={{ anio }}">Ver</a>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<template id="plantilla-aspecto">
+  <tr data-clave="">
+    <td><textarea class="asp-etiqueta"></textarea></td>
+    <td><textarea class="asp-informacion"></textarea></td>
+    {% for mes in meses %}
+    <td class="mes">
+      <select class="asp-mes" data-mes="{{ mes.clave }}">
+        <option value=""></option>
+        <option value="P">P</option>
+        <option value="V">V</option>
+      </select>
+    </td>
+    {% endfor %}
+    <td><button type="button" class="btn btn--danger btn--sm"
+                onclick="this.closest('tr').remove()">✕</button></td>
+  </tr>
+</template>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function agregarAspecto() {
+  var plantilla = document.getElementById('plantilla-aspecto');
+  var tbody = document.querySelector('#tabla-programa tbody');
+  if (!plantilla || !tbody) return;
+  var clon = plantilla.content.firstElementChild.cloneNode(true);
+  tbody.appendChild(clon);
+}
+
+(function () {
+  var form = document.getElementById('form-programa');
+  if (!form) return;
+  form.addEventListener('submit', function () {
+    var filas = [];
+    document.querySelectorAll('#tabla-programa tbody tr').forEach(function (tr) {
+      var et = tr.querySelector('.asp-etiqueta');
+      var info = tr.querySelector('.asp-informacion');
+      if (!et && !info) return;
+      var etiqueta = (et ? et.value : '').trim();
+      var informacion = (info ? info.value : '').trim();
+      if (!etiqueta && !informacion) return;
+      var marcas = {};
+      tr.querySelectorAll('.asp-mes').forEach(function (sel) {
+        if (sel.value) marcas[sel.getAttribute('data-mes')] = sel.value;
+      });
+      filas.push({
+        clave: tr.getAttribute('data-clave') || '',
+        etiqueta: etiqueta,
+        informacion: informacion,
+        marcas: marcas
+      });
+    });
+    document.getElementById('aspectos_json').value = JSON.stringify(filas);
+  });
+})();
+</script>
+{% endblock %}

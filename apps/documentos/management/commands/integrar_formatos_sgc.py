@@ -178,6 +178,93 @@ FOR_006_TABLA = {
     ],
 }
 
+
+#: SGC-FOR-007 — Programa de Revisión por la Dirección (P1).
+#: La matriz es dinámica (N aspectos variables); la plantilla oficial solo
+#: aporta el layout/estilos. ``seed`` es el punto de partida de los aspectos.
+FOR_007_XLSX = 'SGC-FOR-007 Programa de Rev. Direc.xlsx'
+FOR_007_CONFIG = {
+    'fila_inicio': 14,
+    'fila_fin': 27,
+    'max_filas_hoja': 30,
+    'meses': [
+        {'clave': 'ENE', 'celda': 'H', 'etiqueta': 'ENE'},
+        {'clave': 'FEB', 'celda': 'I', 'etiqueta': 'FEB'},
+        {'clave': 'MAR', 'celda': 'J', 'etiqueta': 'MAR'},
+        {'clave': 'ABR', 'celda': 'K', 'etiqueta': 'ABR'},
+        {'clave': 'MAY', 'celda': 'L', 'etiqueta': 'MAY'},
+        {'clave': 'JUN', 'celda': 'M', 'etiqueta': 'JUN'},
+        {'clave': 'JUL', 'celda': 'N', 'etiqueta': 'JUL'},
+        {'clave': 'AGO', 'celda': 'O', 'etiqueta': 'AGO'},
+        {'clave': 'SEP', 'celda': 'P', 'etiqueta': 'SEP'},
+        {'clave': 'OCT', 'celda': 'Q', 'etiqueta': 'OCT'},
+        {'clave': 'NOV', 'celda': 'R', 'etiqueta': 'NOV'},
+        {'clave': 'DIC', 'celda': 'S', 'etiqueta': 'DIC'},
+    ],
+    'celdas': {
+        'anio': 'A10',
+        'leyenda': 'B29',
+        'conforme': 'A31',
+        'presidente': 'A32',
+        'gerente': 'E32',
+        'fecha_dia': 'I32',
+        'fecha_mes': 'K32',
+        'fecha_anio': 'M32',
+        'pagina': 'L6',
+    },
+    'marcas': {'planificado': 'P', 'ejecutado': 'V'},
+    'columnas': [
+        {'clave': 'aspecto',
+         'etiqueta': 'Aspectos del SGC a evaluar', 'celda': 'A'},
+        {'clave': 'informacion',
+         'etiqueta': 'Información documentada a revisar', 'celda': 'E'},
+    ],
+    'seed': [
+        {'clave': 'seed_1',
+         'etiqueta': 'a) El estado de las acciones de las revisiones por la direcciòn previas',
+         'informacion': 'Minuta de la Revisiòn por la Direcciòn anterior'},
+        {'clave': 'seed_2',
+         'etiqueta': 'b) Los cambios en las cuestiones externas e internas que sean pertinentes al sistema de gestiòn de la calidad',
+         'informacion': 'Foda'},
+        {'clave': 'seed_3',
+         'etiqueta': 'c) Los cambios en las necesidades y expectativas de las partes interesadas',
+         'informacion': 'PARTES INTERESADAS/ REQUISITOS DE LAS PARTES INTERESADAS'},
+        {'clave': 'seed_4',
+         'etiqueta': 'd) La informaciòn sobre el desempeño y la eficacia del sistema de gestiòn de la calidad incluidas las tendencias relativas a:',
+         'informacion': ''},
+        {'clave': 'seed_5',
+         'etiqueta': '1. Satisfacciòn del cliente y la retroalimentaciòn de las partes interesadas pertinentes',
+         'informacion': 'Analisis y Evaluaciòn de la Encuesta de Satisfacciòn'},
+        {'clave': 'seed_6',
+         'etiqueta': '2. Grado en que se han logrado los objetivos de la calidad',
+         'informacion': 'Objetivos de la Calidad y planificaciòn para lograrlos'},
+        {'clave': 'seed_7',
+         'etiqueta': '3. Desempeño de los procesos y conformidad de los productos y servicios;',
+         'informacion': 'Indicadores de Gestiòn y/o de salud / Gestiòn de residuos/ Planes de acciòn ante no conformidades que se generen de los indicadores'},
+        {'clave': 'seed_8',
+         'etiqueta': '4. Las no conformidades y acciones correctivas ',
+         'informacion': 'Planes de acciòn ante no conformidades que se generen del sistema de gestion de la calidad'},
+        {'clave': 'seed_9',
+         'etiqueta': '5. Los resultados de seguimiento y mediciòn',
+         'informacion': 'Resultados de los planes de acciòn '},
+        {'clave': 'seed_10',
+         'etiqueta': '6. Los resultados de las auditorias',
+         'informacion': 'Informes de auditoria'},
+        {'clave': 'seed_11',
+         'etiqueta': '7. Desempeño de los proveedores externos',
+         'informacion': 'Evaluaciòn de los proveedores'},
+        {'clave': 'seed_12',
+         'etiqueta': 'd) La adecuaciòn de los recursos',
+         'informacion': 'Presupuestos'},
+        {'clave': 'seed_13',
+         'etiqueta': 'e) La eficacia de las acciones tomadas para abordar riesgos y oportunidades',
+         'informacion': 'Plan de accion para tratamientos de riesgos y plan de acciòn para aborgar oportunidades'},
+        {'clave': 'seed_14',
+         'etiqueta': 'f) Las oportunidades de mejora',
+         'informacion': 'Proyectos o diseños y desarrollos de servicios'},
+    ],
+}
+
 class Command(BaseCommand):
     help = (
         'Integra los formatos SGC (documentacion/*.xlsx) al motor de '
@@ -233,6 +320,7 @@ class Command(BaseCommand):
             'SGC-FOR-003': self._integrar_for_003,
             'SGC-FOR-004': self._integrar_for_004,
             'SGC-FOR-006': self._integrar_for_006,
+            'SGC-FOR-007': self._integrar_for_007,
         }
         for codigo in codigos:
             if codigo not in implementados:
@@ -256,6 +344,7 @@ class Command(BaseCommand):
         crudo = (crudo or '').strip()
         implementados = [
             'SGC-FOR-002', 'SGC-FOR-003', 'SGC-FOR-004', 'SGC-FOR-006',
+            'SGC-FOR-007',
         ]
         if not crudo:
             return implementados
@@ -794,6 +883,109 @@ class Command(BaseCommand):
                     'Una fila por documento. Las columnas con “origen” se '
                     'autocompletan desde el registro de documentos; las demás '
                     'se editan a mano (con respuestas recientes).'
+                ),
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # SGC-FOR-007
+    # ------------------------------------------------------------------
+
+    def _integrar_for_007(self, aplicar, forzar, forzar_estructura=False,
+                          plantilla=''):
+        self.stdout.write(self.style.HTTP_INFO(
+            '\n=== SGC-FOR-007 — Programa de Revisión por la Dirección ==='
+        ))
+
+        origen = plantilla or self._ruta_plantilla(FOR_007_XLSX)
+        if not os.path.exists(origen):
+            raise CommandError(
+                f'No se encontró la plantilla del FOR-007: {origen}\n'
+                + (
+                    'Revisa la ruta indicada con --plantilla.'
+                    if plantilla else
+                    'Coloca el XLSX en documentacion/ o indica su ruta con '
+                    '--plantilla.'
+                )
+            )
+
+        existente = Formato.objects.filter(codigo='SGC-FOR-007').first()
+        estado = 'ACTUALIZAR' if existente else 'CREAR'
+        self.stdout.write(f'Formato: {estado} (plantilla {os.path.basename(origen)})')
+        self.stdout.write(
+            f'  Matriz dinámica; seed de {len(FOR_007_CONFIG["seed"])} aspectos; '
+            f'máx. {FOR_007_CONFIG["max_filas_hoja"]} filas/hoja'
+        )
+
+        if not aplicar:
+            self.stdout.write(self.style.WARNING(
+                '  [dry-run] No se modificó la base de datos. '
+                'Repite con --apply para escribir.'
+            ))
+            return
+
+        formato, _creado = Formato.objects.update_or_create(
+            codigo='SGC-FOR-007',
+            defaults={
+                'nombre': 'Programa de Revisión por la Dirección',
+                'version': '1',
+                'edicion': '1',
+                'aplica_creacion': False,
+                'aplica_modificacion': False,
+                'aplica_eliminacion': False,
+                'permite_registros': False,
+                'activo': True,
+                'instructivo_html': '',
+            },
+        )
+
+        if forzar or not formato.plantilla_xlsx:
+            destino = self._destino_media('SGC-FOR-007')
+            os.makedirs(os.path.dirname(destino), exist_ok=True)
+            shutil.copy2(origen, destino)
+            formato.plantilla_xlsx = os.path.relpath(destino, settings.MEDIA_ROOT)
+            formato.save(update_fields=['plantilla_xlsx'])
+            self.stdout.write(self.style.SUCCESS(
+                f'  Plantilla copiada a MEDIA: {formato.plantilla_xlsx}'
+            ))
+        else:
+            self.stdout.write(
+                '  Plantilla ya existe; no se sobrescribe (usa --forzar-plantilla).'
+            )
+
+        self._recrear_estructura_007(formato, forzar=forzar_estructura)
+        self.stdout.write(self.style.SUCCESS(
+            '  Estructura y metadatos de SGC-FOR-007 listos.'
+        ))
+
+    def _recrear_estructura_007(self, formato, forzar=False):
+        """Una sección con el campo de configuración de la matriz."""
+        if not forzar and CampoFormato.objects.filter(
+            seccion__formato=formato, clave='aspectos',
+        ).exists():
+            self.stdout.write('  Estructura existente conservada.')
+            return
+
+        if forzar:
+            formato.secciones.all().delete()
+
+        seccion, _ = SeccionFormato.objects.update_or_create(
+            formato=formato, titulo='Programa de Revisión',
+            defaults={'orden': 1},
+        )
+        CampoFormato.objects.update_or_create(
+            seccion=seccion, clave='aspectos',
+            defaults={
+                'etiqueta': 'Aspectos del SGC a evaluar',
+                'tipo': 'tabla',
+                'origen': 'usuario',
+                'celda_excel': 'A14',
+                'requerido': False,
+                'orden': 1,
+                'config_tabla': copy.deepcopy(FOR_007_CONFIG),
+                'ayuda': (
+                    'Matriz anual: los aspectos y su información documentada '
+                    'son editables por año; las marcas P/V se guardan por mes.'
                 ),
             },
         )

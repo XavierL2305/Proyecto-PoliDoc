@@ -26,6 +26,11 @@ URLS_DOCUMENTACION = frozenset({
     'lista_maestra_sincronizar', 'lista_maestra_generar',
     'lista_maestra_descargar', 'lista_maestra_acceso',
     'lista_maestra_revocar',
+    'programa_revision', 'programa_revision_crear',
+    'programa_revision_guardar', 'programa_revision_copiar',
+    'programa_revision_generar', 'programa_revision_descargar',
+    'programa_revision_version', 'programa_revision_parametros',
+    'programa_revision_acceso', 'programa_revision_revocar',
 })
 
 #: ``url_name`` de páginas que pertenecen al grupo "Configuración".
@@ -87,4 +92,11 @@ def navegacion(request):
             contexto.update(lm.context_menu(usuario))
         except Exception:  # noqa: BLE001
             contexto['nav_lista_maestra'] = False
+        try:
+            from documentos.services import acceso_formato
+            contexto['nav_programa_revision'] = (
+                acceso_formato.puede_ver_codigo(usuario, 'SGC-FOR-007')
+            )
+        except Exception:  # noqa: BLE001
+            contexto['nav_programa_revision'] = False
     return contexto

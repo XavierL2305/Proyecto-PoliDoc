@@ -1,82 +1,53 @@
 """Acceso a la vista exclusiva de la Lista Maestra (SGC-FOR-006).
 
-El acceso se concede **por persona** desde la sesión del administrador. Quien
-tenga una concesión activa puede hacer todo en la vista (ver, editar filas,
-sincronizar, regenerar y descargar). El administrador siempre tiene acceso.
+Envoltorio fino sobre el servicio genérico :mod:`services.acceso_formato`,
+fijado al formato ``SGC-FOR-006``. El acceso se concede **por persona** desde
+la sesión del administrador; ``editar`` permite hacer todo y ``ver`` solo
+consultar/descargar.
 """
-from ..models import AccesoListaMaestra
+from . import acceso_formato
+from .acceso_formato import NIVEL_EDITAR, NIVEL_VER
 from .for_006 import FORMATO_FOR_006, formato_for_006
 
 
 def es_administrador(usuario):
-    perfil = getattr(usuario, 'perfil', None)
-    return bool(perfil and perfil.es_administrador)
+    return acceso_formato.es_administrador(usuario)
 
 
 def puede_ver_lista(usuario):
-    """Administrador o persona con concesión activa (una sola consulta)."""
-    if usuario is None or not getattr(usuario, 'is_authenticated', False):
-        return False
-    if es_administrador(usuario):
-        return True
-    return AccesoListaMaestra.objects.filter(
-        formato__codigo=FORMATO_FOR_006,
-        formato__activo=True,
-        usuario=usuario,
-        activo=True,
-    ).exists()
+    """Administrador o persona con concesión activa (ver)."""
+    return acceso_formato.puede_ver_codigo(usuario, FORMATO_FOR_006)
+
+
+def puede_editar_lista(usuario):
+    """Administrador o concesión activa con nivel ``editar``."""
+    return acceso_formato.puede_editar_codigo(usuario, FORMATO_FOR_006)
 
 
 def puede_gestionar_acceso(usuario):
     """Solo el administrador administra las concesiones."""
-    return es_administrador(usuario)
+    return acceso_formato.es_administrador(usuario)
 
 
-def concesiones(formato=None, solo_activas=True):
-    formato = formato or formato_for_006()
-    if formato is None:
-        return AccesoListaMaestra.objects.none()
-    qs = AccesoListaMaestra.objects.filter(formato=formato).select_related(
-        'usuario', 'creado_por',
+def concesiones(solo_activas=True):
+    return acceso_formato.concesiones(
+        formato_for_006(), solo_activas=solo_activas,
     )
-    if solo_activas:
-        qs = qs.filter(activo=True)
-    return qs
 
 
-def usuarios_con_acceso(formato=None):
-    """Usuarios con concesión activa (sin administradores)."""
-    from django.contrib.auth.models import User
-
-    ids = concesiones(formato).values_list('usuario_id', flat=True)
-    return User.objects.filter(id__in=list(ids), is_active=True)
+def usuarios_con_acceso():
+    return acceso_formato.usuarios_con_acceso(formato_for_006())
 
 
-def otorgar(usuario, otorgado_por=None, formato=None):
-    """Otorga (o reactiva) el acceso de ``usuario`` a la lista."""
-    formato = formato or formato_for_006()
-    if formato is None or usuario is None:
-        return None
-    concesion, creada = AccesoListaMaestra.objects.get_or_create(
-        formato=formato, usuario=usuario,
-        defaults={'activo': True, 'creado_por': otorgado_por},
+def otorgar(usuario, otorgado_por=None, nivel=NIVEL_EDITAR):
+    return acceso_formato.otorgar(
+        usuario, formato_for_006(), nivel=nivel, otorgado_por=otorgado_por,
     )
-    if not creada and not concesion.activo:
-        concesion.activo = True
-        concesion.save(update_fields=['activo'])
-    return concesion
 
 
-def revocar(usuario, formato=None):
-    """Revoca el acceso (deja la fila inactiva para conservar la traza)."""
-    formato = formato or formato_for_006()
-    if formato is None or usuario is None:
-        return 0
-    return AccesoListaMaestra.objects.filter(
-        formato=formato, usuario=usuario, activo=True,
-    ).update(activo=False)
+def revocar(usuario):
+    return acceso_formato.revocar(usuario, formato_for_006())
 
 
 def context_menu(usuario):
-    """Bandera para mostrar la entrada del menú."""
     return {'nav_lista_maestra': puede_ver_lista(usuario)}

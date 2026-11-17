@@ -2534,6 +2534,15 @@ class RegistroFormato(models.Model):
                 fields=['formato', 'estado'], name='registro_fmt_estado_idx',
             ),
         ]
+        constraints = [
+            # Un único programa anual por formato (FOR-007). El filtro por
+            # contexto_tipo evita afectar a los demás registros (FOR-010).
+            models.UniqueConstraint(
+                fields=['formato', 'contexto_id'],
+                condition=models.Q(contexto_tipo='programa_revision'),
+                name='registro_programa_anual_unico',
+            ),
+        ]
 
     def __str__(self):
         return f"{self.formato_codigo} · {self.titulo} ({self.uuid})"
@@ -2544,6 +2553,52 @@ class RegistroFormato(models.Model):
         return self.formato_codigo or (
             self.formato.codigo if self.formato_id else ''
         )
+
+
+class VersionRegistroFormato(models.Model):
+    """Snapshot inmutable de un ``RegistroFormato`` (traza ISO).
+
+    Guarda el estado de ``respuestas`` y de la **estructura/config** del
+    formato en ese momento, con hash SHA-256 para integridad. Se usa para la
+    traza de versiones de registros vivos (p. ej. el programa FOR-007); el
+    estado actual sigue viviendo en ``RegistroFormato.respuestas``.
+    """
+
+    registro = models.ForeignKey(
+        RegistroFormato, on_delete=models.CASCADE, related_name='versiones',
+        verbose_name='Registro',
+    )
+    numero = models.PositiveIntegerField(verbose_name='Número de versión')
+    datos = models.JSONField(
+        default=dict, blank=True, verbose_name='Snapshot',
+        help_text='Respuestas y configuración de estructura del momento.',
+    )
+    resumen = models.TextField(
+        blank=True, default='', verbose_name='Resumen de cambios',
+    )
+    hash = models.CharField(
+        max_length=64, blank=True, default='', verbose_name='SHA-256',
+    )
+    creado_por = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='versiones_registro_formato',
+        verbose_name='Creado por',
+    )
+    creado = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Versión de Registro de Formato'
+        verbose_name_plural = 'Versiones de Registros de Formato'
+        ordering = ['-numero']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['registro', 'numero'],
+                name='version_registro_numero_unico',
+            ),
+        ]
+
+    def __str__(self):
+        return f'v{self.numero} · {self.registro_id}'
 
 
 class ResumenIAUso(models.Model):
@@ -3448,39 +3503,52 @@ class AvisoPurgaPersonal(models.Model):
         return f'Avisos de {self.usuario.username}'
 
 
-class AccesoListaMaestra(models.Model):
-    """Concesión de acceso a la vista exclusiva de la Lista Maestra.
+class AccesoFormato(models.Model):
+    """Concesión de acceso a la vista exclusiva de un formato (registro vivo).
 
-    Se administra desde la sesión del admin (por PERSONA, no por rol). Quien
-    tenga una concesión activa puede ver/editar/sincronizar/regenerar/descargar
-    la Lista Maestra; el administrador siempre tiene acceso total.
+    Se administra desde la sesión del administrador (por PERSONA, no por rol).
+    El **nivel** decide si la persona solo puede ver o también editar
+    (agregar/quitar filas, marcas, sincronizar, regenerar). El administrador
+    siempre tiene acceso total.
     """
 
+    NIVEL_CHOICES = [
+        ('ver', 'Ver'),
+        ('editar', 'Editar'),
+    ]
+
     formato = models.ForeignKey(
-        Formato, on_delete=models.PROTECT, related_name='accesos_lista',
+        Formato, on_delete=models.PROTECT, related_name='accesos_formato',
         verbose_name='Formato',
     )
     usuario = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name='accesos_lista_maestra',
+        User, on_delete=models.CASCADE, related_name='accesos_formato',
         verbose_name='Usuario',
+    )
+    nivel = models.CharField(
+        max_length=10, choices=NIVEL_CHOICES, default='editar',
+        verbose_name='Nivel de acceso',
     )
     activo = models.BooleanField(default=True, verbose_name='Activo')
     creado_por = models.ForeignKey(
         User, on_delete=models.SET_NULL, null=True, blank=True,
-        related_name='accesos_lista_creados', verbose_name='Creado por',
+        related_name='accesos_formato_creados', verbose_name='Creado por',
     )
     fecha_creacion = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        verbose_name = 'Acceso a la Lista Maestra'
-        verbose_name_plural = 'Accesos a la Lista Maestra'
+        verbose_name = 'Acceso a Formato'
+        verbose_name_plural = 'Accesos a Formato'
         ordering = ['usuario__first_name', 'usuario__last_name', 'usuario__username']
         constraints = [
             models.UniqueConstraint(
                 fields=['formato', 'usuario'],
-                name='acceso_lista_formato_usuario_unico',
+                name='acceso_formato_usuario_unico',
             ),
         ]
 
     def __str__(self):
-        return f'{self.usuario.username} → {self.formato.codigo}'
+        return (
+            f'{self.usuario.username} → {self.formato.codigo} '
+            f'({self.get_nivel_display()})'
+        )

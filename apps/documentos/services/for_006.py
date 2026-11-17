@@ -24,7 +24,7 @@ import uuid
 
 from django.db import transaction
 from django.utils import timezone
-from .pdf_utils import xlsx_bytes_a_pdf as _xlsx_a_pdf
+from .xlsx_comun import xlsx_bytes_a_pdf as _xlsx_a_pdf
 
 logger = logging.getLogger(__name__)
 

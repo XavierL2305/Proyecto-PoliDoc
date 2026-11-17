@@ -2952,10 +2952,11 @@ origen (p. ej. en CI, donde `documentacion/` no está versionado),
     - SGC-FOR-002 (Control de Distribución), SGC-FOR-003 (Tabla de cambios
       y modificaciones, §29.7), SGC-FOR-004 (Acta de desincorporación de
       archivos inactivos, §29.8) y SGC-FOR-006 (Lista Maestra de Documentos,
-      §29.10). Los demás SGC-FOR-005…018 quedan pendientes (el comando los
-      omite con aviso). No hay catálogo/menú de "Formatos SGC": cada FOR se
-      genera desde su flujo (FOR-003, FOR-004 y FOR-006 aparecen en
-      Configuración → Formatos con badge "Planilla automática").
+      §29.10) y SGC-FOR-007 (Programa de Revisión por la Dirección, §29.11).
+      Los demás SGC-FOR-005…018 quedan pendientes (el comando los omite con
+      aviso). No hay catálogo/menú de "Formatos SGC": cada FOR se genera desde
+      su flujo (FOR-003, FOR-004, FOR-006 y FOR-007 aparecen en Configuración
+      → Formatos con badge "Planilla automática").
       `Formato.requiere_firma` NO existe todavía; la firma se decide por la
       existencia de la plantilla FOR-002.
     - Documentos sin código (no ISO): entidad aparte `DocumentoSinCodigo`
@@ -3172,6 +3173,33 @@ origen (p. ej. en CI, donde `documentacion/` no está versionado),
     - **NO** se crea un `TipoDocumento` ISO para "registros sin código".
     - Tests: `tests_for_006` (34); cubren integración/config, sync y signals,
       generación (>22 filas), acceso multi-persona y vista/AJAX.
+
+  29.11 SGC-FOR-007 — PROGRAMA DE REVISIÓN POR LA DIRECCIÓN (mig. 0068)
+    - Formato `SGC-FOR-007` (`aplica_*=False`) con `config_tabla` (seed de 14
+      aspectos, meses/trimestres, celdas, leyenda P/V, celdas de Conforme).
+      Se integra con `integrar_formatos_sgc --solo=007 --apply`.
+    - **Registro vivo anual** (`RegistroFormato`, contexto
+      `programa_revision`/`<año>`) + constraint condicional: un programa por
+      formato/año. Aspectos e información documentada son **filas N
+      variables** por año (la plantilla de 14 es solo seed/prototipo).
+    - Seed: al crear un año se copia del **año elegido** (por defecto el
+      anterior) o del seed oficial. “Copiar aspectos de [año]” re-siembra un
+      año (conserva marcas por `clave`). Admin gestiona estructura/seed; quien
+      tenga `AccesoFormato` con nivel **editar** agrega/quita/edita filas.
+    - Marcas **P/V** excluyentes (V⇒P) con `planificado_en`/`ejecutado_en`;
+      hook `marcar_ejecutado(anio, mes)` para la futura Minuta (FOR-009).
+    - **Versiones** (`VersionRegistroFormato`, mig. 0068): cada guardado/seed
+      crea snapshot inmutable (respuestas + config de estructura + SHA-256);
+      historial solo lectura (restaurar en backlog). Editar un publicado vuelve
+      a borrador.
+    - Acceso: `AccesoListaMaestra` → **`AccesoFormato`** con nivel ver/editar
+      por persona (admin siempre); FOR-006 migra al servicio genérico.
+    - Export XLSX/PDF con **layout dinámico** para N filas (reconstruye
+      estilos/merges, desplaza leyenda/CONFORME/firmas), **30 filas/hoja** y
+      continuación `SGC-FOR-007 (2)…`; conserva `SGC-IDL-013`; Conforme con
+      nombres editables y fecha día/mes/año. Sin SES (firma física).
+    - Tests: `tests_for_007` (24) con plantilla sintética; seed, marcas,
+      versiones, unicidad, acceso ver/editar, export N=3/14/31 y continuación.
 
 -------------------------------------------------------------------
 30. FIRMA ELECTRÓNICA DE DISTRIBUCIÓN (SES)
@@ -3466,6 +3494,9 @@ alternativas en docs/adr/0001-modelo-documento-formato-registro.md.
     - SGC-FOR-006 Lista Maestra de Documentos (migración 0067): registro vivo
       con sync/signals, vista exclusiva con acceso por persona y XLSX/PDF
       bajo demanda (§29.10).
+    - SGC-FOR-007 Programa de Revisión por la Dirección (migración 0068):
+      matriz anual con filas N variables, marcas P/V, versiones, acceso
+      ver/editar y XLSX/PDF con continuación (§29.11).
     - Pendiente de P1: campaña de revisión masiva (§34) y validación legal
       de los textos de aviso.
   35.4 P2

@@ -8,8 +8,9 @@
   <div>
     <h1 style="font-size:1.25rem;margin:0;">Acceso a la Lista Maestra</h1>
     <p style="color:var(--color-muted);font-size:.85rem;margin:.35rem 0 0;">
-      Solo el administrador gestiona estas concesiones. Quien tenga acceso
-      puede ver, editar, sincronizar, regenerar y descargar la lista.
+      Solo el administrador gestiona estas concesiones. <strong>Ver</strong>
+      permite consultar y descargar; <strong>Editar</strong> permite además
+      modificar filas, sincronizar y regenerar.
     </p>
   </div>
   <a class="btn btn--ghost btn--sm" href="{% url 'documentos:lista_maestra' %}">
@@ -33,6 +34,13 @@
           {% endfor %}
         </select>
       </div>
+      <div class="form-group" style="margin:0;flex:0 1 160px;">
+        <label class="form-label">Nivel</label>
+        <select name="nivel" class="form-input">
+          <option value="editar">Editar</option>
+          <option value="ver">Ver</option>
+        </select>
+      </div>
       <button type="submit" class="btn btn--primary">Otorgar acceso</button>
     </form>
   </div>
@@ -48,6 +56,7 @@
           <tr>
             <th>Usuario</th>
             <th>Correo</th>
+            <th>Nivel</th>
             <th>Otorgado por</th>
             <th>Fecha</th>
             <th></th>
@@ -58,6 +67,17 @@
           <tr>
             <td><strong>{{ c.usuario.get_full_name|default:c.usuario.username }}</strong></td>
             <td>{{ c.usuario.email|default:"—" }}</td>
+            <td>
+              <form method="post" style="display:flex;gap:.35rem;align-items:center;">
+                {% csrf_token %}
+                <input type="hidden" name="usuario_id" value="{{ c.usuario_id }}">
+                <select name="nivel" class="form-input" style="padding:.2rem;">
+                  <option value="editar" {% if c.nivel == 'editar' %}selected{% endif %}>Editar</option>
+                  <option value="ver" {% if c.nivel == 'ver' %}selected{% endif %}>Ver</option>
+                </select>
+                <button type="submit" class="btn btn--ghost btn--sm">Guardar</button>
+              </form>
+            </td>
             <td>{{ c.creado_por.get_full_name|default:c.creado_por.username|default:"—" }}</td>
             <td>{{ c.fecha_creacion|date:"d/m/Y H:i" }}</td>
             <td style="text-align:right;">

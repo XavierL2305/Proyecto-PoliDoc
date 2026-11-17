@@ -1,0 +1,39 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Crear Programa de Revisión {{ anio }} - POLIDOC{% endblock %}
+
+{% block app_content %}
+<div class="form-card" style="max-width:640px;margin:0 auto;">
+  <div class="form-card-header">
+    <h3>Crear Programa de Revisión {{ anio }}</h3>
+    <p style="font-size:.8rem;color:var(--color-muted);margin:.35rem 0 0;">
+      Se creará como borrador. Los aspectos se copian del año que elijas (o del
+      seed oficial) y luego son editables.
+    </p>
+  </div>
+  <form method="post" action="{% url 'documentos:programa_revision_crear' %}">
+    {% csrf_token %}
+    <div class="form-card-body">
+      <div class="form-group">
+        <label class="form-label">Año a evaluar *</label>
+        <input type="number" name="anio" class="form-input" value="{{ anio }}"
+               min="2000" max="2100" required>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Copiar aspectos de</label>
+        <select name="seed_anio" class="form-input">
+          <option value="">Seed oficial (14 aspectos)</option>
+          {% for a in anios_disponibles %}
+          <option value="{{ a }}">{{ a }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="form-card-footer">
+      <a class="btn btn--ghost" href="{% url 'documentos:programa_revision' %}?anio={{ anio }}">Cancelar</a>
+      <button type="submit" class="btn btn--primary">Crear programa</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

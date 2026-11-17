@@ -39,7 +39,8 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from .pdf_utils import xlsx_bytes_a_pdf as _xlsx_a_pdf
+from .xlsx_comun import copiar_hoja as _copiar_hoja
+from .xlsx_comun import xlsx_bytes_a_pdf as _xlsx_a_pdf
 
 logger = logging.getLogger(__name__)
 
@@ -605,20 +606,6 @@ def sello_acta(acta):
 # ---------------------------------------------------------------------------
 # Generación XLSX/PDF
 # ---------------------------------------------------------------------------
-
-def _copiar_hoja(wb, base):
-    """Copia la hoja base conservando merges e imágenes (openpyxl no las copia)."""
-    import copy as _copy
-
-    nueva = wb.copy_worksheet(base)
-    existentes = {str(rango) for rango in nueva.merged_cells.ranges}
-    for rango in base.merged_cells.ranges:
-        if str(rango) not in existentes:
-            nueva.merge_cells(str(rango))
-    for imagen in base._images:
-        nueva._images.append(_copy.deepcopy(imagen))
-    return nueva
-
 
 def _rellenar_cabecera(hoja, acta, indice, total):
     """Rellena todo lo común a todas las hojas del acta."""

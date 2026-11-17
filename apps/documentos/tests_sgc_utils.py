@@ -319,3 +319,91 @@ def crear_plantilla_for_006(ruta):
     os.makedirs(os.path.dirname(ruta), exist_ok=True)
     wb.save(ruta)
     return ruta
+
+
+# ---------------------------------------------------------------------------
+# SGC-FOR-007 — Programa de Revisión por la Dirección
+# ---------------------------------------------------------------------------
+
+ARCHIVO_REAL_SGC007 = 'SGC-FOR-007 Programa de Rev. Direc.xlsx'
+
+
+def ruta_plantilla_real_007(base):
+    ruta = os.path.join(str(base), 'documentacion', ARCHIVO_REAL_SGC007)
+    return ruta if os.path.exists(ruta) else None
+
+
+def crear_plantilla_for_007(ruta):
+    """XLSX mínimo con el layout del FOR-007 (matriz dinámica).
+
+    Cabecera (1–13), bloque de aspectos 14–27 (prototipo; se reconstruye al
+    exportar), leyenda 29, CONFORME 31 y firmas/etiquetas 32–35. Incluye una
+    hoja instructiva para comprobar que se conserva.
+    """
+    from openpyxl.styles import Alignment, Border, Font, Side
+
+    fino = Side(style='thin')
+    borde = Border(left=fino, right=fino, top=fino, bottom=fino)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'SGC-FOR-007'
+
+    ws['C1'] = 'PROGRAMA DE REVISION POR LA DIRECCION'
+    ws.merge_cells('C1:N2')
+    ws['C3'] = 'INFORMACION DOCUMENTADA'
+    ws.merge_cells('C3:N3')
+    ws['C4'] = '9.3 REVISION POR LA DIRECCION'
+    ws.merge_cells('C4:N5')
+    for rango, texto in (
+        ('A6:B7', 'Nº DE IDENTIFICACION:  SGC-FOR-007'),
+        ('C6:E7', 'VERSION: 1'),
+        ('F6:H7', 'EDICION: 1'),
+        ('I6:K7', 'FECHA DE VIGENCIA: 18/03/2025'),
+        ('L6:N7', 'PAGINA:   1'),
+        ('A8:N8', 'PROCEDIMIENTO DE REVISION POR LA DIRECCION'),
+        ('A10:N10', 'AÑO A EVALUAR:'),
+        ('H12:J12', 'TRIMESTRE I'),
+        ('K12:M12', 'TRIMESTRE II'),
+        ('N12:P12', 'TRIMESTRE III'),
+        ('Q12:S12', 'TRIMESTRE IV'),
+        ('A13:D13', 'ASPECTOS DEL SISTEMA DE GESTION DE LA CALIDAD A EVALUAR'),
+        ('E13:G13', 'INFORMACION DOCUMENTADA A REVISAR'),
+        ('A31:N31', 'CONFORME'),
+        ('A34:D35', 'Presidente de  la Junta Directiva'),
+        ('E34:H35', 'Gerencia General'),
+        ('I34:N35', 'Fecha'),
+    ):
+        ws.merge_cells(rango)
+        ws[rango.split(':')[0]] = texto
+    for col, texto in zip('HIJKLMNOPQRS', [
+        'ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN',
+        'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC',
+    ]):
+        ws[f'{col}13'] = texto
+
+    for fila in range(14, 28):
+        ws.merge_cells(f'A{fila}:D{fila}')
+        ws.merge_cells(f'E{fila}:G{fila}')
+        ws[f'A{fila}'] = f'Aspecto {fila}'
+    for fila in range(12, 36):
+        if fila in (28, 29, 30):
+            continue
+        for col in 'ABCDEFGHIJKLMN':
+            ws[f'{col}{fila}'].border = borde
+            ws[f'{col}{fila}'].alignment = Alignment(wrap_text=True)
+    ws['B29'] = 'Ï: Planificado;  V: Ejecutado'
+
+    for rango in (
+        'A32:D33', 'E32:H33', 'I32:J33', 'K32:L33', 'M32:N33',
+    ):
+        ws.merge_cells(rango)
+    for col in 'ABCDEFGHIJKLMN':
+        ws[f'{col}31'].font = Font(bold=True)
+
+    idl = wb.create_sheet('SGC-IDL-013')
+    idl['B1'] = 'INSTRUCTIVO DE LLENADO PARA EL FORMULARIO'
+
+    os.makedirs(os.path.dirname(ruta), exist_ok=True)
+    wb.save(ruta)
+    return ruta

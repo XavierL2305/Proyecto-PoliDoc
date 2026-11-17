@@ -113,3 +113,42 @@ python manage.py check --settings=polidoc.test_settings
 python manage.py makemigrations --check --dry-run --settings=polidoc.test_settings
 python manage.py test auditoria documentos autenticacion \
     --settings=polidoc.test_settings --noinput
+
+================================================================================
+PLAN FOR-007 + FOR-009 (EN CURSO)
+================================================================================
+Regla: una fase a la vez; [x] solo cuando esté probada.
+FOR-007 = Programa de Revisión por la Dirección (matriz anual, filas N variables).
+FOR-009 = Minuta (formulario estándar, motor dinámico).
+
+FASE 0 — BASES COMPARTIDAS
+[x] services/xlsx_comun.py (copiar_hoja + xlsx_bytes_a_pdf) y migración FOR-003/004/006.
+[x] AccesoListaMaestra -> AccesoFormato con nivel ver/editar (misma data).
+[x] services/acceso_formato.py genérico + FOR-006 usa puede_ver/puede_editar.
+[x] VersionRegistroFormato + services/versiones.py (snapshot + SHA-256).
+[x] UniqueConstraint condicional: un programa anual por formato.
+[x] Tests Fase 0 (acceso ver/editar, versiones, constraint) + regresión.
+
+FOR-007 — PROGRAMA DE REVISIÓN POR LA DIRECCIÓN
+[x] integrar_formatos_sgc --solo=007 (Formato + config/seed oficial).
+[x] UI admin de estructura/seed (repetidor de aspectos).
+[x] services/for_007.py: registro anual, N filas, seed/import por año, marcas P/V,
+    timestamps, versiones, marcar_ejecutado(anio, mes), auditoría IP real.
+[x] Vista matriz + pestaña "Aspectos del año" (agregar/quitar), Conforme editable,
+    historial de versiones, Guardar borrador / Publicar.
+[x] Export dinámico N filas (30/hoja + continuación), IDL-013 intacta, XLSX/PDF.
+[x] Tests (N<14, =14, >30, seed, versiones, acceso, Conforme, IDL, PDF).
+[x] CONTEXT §29.11 + docs/adr/0005-sgc-for-007-programa-revision.md.
+
+FOR-009 — MINUTA
+[ ] integrar_formatos_sgc --solo=009 (Formato + campos/secciones + mapeo celdas).
+[ ] Captura con motor dinámico; asistentes 3 iniciales + agregar; 7/hoja + continuación.
+[ ] services/for_009.py (export a cajas exactas, continuación, IDL-015 intacta).
+[ ] Acceso AccesoFormato ver/editar; listado/detalle.
+[ ] Campos tipo_reunion/anio/mes + hook marcar_ejecutado (sin integrar aún).
+[ ] Tests + CONTEXT §29.12 + docs/adr/0006-sgc-for-009-minuta.md.
+
+BACKLOG
+[ ] FOR-007: restaurar versión.
+[ ] FOR-009: versionado de minutas.
+[ ] Enlace Minuta <-> Programa (marcar_ejecutado).

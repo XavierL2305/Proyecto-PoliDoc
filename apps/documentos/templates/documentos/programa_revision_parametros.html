@@ -1,0 +1,75 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Parámetros Programa de Revisión - POLIDOC{% endblock %}
+
+{% block app_content %}
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap;margin-bottom:1.5rem;">
+  <div>
+    <h1 style="font-size:1.25rem;margin:0;">Parámetros SGC-FOR-007</h1>
+    <p style="color:var(--color-muted);font-size:.85rem;margin:.35rem 0 0;">
+      El administrador define la <strong>estructura/seed</strong> (aspectos por
+      defecto y tope por hoja). Cada año edita su propio contenido.
+    </p>
+  </div>
+  <a class="btn btn--ghost btn--sm" href="{% url 'documentos:programa_revision' %}">
+    <i class="fa-solid fa-arrow-left"></i> Volver
+  </a>
+</div>
+
+<form method="post">
+  {% csrf_token %}
+  <div class="form-card">
+    <div class="form-card-header"><h3>Seed de aspectos (punto de partida)</h3></div>
+    <div class="form-card-body" style="padding:0;">
+      <div style="overflow-x:auto;">
+        <table class="table" style="width:100%;">
+          <thead>
+            <tr><th>Aspecto</th><th>Información documentada a revisar</th><th></th></tr>
+          </thead>
+          <tbody id="seed-body">
+            {% for item in seed %}
+            <tr>
+              <td><input type="text" class="form-input" name="seed_etiqueta_{{ forloop.counter0 }}" value="{{ item.etiqueta }}"></td>
+              <td><input type="text" class="form-input" name="seed_informacion_{{ forloop.counter0 }}" value="{{ item.informacion }}"></td>
+              <td><button type="button" class="btn btn--danger btn--sm"
+                          onclick="this.closest('tr').remove()">✕</button></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="form-card-footer" style="justify-content:space-between;flex-wrap:wrap;gap:.5rem;">
+      <button type="button" class="btn btn--ghost btn--sm" onclick="agregarSeed()">
+        <i class="fa-solid fa-plus"></i> Agregar aspecto
+      </button>
+      <div style="display:flex;gap:.75rem;align-items:flex-end;flex-wrap:wrap;">
+        <div class="form-group" style="margin:0;">
+          <label class="form-label">Máx. filas por hoja</label>
+          <input type="number" name="max_filas_hoja" class="form-input"
+                 value="{{ max_filas_hoja }}" min="1" max="200" style="width:120px;">
+        </div>
+        <button type="submit" class="btn btn--primary">Guardar parámetros</button>
+      </div>
+    </div>
+  </div>
+</form>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var _seedIdx = {{ seed|length }};
+function agregarSeed() {
+  var tbody = document.getElementById('seed-body');
+  var tr = document.createElement('tr');
+  tr.innerHTML =
+    '<td><input type="text" class="form-input" name="seed_etiqueta_' + _seedIdx + '"></td>' +
+    '<td><input type="text" class="form-input" name="seed_informacion_' + _seedIdx + '"></td>' +
+    '<td><button type="button" class="btn btn--danger btn--sm" ' +
+    'onclick="this.closest(\'tr\').remove()">✕</button></td>';
+  tbody.appendChild(tr);
+  _seedIdx += 1;
+}
+</script>
+{% endblock %}
