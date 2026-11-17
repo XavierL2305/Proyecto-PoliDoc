@@ -148,6 +148,14 @@ FOR-009 — MINUTA
 [x] Campos tipo_reunion/anio/mes + hook marcar_ejecutado (checkbox).
 [x] Tests + CONTEXT §29.12 + docs/adr/0006-sgc-for-009-minuta.md.
 
+ENDURECIMIENTO FOR-009 (post 5819963)
+[x] Hook FOR-007 solo con permiso editar del programa + auditoría + checkbox oculto.
+[x] marcar_ejecutado bajo lock (sin lost update) y permiso en servicio.
+[x] Versionado de minutas (alta/edición con cambios) + historial read-only.
+[x] Merges sin solapes, escritura segura y alturas/anexo para texto largo.
+[x] Permisos antes de buscar UUID + validación de año 2000–2100.
+
 BACKLOG
 [ ] FOR-007: restaurar versión.
-[ ] FOR-009: versionado de minutas.
+[x] FOR-009: versionado de minutas.
+[ ] FOR-009: estado Emitida/cierre y bloqueo de edición tras firma física.

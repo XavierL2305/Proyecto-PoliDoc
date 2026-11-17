@@ -11,7 +11,9 @@ planificada, Nº ``XXX - NPR``).
 """
 import io
 import logging
+import math
 import re
+import textwrap
 import uuid
 
 from django.db import transaction
@@ -52,6 +54,19 @@ ETIQUETAS = {
     'acuerdos_cerrados': 'Acuerdos Cerrados:',
     'acuerdos_pendientes': 'Acuerdos Pendientes:',
     'responsables': 'Responsables de la Aprobaciòn: ',
+}
+RANGOS_TEXTO = {
+    'tema': 'A33:J36',
+    'conclusiones': 'A38:J44',
+    'acuerdos_cerrados': 'A46:J52',
+    'acuerdos_pendientes': 'A54:J60',
+    'responsables': 'A65:H65',
+}
+ETIQUETAS_CAMPO = {
+    'objetivo': 'Objetivo de la Reunión',
+    'lugar': 'Lugar',
+    'responsable': 'Responsable de la Elaboración',
+    'duracion': 'Duración',
 }
 MESES = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN',
          'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC']
@@ -140,13 +155,29 @@ def _titulo(respuestas, fecha):
     return f'Minuta {fecha_txt}'.strip()
 
 
+def validar_anio(valor):
+    """Valida el año de la reunión (2000–2100)."""
+    try:
+        anio = int(str(valor).strip())
+    except (TypeError, ValueError):
+        raise ValueError(
+            'El año debe ser un número entre 2000 y 2100.',
+        ) from None
+    if not 2000 <= anio <= 2100:
+        raise ValueError('El año debe estar entre 2000 y 2100.')
+    return anio
+
+
 def anio_mes(respuestas, fecha):
     """Año/mes (clave ENE..DIC) para marcar el programa FOR-007."""
     respuestas = respuestas or {}
-    anio = respuestas.get('anio') or (fecha.year if fecha else None)
-    try:
-        anio = int(anio)
-    except (TypeError, ValueError):
+    anio = respuestas.get('anio')
+    if anio not in (None, ''):
+        try:
+            anio = validar_anio(anio)
+        except ValueError:
+            anio = fecha.year if fecha else timezone.localdate().year
+    else:
         anio = fecha.year if fecha else timezone.localdate().year
     mes = str(respuestas.get('mes') or '').upper()
     if mes not in MESES:
@@ -175,25 +206,34 @@ def crear_minuta(*, fecha=None, respuestas=None, usuario=None):
         respuestas['reunion_no'] = validar_reunion_no(
             respuestas.get('reunion_no'),
         )
-    registro = RegistroFormato.objects.create(
-        formato=formato,
-        formato_codigo=FORMATO_FOR_009,
-        formato_version=formato.version or '',
-        formato_edicion=formato.edicion or '',
-        contexto_tipo=CONTEXTO_TIPO,
-        contexto_id=uuid.uuid4().hex,
-        titulo=_titulo(respuestas, fecha),
-        fecha=fecha,
-        responsable=usuario,
-        estado='borrador',
-        respuestas=respuestas,
-    )
+    from .versiones import registrar_version
+
+    with transaction.atomic():
+        registro = RegistroFormato.objects.create(
+            formato=formato,
+            formato_codigo=FORMATO_FOR_009,
+            formato_version=formato.version or '',
+            formato_edicion=formato.edicion or '',
+            contexto_tipo=CONTEXTO_TIPO,
+            contexto_id=uuid.uuid4().hex,
+            titulo=_titulo(respuestas, fecha),
+            fecha=fecha,
+            responsable=usuario,
+            estado='borrador',
+            respuestas=respuestas,
+        )
+        registrar_version(registro, usuario, resumen='Alta de minuta')
     return registro
 
 
 def guardar_minuta(registro, respuestas, *, fecha=None, usuario=None):
-    """Actualiza respuestas/fecha/título e invalida el XLSX/PDF guardado."""
+    """Actualiza respuestas/fecha/título, versiona e invalida los archivos.
+
+    Si no hay cambios reales no crea una versión nueva ni invalida el
+    XLSX/PDF (evita ruido de historial y regeneraciones inútiles).
+    """
     from ..models import RegistroFormato
+    from .versiones import registrar_version
 
     respuestas = dict(respuestas or {})
     if respuestas.get('reunion_no'):
@@ -204,10 +244,19 @@ def guardar_minuta(registro, respuestas, *, fecha=None, usuario=None):
         bloqueado = RegistroFormato.objects.select_for_update().get(
             pk=registro.pk,
         )
-        if fecha is not None:
-            bloqueado.fecha = fecha
+        nueva_fecha = fecha if fecha is not None else bloqueado.fecha
+        nuevo_titulo = _titulo(respuestas, nueva_fecha)
+        sin_cambios = (
+            dict(bloqueado.respuestas or {}) == respuestas
+            and bloqueado.fecha == nueva_fecha
+            and bloqueado.titulo == nuevo_titulo
+        )
+        if sin_cambios:
+            return registro
+
+        bloqueado.fecha = nueva_fecha
         bloqueado.respuestas = respuestas
-        bloqueado.titulo = _titulo(respuestas, bloqueado.fecha)
+        bloqueado.titulo = nuevo_titulo
         for campo_archivo in ('archivo', 'archivo_pdf'):
             archivo = getattr(bloqueado, campo_archivo)
             if archivo:
@@ -221,6 +270,7 @@ def guardar_minuta(registro, respuestas, *, fecha=None, usuario=None):
             'respuestas', 'titulo', 'fecha', 'archivo', 'archivo_pdf',
             'actualizado',
         ])
+        registrar_version(bloqueado, usuario, resumen='Edición de minuta')
         registro.respuestas = bloqueado.respuestas
         registro.titulo = bloqueado.titulo
         registro.fecha = bloqueado.fecha
@@ -238,30 +288,127 @@ def _fecha_texto(valor):
 
 
 def _merge_si_falta(hoja, rango):
-    if rango not in {str(r) for r in hoja.merged_cells.ranges}:
-        hoja.merge_cells(rango)
+    """Mergea solo si no hay un merge existente que lo cubra o solape.
+
+    Nunca crea merges solapados (Excel abriría el archivo con "reparar").
+    """
+    from openpyxl.worksheet.cell_range import CellRange
+
+    nuevo = CellRange(rango)
+    for existente in hoja.merged_cells.ranges:
+        if nuevo.isdisjoint(existente):
+            continue
+        contiene = (
+            existente.min_row <= nuevo.min_row
+            and existente.max_row >= nuevo.max_row
+            and existente.min_col <= nuevo.min_col
+            and existente.max_col >= nuevo.max_col
+        )
+        if not contiene:
+            logger.warning(
+                'El merge %s solapa parcialmente con %s; se respeta la plantilla.',
+                rango, existente,
+            )
+        return
+    hoja.merge_cells(rango)
 
 
-def _escribir_texto_bloque(hoja, celda, etiqueta, valor):
+def _celda_escribible(hoja, ref):
+    from openpyxl.cell.cell import MergedCell
+
+    celda = hoja[ref]
+    if isinstance(celda, MergedCell):
+        logger.warning('Se omite la escritura en la celda mergeada %s.', ref)
+        return None
+    return celda
+
+
+def _escribir_celda(hoja, ref, valor):
+    celda = _celda_escribible(hoja, ref)
+    if celda is not None:
+        celda.value = valor
+    return celda
+
+
+def _ancho_rango(hoja, rango):
+    from openpyxl.utils import get_column_letter, range_boundaries
+
+    min_col, _, max_col, _ = range_boundaries(rango)
+    total = 0
+    for columna in range(min_col, max_col + 1):
+        ancho = hoja.column_dimensions[get_column_letter(columna)].width
+        total += ancho or 8.43
+    return total
+
+
+def _lineas_estimadas(texto, ancho):
+    limite = max(10, int(ancho))
+    lineas = 0
+    for parrafo in str(texto or '').split('\n'):
+        lineas += max(1, math.ceil(len(parrafo) / limite))
+    return max(1, lineas)
+
+
+def _ajustar_altura_bloque(hoja, rango, texto):
+    """Aumenta las filas del merge para que el texto quepa (tope Excel 409).
+
+    Returns:
+        bool: ``True`` si cupo; ``False`` si quedó desbordado y debe ir a un
+        anexo de texto.
+    """
+    from openpyxl.utils import range_boundaries
+
+    _, min_row, _, max_row = range_boundaries(rango)
+    lineas = _lineas_estimadas(texto, _ancho_rango(hoja, rango))
+    necesario = lineas * 15 + 4
+    filas = list(range(min_row, max_row + 1))
+    actuales = {
+        fila: (hoja.row_dimensions[fila].height or 15) for fila in filas
+    }
+    exceso = necesario - sum(actuales.values())
+    if exceso <= 0:
+        return True
+    for fila in reversed(filas):
+        if exceso <= 0:
+            break
+        actual = actuales[fila]
+        capacidad = max(0, 409 - actual)
+        agregar = min(exceso, capacidad)
+        if agregar:
+            hoja.row_dimensions[fila].height = actual + agregar
+            exceso -= agregar
+    if exceso > 0:
+        logger.warning(
+            'El texto de %s supera la altura máxima; se enviará al anexo.',
+            rango,
+        )
+    return exceso <= 0
+
+
+def _escribir_texto_bloque(hoja, celda, etiqueta, valor, rango):
     from openpyxl.styles import Alignment
 
     texto = f'{etiqueta}\n{valor}' if valor else etiqueta
-    hoja[celda] = texto
-    hoja[celda].alignment = Alignment(
-        horizontal='left', vertical='top', wrap_text=True,
-    )
+    celda_obj = _escribir_celda(hoja, celda, texto)
+    if celda_obj is not None:
+        celda_obj.alignment = Alignment(
+            horizontal='left', vertical='top', wrap_text=True,
+        )
+    return _ajustar_altura_bloque(hoja, rango, texto)
 
 
 def _escribir_campo(hoja, clave, valor):
     from openpyxl.styles import Alignment
 
-    celda = CELDAS[clave]
-    hoja[celda] = valor or ''
-    hoja[celda].alignment = Alignment(
-        horizontal='left', vertical='center', wrap_text=True,
-    )
+    celda_obj = _escribir_celda(hoja, CELDAS[clave], valor or '')
     if clave in MERGES:
         _merge_si_falta(hoja, MERGES[clave])
+    if celda_obj is not None:
+        celda_obj.alignment = Alignment(
+            horizontal='left', vertical='center', wrap_text=True,
+        )
+    rango = MERGES.get(clave, CELDAS[clave])
+    return _ajustar_altura_bloque(hoja, rango, valor or '')
 
 
 def _escribir_asistentes(hoja, filas, config):
@@ -273,7 +420,39 @@ def _escribir_asistentes(hoja, filas, config):
         numero = inicio + offset
         for clave, columna in columnas.items():
             if columna:
-                hoja[f'{columna}{numero}'] = str(fila.get(clave) or '')
+                _escribir_celda(
+                    hoja, f'{columna}{numero}', str(fila.get(clave) or ''),
+                )
+
+
+def _crear_anexo_texto(wb, respuestas, registro, desbordes):
+    """Hoja de anexo simple (una línea por fila) para textos desbordados."""
+    from openpyxl.styles import Alignment, Font
+
+    hoja = wb.create_sheet('SGC-FOR-009 (Anexo)')
+    hoja.column_dimensions['A'].width = 110
+    hoja['A1'] = (
+        f'ANEXO DE CONTENIDO — MINUTA Nº {respuestas.get("reunion_no", "")}'
+    )
+    hoja['A1'].font = Font(bold=True, size=12)
+    hoja['A2'] = f'Fecha: {_fecha_texto(registro.fecha)}'
+    fila = 4
+    for etiqueta, valor in desbordes:
+        hoja.cell(fila, 1, etiqueta).font = Font(bold=True)
+        fila += 1
+        for parrafo in str(valor or '').split('\n'):
+            lineas = textwrap.wrap(
+                parrafo, width=110, break_long_words=False,
+                replace_whitespace=False,
+            ) or ['']
+            for linea in lineas:
+                hoja.cell(fila, 1, linea).alignment = Alignment(
+                    vertical='top',
+                )
+                fila += 1
+        fila += 1
+    hoja.page_setup.orientation = 'portrait'
+    return hoja
 
 
 def generar_xlsx(registro):
@@ -307,55 +486,58 @@ def generar_xlsx(registro):
         nueva.title = f'{HOJA_FOR_009} ({indice + 1})'
         hojas.append(nueva)
 
+    desbordes = []
     for indice, (hoja, trozo) in enumerate(zip(hojas, trozos), start=1):
         es_primera = indice == 1
-        hoja[CELDAS['pagina']] = f'PAGINA: {indice} DE {total}'
-        hoja[CELDAS['reunion_no']] = respuestas.get('reunion_no', '')
-        hoja[CELDAS['fecha']] = _fecha_texto(registro.fecha)
+        _escribir_celda(hoja, CELDAS['pagina'], f'PAGINA: {indice} DE {total}')
+        _escribir_celda(
+            hoja, CELDAS['reunion_no'], respuestas.get('reunion_no', ''),
+        )
+        _escribir_celda(hoja, CELDAS['fecha'], _fecha_texto(registro.fecha))
         _merge_si_falta(hoja, 'B10:C11')
         if es_primera:
-            _escribir_campo(hoja, 'objetivo', respuestas.get('objetivo'))
-            _escribir_campo(hoja, 'lugar', respuestas.get('lugar'))
-            _escribir_campo(hoja, 'responsable',
-                            respuestas.get('responsable_elaboracion'))
-            _escribir_campo(hoja, 'duracion', respuestas.get('duracion'))
-            _escribir_texto_bloque(
-                hoja, CELDAS['tema'], ETIQUETAS['tema'],
-                respuestas.get('tema'),
-            )
-            _escribir_texto_bloque(
-                hoja, CELDAS['conclusiones'], ETIQUETAS['conclusiones'],
-                respuestas.get('conclusiones'),
-            )
-            _escribir_texto_bloque(
-                hoja, CELDAS['acuerdos_cerrados'],
-                ETIQUETAS['acuerdos_cerrados'],
-                respuestas.get('acuerdos_cerrados'),
-            )
-            _escribir_texto_bloque(
-                hoja, CELDAS['acuerdos_pendientes'],
-                ETIQUETAS['acuerdos_pendientes'],
-                respuestas.get('acuerdos_pendientes'),
-            )
-            _escribir_texto_bloque(
-                hoja, CELDAS['responsables'], ETIQUETAS['responsables'],
-                respuestas.get('responsables_aprobacion'),
-            )
-            hoja.row_dimensions[65].height = 45
+            for clave, valor in (
+                ('objetivo', respuestas.get('objetivo')),
+                ('lugar', respuestas.get('lugar')),
+                ('responsable', respuestas.get('responsable_elaboracion')),
+                ('duracion', respuestas.get('duracion')),
+            ):
+                if not _escribir_campo(hoja, clave, valor):
+                    desbordes.append((ETIQUETAS_CAMPO[clave], valor))
+            for clave, etiqueta in (
+                ('tema', ETIQUETAS['tema']),
+                ('conclusiones', ETIQUETAS['conclusiones']),
+                ('acuerdos_cerrados', ETIQUETAS['acuerdos_cerrados']),
+                ('acuerdos_pendientes', ETIQUETAS['acuerdos_pendientes']),
+                ('responsables', ETIQUETAS['responsables']),
+            ):
+                valor = (
+                    respuestas.get('responsables_aprobacion')
+                    if clave == 'responsables' else respuestas.get(clave)
+                )
+                if not _escribir_texto_bloque(
+                    hoja, CELDAS[clave], etiqueta, valor,
+                    RANGOS_TEXTO[clave],
+                ):
+                    desbordes.append((etiqueta, valor))
         else:
             # Hoja de continuación: solo identificación + asistentes.
             for clave in ('objetivo', 'lugar', 'responsable', 'duracion'):
-                hoja[CELDAS[clave]] = ''
+                _escribir_celda(hoja, CELDAS[clave], '')
             for ref in ('A13', 'A16', 'A20', 'A22'):
-                hoja[ref] = ''
+                _escribir_celda(hoja, ref, '')
             for clave in ('conclusiones', 'acuerdos_cerrados',
                           'acuerdos_pendientes', 'responsables'):
-                hoja[CELDAS[clave]] = ''
-            hoja['A33'] = (
+                _escribir_celda(hoja, CELDAS[clave], '')
+            _escribir_celda(
+                hoja, 'A33',
                 f'Continuación de asistentes — Minuta Nº '
-                f'{respuestas.get("reunion_no", "")}'
+                f'{respuestas.get("reunion_no", "")}',
             )
         _escribir_asistentes(hoja, trozo, config)
+
+    if desbordes:
+        hojas.append(_crear_anexo_texto(wb, respuestas, registro, desbordes))
 
     orden = list(hojas) + [s for s in wb.worksheets if s not in hojas]
     wb._sheets = orden

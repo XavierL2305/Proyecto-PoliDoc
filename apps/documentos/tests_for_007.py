@@ -191,6 +191,28 @@ class ProgramaTest(BaseFor007Test):
         self.assertEqual(fila['marcas']['MAR'], 'V')
         self.assertIn('ejecutado_en', fila['meta']['MAR'])
 
+    def test_marcar_ejecutado_conserva_filas_nuevas(self):
+        registro = self._programa(2026)
+        aspectos = self._aspectos(registro)
+        aspectos[0]['marcas'] = {'MAR': 'P'}
+        aspectos.append({
+            'clave': 'nueva', 'etiqueta': 'Aspecto agregado',
+            'informacion': 'Información nueva', 'marcas': {}, 'meta': {},
+        })
+        svc.guardar_programa(registro, aspectos, usuario=self.user_admin)
+        n = svc.marcar_ejecutado(2026, 'MAR', usuario=self.user_admin)
+        self.assertEqual(n, 1)
+        registro.refresh_from_db()
+        claves = [a['clave'] for a in self._aspectos(registro)]
+        self.assertIn('nueva', claves)
+
+    def test_marcar_ejecutado_exige_permiso_editar(self):
+        self._programa(2026)
+        with self.assertRaises(PermissionError):
+            svc.marcar_ejecutado(
+                2026, 'MAR', usuario=self.user_trabajador,
+            )
+
 
 class ExportTest(BaseFor007Test):
     def _programa_con(self, n):

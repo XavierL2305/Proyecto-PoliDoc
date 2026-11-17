@@ -45,4 +45,27 @@
     {% include 'documentos/_formato_dinamico.html' with formato=formato respuestas=respuestas read_only=True %}
   </div>
 </div>
+
+{% if versiones %}
+<div class="form-card" style="max-width:980px;margin:1rem auto 0;">
+  <div class="form-card-header"><h3>Historial de versiones</h3></div>
+  <div class="form-card-body" style="padding:0;">
+    <div style="overflow-x:auto;">
+      <table class="table" style="width:100%;">
+        <thead><tr><th>#</th><th>Fecha</th><th>Usuario</th><th>Resumen</th></tr></thead>
+        <tbody>
+          {% for v in versiones %}
+          <tr>
+            <td>{{ v.numero }}</td>
+            <td>{{ v.creado|date:"d/m/Y H:i" }}</td>
+            <td>{{ v.creado_por.get_full_name|default:v.creado_por.username|default:"—" }}</td>
+            <td>{{ v.resumen|default:"—" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
 {% endblock %}

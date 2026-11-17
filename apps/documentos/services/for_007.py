@@ -322,6 +322,59 @@ def _normalizar_conforme(conforme, actual=None):
     }
 
 
+def _guardar_programa_bloqueado(bloqueado, aspectos, conforme=None,
+                                usuario=None, resumen='', config=None):
+    """Guarda sobre un registro YA bloqueado (``select_for_update``).
+
+    Es el punto único de escritura de aspectos/marcas/Conforme. Quien llame
+    debe tener el lock del registro en la misma transacción.
+    """
+    respuestas = dict(bloqueado.respuestas or {})
+    actuales = list(respuestas.get('aspectos') or [])
+    config = config or config_for_007(bloqueado.formato)
+    ahora = timezone.now()
+    nuevas, marcas_cambiadas = _normalizar_aspectos(
+        aspectos, actuales, config, ahora,
+    )
+    nuevo_conforme = _normalizar_conforme(
+        conforme, respuestas.get('conforme'),
+    )
+    sin_cambios = (
+        _mismo_contenido(actuales, nuevas)
+        and (respuestas.get('conforme') or {}) == nuevo_conforme
+    )
+    if sin_cambios:
+        return {'cambio': False, 'marcas': 0, 'version': None}
+
+    respuestas['aspectos'] = nuevas
+    respuestas['conforme'] = nuevo_conforme
+    respuestas.setdefault('anio', anio_del_programa(bloqueado))
+    bloqueado.respuestas = respuestas
+    # El XLSX/PDF guardado queda desactualizado: se invalida para que la
+    # próxima descarga/regeneración refleje el estado vigente.
+    for campo_archivo in ('archivo', 'archivo_pdf'):
+        archivo = getattr(bloqueado, campo_archivo)
+        if archivo:
+            try:
+                archivo.delete(save=False)
+            except Exception:  # noqa: BLE001
+                pass
+    bloqueado.archivo = ''
+    bloqueado.archivo_pdf = ''
+    campos = ['respuestas', 'archivo', 'archivo_pdf', 'actualizado']
+    if bloqueado.estado == ESTADO_PUBLICADO:
+        bloqueado.estado = ESTADO_BORRADOR
+        campos.append('estado')
+    bloqueado.save(update_fields=campos)
+    version = registrar_version(
+        bloqueado, usuario,
+        resumen=(resumen or f'Guardado ({marcas_cambiadas} marca(s))'),
+    )
+    return {
+        'cambio': True, 'marcas': marcas_cambiadas, 'version': version.numero,
+    }
+
+
 def guardar_programa(registro, aspectos, conforme=None, usuario=None,
                      resumen=''):
     """Guarda filas/marcas/Conforme y crea versión si hubo cambios.
@@ -331,57 +384,18 @@ def guardar_programa(registro, aspectos, conforme=None, usuario=None,
     """
     from ..models import RegistroFormato
 
-    formato = registro.formato
-    config = config_for_007(formato)
-    ahora = timezone.now()
     with transaction.atomic():
         bloqueado = RegistroFormato.objects.select_for_update().get(
             pk=registro.pk,
         )
-        respuestas = dict(bloqueado.respuestas or {})
-        actuales = list(respuestas.get('aspectos') or [])
-        nuevas, marcas_cambiadas = _normalizar_aspectos(
-            aspectos, actuales, config, ahora,
+        resultado = _guardar_programa_bloqueado(
+            bloqueado, aspectos, conforme=conforme, usuario=usuario,
+            resumen=resumen,
         )
-        nuevo_conforme = _normalizar_conforme(
-            conforme, respuestas.get('conforme'),
-        )
-        sin_cambios = (
-            _mismo_contenido(actuales, nuevas)
-            and (respuestas.get('conforme') or {}) == nuevo_conforme
-        )
-        if sin_cambios:
-            return {'cambio': False, 'marcas': 0, 'version': None}
-
-        respuestas['aspectos'] = nuevas
-        respuestas['conforme'] = nuevo_conforme
-        respuestas.setdefault('anio', anio_del_programa(bloqueado))
-        bloqueado.respuestas = respuestas
-        # El XLSX/PDF guardado queda desactualizado: se invalida para que la
-        # próxima descarga/regeneración refleje el estado vigente.
-        for campo_archivo in ('archivo', 'archivo_pdf'):
-            archivo = getattr(bloqueado, campo_archivo)
-            if archivo:
-                try:
-                    archivo.delete(save=False)
-                except Exception:  # noqa: BLE001
-                    pass
-        bloqueado.archivo = ''
-        bloqueado.archivo_pdf = ''
-        campos = ['respuestas', 'archivo', 'archivo_pdf', 'actualizado']
-        if bloqueado.estado == ESTADO_PUBLICADO:
-            bloqueado.estado = ESTADO_BORRADOR
-            campos.append('estado')
-        bloqueado.save(update_fields=campos)
-        version = registrar_version(
-            bloqueado, usuario,
-            resumen=(resumen or f'Guardado ({marcas_cambiadas} marca(s))'),
-        )
-        registro.respuestas = bloqueado.respuestas
-        registro.estado = bloqueado.estado
-    return {
-        'cambio': True, 'marcas': marcas_cambiadas, 'version': version.numero,
-    }
+        if resultado['cambio']:
+            registro.respuestas = bloqueado.respuestas
+            registro.estado = bloqueado.estado
+    return resultado
 
 
 def publicar_programa(registro, usuario=None):
@@ -437,23 +451,45 @@ def cargar_seed(registro, anio_origen, usuario=None):
 
 
 def marcar_ejecutado(anio, mes, usuario=None):
-    """Hook (FOR-009): marca como ``V`` los aspectos planificados del mes."""
-    registro = _programa_por_anio(anio)
-    if registro is None:
+    """Hook (FOR-009): marca como ``V`` los aspectos planificados del mes.
+
+    Lee y transforma la lista bajo el lock del programa, de modo que un guardado
+    concurrente del FOR-007 no se pierda. El lock se mantiene hasta el commit.
+    """
+    from ..models import RegistroFormato
+    from . import acceso_formato
+
+    formato = formato_for_007()
+    if formato is None:
         return 0
+    try:
+        anio_int = int(anio)
+    except (TypeError, ValueError):
+        return 0
+    if usuario is not None and not acceso_formato.puede_editar(usuario, formato):
+        raise PermissionError(
+            'No tienes permiso de edición en el Programa de Revisión.',
+        )
     mes = str(mes or '').strip().upper()
-    aspectos = aspecto(registro)
-    tocados = 0
-    for item in aspectos:
-        if (item.get('marcas') or {}).get(mes) == 'P':
-            item.setdefault('marcas', {})[mes] = 'V'
-            tocados += 1
-    if not tocados:
-        return 0
-    guardar_programa(
-        registro, aspectos, usuario=usuario,
-        resumen=f'Ejecución de {mes} ({tocados} aspecto(s))',
-    )
+    with transaction.atomic():
+        bloqueado = RegistroFormato.objects.select_for_update().filter(
+            formato=formato, contexto_tipo=CONTEXTO_TIPO,
+            contexto_id=str(anio_int),
+        ).first()
+        if bloqueado is None:
+            return 0
+        aspectos = aspecto(bloqueado)
+        tocados = 0
+        for item in aspectos:
+            if (item.get('marcas') or {}).get(mes) == 'P':
+                item.setdefault('marcas', {})[mes] = 'V'
+                tocados += 1
+        if not tocados:
+            return 0
+        _guardar_programa_bloqueado(
+            bloqueado, aspectos, usuario=usuario,
+            resumen=f'Ejecución de {mes} ({tocados} aspecto(s))',
+        )
     return tocados
 
 

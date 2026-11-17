@@ -8034,6 +8034,9 @@ def _marcar_ejecutado_desde_minuta(request, registro, respuestas):
     anio, mes = svc.anio_mes(respuestas, registro.fecha)
     try:
         marcados = programa.marcar_ejecutado(anio, mes, usuario=request.user)
+    except PermissionError as exc:
+        messages.warning(request, str(exc))
+        return
     except Exception as exc:  # noqa: BLE001 - no romper el alta de la minuta
         logger.warning('No se pudo marcar el FOR-007 desde la minuta: %s', exc)
         messages.warning(
@@ -8043,6 +8046,18 @@ def _marcar_ejecutado_desde_minuta(request, registro, respuestas):
         )
         return
     if marcados:
+        programa_007 = _registro_programa_007(anio)
+        if programa_007 is not None:
+            _auditar_programa(
+                request, programa_007,
+                'programa_revision_ejecutado_desde_minuta', {
+                    'minuta_uuid': str(registro.uuid),
+                    'minuta_titulo': registro.titulo,
+                    'anio': anio,
+                    'mes': mes,
+                    'aspectos': marcados,
+                },
+            )
         messages.success(
             request,
             f'Se marcaron {marcados} aspecto(s) de {mes} {anio} como '
@@ -8127,6 +8142,11 @@ def _form_minuta(request, registro=None):
                 )
         except ValueError as exc:
             errores.append(str(exc))
+        if nuevas.get('anio'):
+            try:
+                nuevas['anio'] = str(svc.validar_anio(nuevas.get('anio')))
+            except ValueError as exc:
+                errores.append(str(exc))
         if not svc.asistentes(nuevas):
             errores.append('Registra al menos un asistente a la reunión.')
 
@@ -8145,7 +8165,14 @@ def _form_minuta(request, registro=None):
             _auditar_minuta(request, registro, accion)
             if (nuevas.get('tipo_reunion') == 'revision'
                     and request.POST.get('marcar_ejecutado')):
-                _marcar_ejecutado_desde_minuta(request, registro, nuevas)
+                if _puede_editar_programa(request.user):
+                    _marcar_ejecutado_desde_minuta(request, registro, nuevas)
+                else:
+                    messages.warning(
+                        request,
+                        'No tienes permiso de edición en el Programa de '
+                        'Revisión; no se marcó el mes como ejecutado.',
+                    )
             messages.success(request, 'Minuta guardada correctamente.')
             return redirect(
                 'documentos:minuta_detalle', minuta_uuid=registro.uuid,
@@ -8162,6 +8189,7 @@ def _form_minuta(request, registro=None):
         'respuestas': respuestas,
         'edicion': es_edicion,
         'registro': registro,
+        'puede_marcar_programa': _puede_editar_programa(request.user),
     })
 
 
@@ -8172,23 +8200,26 @@ def minuta_crear(request):
 
 @login_required(login_url='/login/')
 def minuta_editar(request, minuta_uuid):
-    registro = _minuta_o_404(minuta_uuid)
     if not _puede_editar_minuta(request.user):
-        messages.error(request, 'No tienes permisos para editar esta minuta.')
-        return redirect('documentos:minuta_detalle', minuta_uuid=registro.uuid)
+        messages.error(request, 'No tienes permisos para editar minutas.')
+        return redirect('documentos:minutas_lista')
+    registro = _minuta_o_404(minuta_uuid)
     return _form_minuta(request, registro=registro)
 
 
 @login_required(login_url='/login/')
 def minuta_detalle(request, minuta_uuid):
-    registro = _minuta_o_404(minuta_uuid)
     if not _puede_ver_minuta(request.user):
         messages.error(request, 'No tienes acceso a esta minuta.')
         return redirect('documentos:minutas_lista')
+    registro = _minuta_o_404(minuta_uuid)
+    from .services import versiones as svc_versiones
+
     return render(request, 'documentos/minuta_detalle.html', {
         'registro': registro,
         'formato': registro.formato,
         'respuestas': dict(registro.respuestas or {}),
+        'versiones': svc_versiones.versiones(registro),
         'puede_editar': _puede_editar_minuta(request.user),
         'puede_gestionar_acceso': request.user.perfil.es_administrador,
     })
@@ -8198,11 +8229,11 @@ def minuta_detalle(request, minuta_uuid):
 def minuta_descargar(request, minuta_uuid, formato):
     from .services import for_009 as svc
 
-    registro = _minuta_o_404(minuta_uuid)
     if not _puede_ver_minuta(request.user):
         raise Http404
     if formato not in ('xlsx', 'pdf'):
         raise Http404
+    registro = _minuta_o_404(minuta_uuid)
     puede_editar = _puede_editar_minuta(request.user)
     destino = reverse(
         'documentos:minuta_detalle', kwargs={'minuta_uuid': registro.uuid},

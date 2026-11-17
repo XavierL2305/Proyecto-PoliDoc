@@ -25,6 +25,7 @@
       <hr style="margin:1rem 0;">
       {% include 'documentos/_formato_dinamico.html' with formato=formato respuestas=respuestas read_only=False %}
 
+      {% if puede_marcar_programa %}
       <div id="marcar-ejecutado-wrap" class="form-group" style="margin-top:1rem;padding:1rem;border:1px solid var(--color-border);border-radius:.5rem;">
         <label style="display:flex;gap:.6rem;align-items:flex-start;cursor:pointer;">
           <input type="checkbox" name="marcar_ejecutado" value="1" {% if not edicion %}checked{% endif %}>
@@ -37,6 +38,7 @@
           </span>
         </label>
       </div>
+      {% endif %}
     </div>
     <div class="form-card-footer">
       {% if edicion %}

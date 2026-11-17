@@ -3,6 +3,7 @@ import io
 import json
 import os
 import tempfile
+import uuid
 from datetime import date
 from unittest.mock import MagicMock, patch
 
@@ -15,11 +16,12 @@ from django.urls import reverse
 from tests_base import BaseDocumentosTest, MONGO_PATCH_TARGET
 
 from documentos.models import (
-    AccesoFormato, Formato, RegistroFormato,
+    AccesoFormato, Formato, RegistroFormato, VersionRegistroFormato,
 )
 from documentos.services import for_007 as for_007
 from documentos.services import for_009 as svc
 from documentos.services import registros as regsvc
+from documentos.services import versiones as versiones_svc
 from documentos.tests_sgc_utils import (
     crear_plantilla_for_007, crear_plantilla_for_009,
 )
@@ -383,3 +385,175 @@ class AccesoAdminTest(BaseFor009Test):
         self.client.force_login(self.user_trabajador)
         response = self.client.get(reverse('documentos:minuta_acceso'))
         self.assertEqual(response.status_code, 302)
+
+
+class VersionadoTest(BaseFor009Test):
+    def test_crear_versiona(self):
+        registro = self._crear()
+        self.assertEqual(
+            VersionRegistroFormato.objects.filter(registro=registro).count(),
+            1,
+        )
+        self.assertEqual(versiones_svc.ultima_version(registro).numero, 1)
+
+    def test_editar_versiona_y_noop_no_duplica(self):
+        registro = self._crear()
+        svc.guardar_minuta(
+            registro, datos_minuta(objetivo='Objetivo actualizado'),
+            fecha=date(2026, 3, 16), usuario=self.user_admin,
+        )
+        self.assertEqual(
+            VersionRegistroFormato.objects.filter(registro=registro).count(),
+            2,
+        )
+        svc.guardar_minuta(
+            registro, datos_minuta(objetivo='Objetivo actualizado'),
+            fecha=date(2026, 3, 16), usuario=self.user_admin,
+        )
+        self.assertEqual(
+            VersionRegistroFormato.objects.filter(registro=registro).count(),
+            2,
+        )
+
+    def test_detalle_muestra_historial(self):
+        registro = self._crear()
+        self.client.force_login(self.user_admin)
+        response = self.client.get(
+            reverse('documentos:minuta_detalle',
+                    kwargs={'minuta_uuid': registro.uuid}),
+        )
+        self.assertContains(response, 'Historial de versiones')
+        self.assertContains(response, 'Alta de minuta')
+
+
+class PermisoHookTest(BaseFor009Test):
+    def _programa_con_planificado(self):
+        programa = for_007.programa_anual(
+            2026, crear=True, usuario=self.user_admin,
+        )
+        aspectos = for_007.aspecto(programa)
+        aspectos[0].setdefault('marcas', {})['MAR'] = 'P'
+        for_007.guardar_programa(programa, aspectos, usuario=self.user_admin)
+        return programa
+
+    def test_editor_de_minuta_sin_for_007_no_modifica_programa(self):
+        programa = self._programa_con_planificado()
+        from documentos.services import acceso_formato
+
+        acceso_formato.otorgar(
+            self.user_trabajador, self.formato, nivel='editar',
+            otorgado_por=self.user_admin,
+        )
+        self.client.force_login(self.user_trabajador)
+        response = self.client.get(reverse('documentos:minuta_crear'))
+        self.assertNotContains(response, 'name="marcar_ejecutado"')
+
+        data = self._post_data()
+        data['marcar_ejecutado'] = '1'
+        response = self.client.post(reverse('documentos:minuta_crear'), data)
+        self.assertEqual(response.status_code, 302)
+        programa.refresh_from_db()
+        self.assertEqual(
+            for_007.aspecto(programa)[0]['marcas']['MAR'], 'P',
+        )
+
+    def test_hook_audita_programa(self):
+        self._programa_con_planificado()
+        self.client.force_login(self.user_admin)
+        data = self._post_data()
+        data['marcar_ejecutado'] = '1'
+        with patch('documentos.views._auditar_programa') as audit:
+            response = self.client.post(
+                reverse('documentos:minuta_crear'), data,
+            )
+        self.assertEqual(response.status_code, 302)
+        audit.assert_called_once()
+        args = audit.call_args.args
+        self.assertEqual(args[2], 'programa_revision_ejecutado_desde_minuta')
+        self.assertIn('minuta_uuid', args[3])
+
+
+class MergeSeguroTest(BaseFor009Test):
+    def test_merge_existente_no_se_solapa(self):
+        import openpyxl
+
+        wb = openpyxl.Workbook()
+        hoja = wb.active
+        hoja.merge_cells('B18:D18')
+        svc._merge_si_falta(hoja, 'B18:C18')
+        rangos = {str(r) for r in hoja.merged_cells.ranges}
+        self.assertIn('B18:D18', rangos)
+        self.assertNotIn('B18:C18', rangos)
+
+    def test_no_escribe_en_merged_cell(self):
+        import openpyxl
+
+        wb = openpyxl.Workbook()
+        hoja = wb.active
+        hoja.merge_cells('A1:B1')
+        self.assertIsNone(svc._escribir_celda(hoja, 'B1', 'x'))
+        self.assertIsNone(hoja['A1'].value)
+
+
+class TextoLargoTest(BaseFor009Test):
+    def test_altura_de_bloque_crece(self):
+        registro = self._crear(tema=' '.join(['detalle'] * 250))
+        wb = openpyxl.load_workbook(
+            io.BytesIO(svc.generar_xlsx(registro)),
+        )
+        hoja = wb['SGC-FOR-009']
+        self.assertGreater(hoja.row_dimensions[36].height or 15, 15)
+        self.assertIn('detalle', hoja['A33'].value)
+
+    def test_desborde_va_a_anexo(self):
+        registro = self._crear(
+            responsables_aprobacion=' '.join(['palabra'] * 3000),
+        )
+        wb = openpyxl.load_workbook(
+            io.BytesIO(svc.generar_xlsx(registro)),
+        )
+        self.assertIn('SGC-FOR-009 (Anexo)', wb.sheetnames)
+        anexo = wb['SGC-FOR-009 (Anexo)']
+        texto = ' '.join(
+            str(celda.value or '')
+            for fila in anexo.iter_rows() for celda in fila
+        )
+        self.assertIn('palabra', texto)
+
+
+class OrdenPermisosAnioTest(BaseFor009Test):
+    def test_sin_acceso_no_enumera(self):
+        registro = self._crear()
+        self.client.force_login(self.user_trabajador)
+        for identificador in (registro.uuid, uuid.uuid4()):
+            response = self.client.get(
+                reverse('documentos:minuta_detalle',
+                        kwargs={'minuta_uuid': identificador}),
+            )
+            self.assertEqual(response.status_code, 302)
+            response = self.client.get(
+                reverse('documentos:minuta_descargar',
+                        kwargs={'minuta_uuid': identificador,
+                                'formato': 'xlsx'}),
+            )
+            self.assertEqual(response.status_code, 404)
+            response = self.client.get(
+                reverse('documentos:minuta_editar',
+                        kwargs={'minuta_uuid': identificador}),
+            )
+            self.assertEqual(response.status_code, 302)
+
+    def test_anio_fuera_de_rango(self):
+        self.client.force_login(self.user_admin)
+        for anio in ('1999', '2101', 'abc'):
+            response = self.client.post(
+                reverse('documentos:minuta_crear'),
+                self._post_data(anio=anio),
+            )
+            self.assertEqual(response.status_code, 200)
+        self.assertFalse(
+            RegistroFormato.objects.filter(contexto_tipo='minuta').exists(),
+        )
+        self.assertEqual(svc.validar_anio('2026'), 2026)
+        with self.assertRaises(ValueError):
+            svc.validar_anio('1800')

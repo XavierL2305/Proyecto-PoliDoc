@@ -3209,7 +3209,10 @@ origen (p. ej. en CI, donde `documentacion/` no está versionado),
       desde `documentacion/SGC-FOR-009  Minuta.xlsx` (doble espacio).
     - Cada minuta es un `RegistroFormato` con contexto `minuta`/uuid,
       `estado='borrador'`, `fecha` de la reunión y título automático
-      `Minuta {reunion_no} — {dd/mm/aaaa}`. **Sin versionado** (backlog).
+      `Minuta {reunion_no} — {dd/mm/aaaa}`. **Versionada** con
+      `VersionRegistroFormato` al alta y en ediciones con cambios (historial
+      read-only en el detalle; una edición sin cambios no versiona ni invalida
+      archivos). Estado “Emitida/cierre” queda pendiente en backlog.
     - Campos: `reunion_no` (consecutivo `1..9999` o `001 - NPR`), `objetivo`,
       `lugar`, `responsable_elaboracion`, `duracion`, `tipo_reunion`
       (Revisión por la Dirección / Otra), `anio`, `mes` (clave ENE..DIC),
@@ -3221,21 +3224,30 @@ origen (p. ej. en CI, donde `documentacion/` no está versionado),
     - **Hook FOR-007**: checkbox (marcado por defecto al crear) para
       `tipo_reunion='revision'`: llama `for_007.marcar_ejecutado(anio, mes)` y
       convierte P→V los aspectos planificados de ese mes; informa cuántos
-      marcó. Las minutas quedan excluidas de `/documentos/registros/`
-      (`CONTEXTOS_VISTA_EXCLUSIVA` incluye `minuta`).
+      marcó. Solo se muestra/ejecuta con `AccesoFormato` **editar** en FOR-007
+      (el servicio revalida) y se audita como
+      `programa_revision_ejecutado_desde_minuta` con el UUID de la minuta.
+      `marcar_ejecutado` transforma la lista bajo `select_for_update` para no
+      perder ediciones concurrentes. Las minutas quedan excluidas de
+      `/documentos/registros/` (`CONTEXTOS_VISTA_EXCLUSIVA` incluye `minuta`).
     - Acceso `AccesoFormato` ver/editar (admin siempre); menú “Minutas” visible
       con ver. Rutas: `/documentos/minutas/`, `/nueva/`, `/<uuid>/`,
       `/<uuid>/editar/`, `/<uuid>/<xlsx|pdf>/`, `/acceso/`.
     - Export dedicado `services/for_009.py`: cajas exactas de la hoja
       `SGC-FOR-009` con merges/wrap (`C13:J14`, `B16:F16`, `B18:C18`,
-      `B20:H20`, `B22:C22`; bloque A65 con altura), **7 asistentes/hoja** y
-      continuación `SGC-FOR-009 (2)…` con `PAGINA k DE n`; conserva
-      `SGC-IDL-015` (sus 2 páginas, imágenes y bloque de firmas del
-      instructivo) intacto. Sin SES: la minuta no tiene bloque de firmas, se
-      imprime y firma en físico. XLSX/PDF bajo demanda; editar invalida ambos.
-    - Tests: `tests_for_009` (19) con plantilla sintética; validación de Nº,
-      prefijo, hook P→V, acceso ver/editar, exclusión de registros, export a
-      celdas/merges, continuación 10 asistentes e IDL.
+      `B20:H20`, `B22:C22`; bloque A65), comprobación de solapes con
+      `CellRange` y escritura segura (`MergedCell`), **7 asistentes/hoja** y
+      continuación `SGC-FOR-009 (2)…` con `PAGINA k DE n`; alturas dinámicas
+      según el texto y anexo `SGC-FOR-009 (Anexo)` si desborda el máximo de
+      Excel; conserva `SGC-IDL-015` (sus 2 páginas, imágenes y bloque de
+      firmas del instructivo) intacto. Sin SES: la minuta no tiene bloque de
+      firmas, se imprime y firma en físico. XLSX/PDF bajo demanda; editar
+      invalida ambos. Los permisos se validan antes de buscar el UUID y el año
+      debe estar entre 2000 y 2100.
+    - Tests: `tests_for_009` (30) con plantilla sintética; validación de Nº,
+      prefijo, hook P→V con permiso/auditoría, versionado, acceso ver/editar
+      sin enumeración, rango de año, exclusión de registros, export a
+      celdas/merges, alturas/anexo de texto, continuación 10 asistentes e IDL.
 
 -------------------------------------------------------------------
 30. FIRMA ELECTRÓNICA DE DISTRIBUCIÓN (SES)
