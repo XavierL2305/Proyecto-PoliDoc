@@ -192,3 +192,21 @@ class AssetsSidebarTest(BaseDocumentosTest):
         self.assertIn('initGroups', contenido)
         # Los toggles son <button>: el cierre del drawer aplica solo a enlaces.
         self.assertIn("querySelectorAll('a.sidebar-item')", contenido)
+
+
+class SidebarUrlNameTest(BaseDocumentosTest):
+    def test_url_name_none_no_rompe_el_sidebar(self):
+        from types import SimpleNamespace
+
+        from django.template.loader import render_to_string
+        from django.test import RequestFactory
+
+        request = RequestFactory().get('/')
+        request.user = self.user_admin
+        request.resolver_match = SimpleNamespace(url_name=None)
+        html = render_to_string(
+            'partials/_sidebar_nav.html',
+            {'user': self.user_admin},
+            request=request,
+        )
+        self.assertIn('sidebar', html)

@@ -271,12 +271,16 @@ def _sello_texto(filas):
 
 
 def _copiar_hoja(wb, base):
-    """Copia la hoja base conservando merges (openpyxl no siempre los copia)."""
+    """Copia la hoja base conservando merges e imágenes (openpyxl no las copia)."""
+    import copy as _copy
+
     nueva = wb.copy_worksheet(base)
     existentes = {str(rango) for rango in nueva.merged_cells.ranges}
     for rango in base.merged_cells.ranges:
         if str(rango) not in existentes:
             nueva.merge_cells(str(rango))
+    for imagen in base._images:
+        nueva._images.append(_copy.deepcopy(imagen))
     return nueva
 
 

@@ -20,7 +20,7 @@ from django.utils import timezone
 from tests_base import BaseDocumentosTest, MONGO_PATCH_TARGET
 
 from documentos.models import (
-    CambioDocumento, FirmaElectronica, Formato, PlanillaCambios,
+    CambioDocumento, Documento, FirmaElectronica, Formato, PlanillaCambios,
 )
 from documentos.services import for_003 as svc
 from documentos.tests_sgc_utils import crear_plantilla_for_003
@@ -361,3 +361,79 @@ class AprobacionFor003Test(BaseFor003Test):
             f.autorizado_por == self.user_jefe_gg for f in autorizadas
         ))
         self.assertTrue(planilla.for_003_xlsx.name)
+
+
+class EnvioFor003Test(BaseFor003Test):
+    """1.1/1.2: no se puede enviar sin FOR-003; las plantillas no lo exigen."""
+
+    def _url_enviar(self, planilla):
+        return reverse('documentos:enviar_planilla', args=[planilla.uuid])
+
+    def test_borrador_sin_filas_no_se_envia(self):
+        planilla = self._planilla()
+        self.client.force_login(self.user_trabajador)
+        resp = self.client.get(self._url_enviar(planilla), follow=True)
+        self.assertEqual(resp.status_code, 200)
+        planilla.refresh_from_db()
+        self.assertEqual(planilla.estado, 'borrador')
+        self.assertContains(resp, 'Debes registrar al menos un cambio')
+
+    def test_borrador_con_filas_se_envia(self):
+        planilla = self._planilla()
+        self._filas(planilla, n=1)
+        self.client.force_login(self.user_trabajador)
+        self.client.get(self._url_enviar(planilla), follow=True)
+        planilla.refresh_from_db()
+        self.assertEqual(planilla.estado, 'en_revision')
+
+    def test_plantilla_no_exige_for_003(self):
+        plantilla_doc = Documento.objects.create(
+            tipo=self.tipo_formulario, nombre='Plantilla FOR-003',
+            codigo='TI-FOR-PLT-903', estado='activo', es_plantilla=True,
+            propietario=self.user_jefe_ti, departamento=self.depto_ti,
+            version_actual='1.0',
+        )
+        planilla = self._planilla(
+            documento=plantilla_doc, responsable=self.user_jefe_ti,
+        )
+        self.client.force_login(self.user_jefe_ti)
+        resp = self.client.get(self._url_enviar(planilla), follow=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotContains(resp, 'Debes registrar al menos un cambio')
+        self.assertFalse(
+            svc.filas_de_planilla(planilla).exists(),
+        )
+        planilla.refresh_from_db()
+        self.assertNotEqual(planilla.estado, 'borrador')
+
+    def test_plantilla_no_muestra_editor_for_003(self):
+        plantilla_doc = Documento.objects.create(
+            tipo=self.tipo_formulario, nombre='Plantilla sin FOR-003',
+            codigo='TI-FOR-PLT-904', estado='activo', es_plantilla=True,
+            propietario=self.user_jefe_ti, departamento=self.depto_ti,
+            version_actual='1.0',
+        )
+        self.client.force_login(self.user_jefe_ti)
+        resp = self.client.get(self._url_crear(plantilla_doc))
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.context['for_003_editable'])
+
+
+class CopiaHojaTest(BaseFor003Test):
+    def test_copiar_hoja_conserva_imagen(self):
+        import openpyxl
+        from openpyxl.drawing.image import Image as XLImage
+        from PIL import Image as PILImage
+
+        buf = io.BytesIO()
+        PILImage.new('RGB', (1, 1), 'white').save(buf, format='PNG')
+        buf.seek(0)
+
+        wb = openpyxl.Workbook()
+        base = wb.active
+        base.title = 'SGC-FOR-003'
+        base.add_image(XLImage(buf), 'A1')
+        self.assertEqual(len(base._images), 1)
+
+        nueva = svc._copiar_hoja(wb, base)
+        self.assertEqual(len(nueva._images), 1)

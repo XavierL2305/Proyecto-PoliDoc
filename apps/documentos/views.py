@@ -3464,6 +3464,10 @@ def crear_planilla(request):
             messages.error(request, 'No tienes permisos para editar este documento.')
             return redirect('documentos:detalle', tipo=documento.tipo_id, documento_id=documento.uuid)
 
+    # SGC-FOR-003 aplica a documentos controlados, no a plantillas (su
+    # aprobación simplificada no autoriza la tabla de cambios).
+    aplica_for_003 = bool(documento and not documento.es_plantilla)
+
     # Auto-reanudar el borrador propio del documento: evita duplicados y
     # pérdida de lo ya escrito (FOR-005 y filas FOR-003) al entrar de nuevo.
     if (request.method == 'GET' and documento is not None
@@ -3519,9 +3523,12 @@ def crear_planilla(request):
             )
         except (TypeError, ValueError):
             cambios_crudos = []
-        cambios_for_003, errores_for_003 = svc_for_003.parsear_filas(
-            cambios_crudos, parcial=(accion == 'borrador'),
-        )
+        if aplica_for_003:
+            cambios_for_003, errores_for_003 = svc_for_003.parsear_filas(
+                cambios_crudos, parcial=(accion == 'borrador'),
+            )
+        else:
+            cambios_for_003, errores_for_003 = [], []
         for err in errores_for_003:
             messages.error(request, err)
 
@@ -3577,8 +3584,9 @@ def crear_planilla(request):
             if accion == 'borrador':
                 planilla.estado = 'borrador'
                 planilla.save()
-                with transaction.atomic():
-                    svc_for_003.guardar_filas(planilla, cambios_for_003)
+                if aplica_for_003:
+                    with transaction.atomic():
+                        svc_for_003.guardar_filas(planilla, cambios_for_003)
                 form.save_m2m()
                 _procesar_asociados_planilla(
                     planilla, request, permitir_asociados, documento, request.user
@@ -3587,8 +3595,9 @@ def crear_planilla(request):
                 return redirect('documentos:detalle_planilla', planilla_uuid=planilla.uuid)
             else:
                 planilla.save()
-                with transaction.atomic():
-                    svc_for_003.guardar_filas(planilla, cambios_for_003)
+                if aplica_for_003:
+                    with transaction.atomic():
+                        svc_for_003.guardar_filas(planilla, cambios_for_003)
                 if planilla.solicitud_cambio:
                     _autollenar_envio(planilla.solicitud_cambio, request.user)
                 form.save_m2m()
@@ -3746,7 +3755,7 @@ def crear_planilla(request):
         'numero_pagina': '',
         'autorizado_por': '',
     }
-    for_003_editable = documento is not None and (
+    for_003_editable = aplica_for_003 and (
         planilla_existente is None or planilla_existente.estado == 'borrador'
     )
 
@@ -4409,6 +4418,26 @@ def enviar_planilla(request, planilla_uuid):
                 for err in errores:
                     messages.error(request, err)
                 return redirect('documentos:detalle_planilla', planilla_uuid=planilla.uuid)
+
+        # Un borrador pudo guardarse sin filas FOR-003 (parcial=True). Al
+        # enviarlo a revisión se exige la tabla completa para no saltarse el
+        # requisito del SGC-FOR-003 (solo documentos, no plantillas).
+        if planilla.tipo_cambio == 'modificacion' and not documento.es_plantilla:
+            from .services import for_003 as svc_for_003
+
+            filas_guardadas = [
+                {'numero_pagina': f.numero_pagina, 'descripcion': f.descripcion}
+                for f in svc_for_003.filas_de_planilla(planilla)
+            ]
+            _, errores_003 = svc_for_003.parsear_filas(
+                filas_guardadas, parcial=False,
+            )
+            if errores_003:
+                for err in errores_003:
+                    messages.error(request, err)
+                return redirect(
+                    'documentos:detalle_planilla', planilla_uuid=planilla.uuid,
+                )
 
         planilla.estado = 'en_revision'
         planilla.save(update_fields=['estado'])
