@@ -1,6 +1,7 @@
 """Tests de la Fase 0: AccesoFormato, versiones y constraint anual."""
 from django.db import IntegrityError, transaction
-from django.test import TestCase
+from django.test import Client, TestCase
+from django.urls import reverse
 
 from tests_base import BaseDocumentosTest
 
@@ -160,3 +161,73 @@ class ConstraintAnualTest(BaseDocumentosTest):
             ).count(),
             2,
         )
+
+
+class RegistrosVivosNoGenericosTest(BaseDocumentosTest):
+    """Los registros vivos (FOR-006/007) no se editan desde el editor genérico."""
+
+    def setUp(self):
+        super().setUp()
+        self.formato = Formato.objects.create(
+            codigo='TEST-F0-LIVE', nombre='Living', version='1',
+        )
+
+        def _registro(contexto_tipo, contexto_id, titulo):
+            return RegistroFormato.objects.create(
+                formato=self.formato, formato_codigo='TEST-F0-LIVE',
+                contexto_tipo=contexto_tipo, contexto_id=contexto_id,
+                titulo=titulo, responsable=self.user_admin,
+                estado='borrador',
+            )
+
+        self.vivo = _registro('sistema', 'lista-maestra', 'ZZZ-VIVO-LISTA')
+        self.programa = _registro('programa_revision', '2026', 'ZZZ-VIVO-PROG')
+        self.normal = _registro('documento', 'x', 'Registro normal')
+
+    def test_excluidos_y_bloqueados(self):
+        from documentos.services.registros import (
+            puede_aprobar_registro, puede_editar_registro, puede_ver_registro,
+            registros_visibles,
+        )
+
+        visibles = registros_visibles(self.user_admin)
+        self.assertIn(self.normal, visibles)
+        self.assertNotIn(self.vivo, visibles)
+        self.assertNotIn(self.programa, visibles)
+        self.assertFalse(puede_ver_registro(self.user_admin, self.vivo))
+        self.assertFalse(puede_editar_registro(self.user_admin, self.vivo))
+        self.assertFalse(puede_editar_registro(self.user_admin, self.programa))
+        self.assertFalse(puede_aprobar_registro(self.user_admin, self.programa))
+        self.assertTrue(puede_ver_registro(self.user_admin, self.normal))
+
+    def test_lista_generica_no_los_muestra(self):
+        client = Client()
+        client.force_login(self.user_admin)
+        resp = client.get(reverse('documentos:registros_lista'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Registro normal')
+        self.assertNotContains(resp, 'ZZZ-VIVO-LISTA')
+        self.assertNotContains(resp, 'ZZZ-VIVO-PROG')
+
+    def test_editar_vivo_no_cambia(self):
+        client = Client()
+        client.force_login(self.user_admin)
+        client.post(
+            reverse('documentos:registro_editar', args=[self.vivo.uuid]),
+            {'titulo': 'Hackeado'},
+        )
+        self.vivo.refresh_from_db()
+        self.assertEqual(self.vivo.titulo, 'ZZZ-VIVO-LISTA')
+
+    def test_modelos_registrados_en_admin(self):
+        from django.contrib import admin
+        from documentos.models import (
+            AccesoFormato, ActaDesincorporacion, DocumentoSinCodigo,
+            VersionRegistroFormato,
+        )
+
+        for modelo in (
+            AccesoFormato, VersionRegistroFormato, DocumentoSinCodigo,
+            ActaDesincorporacion,
+        ):
+            self.assertTrue(admin.site.is_registered(modelo))

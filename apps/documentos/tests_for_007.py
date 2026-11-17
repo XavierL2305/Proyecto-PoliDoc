@@ -336,16 +336,18 @@ class VistaTest(BaseFor007Test):
         self._crear(2026)
         import json as _json
 
-        resp = self.client.post(
-            reverse('documentos:programa_revision_guardar'), {
-                'anio': 2026,
-                'aspectos_json': _json.dumps([
-                    {'clave': 'k1', 'etiqueta': 'A', 'informacion': 'B',
-                     'marcas': {}},
-                ]),
-                'accion': 'publicar',
-            },
-        )
+        with patch('documentos.services.xlsx_comun.xlsx_bytes_a_pdf',
+                   return_value=PDF):
+            resp = self.client.post(
+                reverse('documentos:programa_revision_guardar'), {
+                    'anio': 2026,
+                    'aspectos_json': _json.dumps([
+                        {'clave': 'k1', 'etiqueta': 'A', 'informacion': 'B',
+                         'marcas': {}},
+                    ]),
+                    'accion': 'publicar',
+                },
+            )
         self.assertEqual(resp.status_code, 302)
         registro = svc.programa_anual(2026)
         self.assertEqual(registro.estado, 'aprobado')
@@ -459,3 +461,143 @@ class VistaTest(BaseFor007Test):
             )
         self.assertEqual(resp.status_code, 200)
         self.assertIn('attachment', resp['Content-Disposition'])
+
+
+class HardeningFor007Test(BaseFor007Test):
+    def test_ver_no_puede_regenerar(self):
+        self._programa(2026)
+        self.client.force_login(self.user_admin)
+        self.client.post(
+            reverse('documentos:programa_revision_acceso'),
+            {'usuario_id': self.user_trabajador.id, 'nivel': 'ver'},
+        )
+        self.client.force_login(self.user_trabajador)
+        resp = self.client.get(
+            reverse('documentos:programa_revision'), {'anio': 2026},
+        )
+        self.assertNotContains(resp, 'Regenerar')
+
+        resp = self.client.post(
+            reverse('documentos:programa_revision_generar'), {'anio': 2026},
+        )
+        self.assertEqual(resp.status_code, 302)
+        registro = svc.programa_anual(2026)
+        self.assertFalse(registro.archivo)
+
+    def test_anio_invalido_no_crea_programa(self):
+        self.client.force_login(self.user_admin)
+        resp = self.client.post(
+            reverse('documentos:programa_revision_guardar'), {
+                'anio': 99999, 'aspectos_json': '[]', 'accion': 'guardar',
+            },
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(
+            RegistroFormato.objects.filter(contexto_id='99999').exists(),
+        )
+        # Tampoco se creó el año actual implícitamente.
+        self.assertFalse(
+            RegistroFormato.objects.filter(
+                formato=self.formato, contexto_tipo='programa_revision',
+            ).exists(),
+        )
+
+    def test_ver_sin_programa_del_anio_abre_ultimo(self):
+        self._programa(2024)
+        self.client.force_login(self.user_admin)
+        self.client.post(
+            reverse('documentos:programa_revision_acceso'),
+            {'usuario_id': self.user_trabajador.id, 'nivel': 'ver'},
+        )
+        self.client.force_login(self.user_trabajador)
+        resp = self.client.get(reverse('documentos:programa_revision'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, '2024')
+
+    def test_ver_sin_ningun_programa_no_entra_en_bucle(self):
+        self.client.force_login(self.user_admin)
+        self.client.post(
+            reverse('documentos:programa_revision_acceso'),
+            {'usuario_id': self.user_trabajador.id, 'nivel': 'ver'},
+        )
+        self.client.force_login(self.user_trabajador)
+        resp = self.client.get(reverse('documentos:programa_revision'))
+        self.assertEqual(resp.status_code, 302)
+        self.assertNotIn('/programa-revision/', resp.url)
+
+    def test_guardar_invalida_archivos(self):
+        self._programa(2026)
+        with patch('documentos.services.xlsx_comun.xlsx_bytes_a_pdf',
+                   return_value=PDF):
+            registro = svc.programa_anual(2026)
+            svc.generar_y_guardar(registro, forzar=True)
+        registro.refresh_from_db()
+        self.assertTrue(registro.archivo)
+
+        import json as _json
+
+        self.client.force_login(self.user_admin)
+        self.client.post(
+            reverse('documentos:programa_revision_guardar'), {
+                'anio': 2026,
+                'aspectos_json': _json.dumps([
+                    {'clave': 'k1', 'etiqueta': 'A', 'informacion': 'B',
+                     'marcas': {'ENE': 'P'}},
+                ]),
+                'accion': 'guardar',
+            },
+        )
+        registro.refresh_from_db()
+        self.assertFalse(registro.archivo)
+        self.assertFalse(registro.archivo_pdf)
+
+    def test_descarga_ver_sin_archivo_no_genera(self):
+        self._programa(2026)
+        self.client.force_login(self.user_admin)
+        self.client.post(
+            reverse('documentos:programa_revision_acceso'),
+            {'usuario_id': self.user_trabajador.id, 'nivel': 'ver'},
+        )
+        self.client.force_login(self.user_trabajador)
+        resp = self.client.get(
+            reverse('documentos:programa_revision_descargar', args=['xlsx']),
+            {'anio': 2026},
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(svc.programa_anual(2026).archivo)
+
+    def test_parametros_indice_alto(self):
+        self.client.force_login(self.user_admin)
+        self.client.post(
+            reverse('documentos:programa_revision_parametros'), {
+                'seed_etiqueta_900': 'Aspecto 900',
+                'seed_informacion_900': 'Info 900',
+                'max_filas_hoja': 30,
+            },
+        )
+        config = svc.config_for_007(self.formato)
+        self.assertEqual(len(config['seed']), 1)
+        self.assertEqual(config['seed'][0]['etiqueta'], 'Aspecto 900')
+
+    def test_parametros_sin_campo_no_rompe(self):
+        from documentos.models import CampoFormato
+        CampoFormato.objects.filter(
+            seccion__formato=self.formato, clave='aspectos',
+        ).delete()
+        self.client.force_login(self.user_admin)
+        resp = self.client.get(reverse('documentos:programa_revision_parametros'))
+        self.assertEqual(resp.status_code, 302)
+
+    def test_nosniff_descarga(self):
+        self._programa(2026)
+        with patch('documentos.services.xlsx_comun.xlsx_bytes_a_pdf',
+                   return_value=PDF):
+            registro = svc.programa_anual(2026)
+            svc.generar_y_guardar(registro, forzar=True)
+        self.client.force_login(self.user_admin)
+        resp = self.client.get(
+            reverse('documentos:programa_revision_descargar', args=['xlsx']),
+            {'anio': 2026},
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp['X-Content-Type-Options'], 'nosniff')

@@ -357,7 +357,18 @@ def guardar_programa(registro, aspectos, conforme=None, usuario=None,
         respuestas['conforme'] = nuevo_conforme
         respuestas.setdefault('anio', anio_del_programa(bloqueado))
         bloqueado.respuestas = respuestas
-        campos = ['respuestas', 'actualizado']
+        # El XLSX/PDF guardado queda desactualizado: se invalida para que la
+        # próxima descarga/regeneración refleje el estado vigente.
+        for campo_archivo in ('archivo', 'archivo_pdf'):
+            archivo = getattr(bloqueado, campo_archivo)
+            if archivo:
+                try:
+                    archivo.delete(save=False)
+                except Exception:  # noqa: BLE001
+                    pass
+        bloqueado.archivo = ''
+        bloqueado.archivo_pdf = ''
+        campos = ['respuestas', 'archivo', 'archivo_pdf', 'actualizado']
         if bloqueado.estado == ESTADO_PUBLICADO:
             bloqueado.estado = ESTADO_BORRADOR
             campos.append('estado')

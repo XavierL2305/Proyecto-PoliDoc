@@ -7380,10 +7380,12 @@ def lista_maestra_descargar(request, formato):
         if not registro.archivo:
             messages.error(request, 'No se pudo generar el XLSX.')
             return redirect('documentos:lista_maestra')
-        return FileResponse(
+        response = FileResponse(
             registro.archivo.open('rb'), as_attachment=True,
             filename=svc.nombre_archivo(registro, 'xlsx'),
         )
+        response['X-Content-Type-Options'] = 'nosniff'
+        return response
 
     if not registro.archivo_pdf:
         svc.generar_y_guardar(registro, forzar=True)
@@ -7392,10 +7394,12 @@ def lista_maestra_descargar(request, formato):
             request, 'No se pudo generar el PDF (LibreOffice).',
         )
         return redirect('documentos:lista_maestra')
-    return FileResponse(
+    response = FileResponse(
         registro.archivo_pdf.open('rb'), as_attachment=True,
         filename=svc.nombre_archivo(registro, 'pdf'),
     )
+    response['X-Content-Type-Options'] = 'nosniff'
+    return response
 
 
 @login_required(login_url='/login/')
@@ -7510,11 +7514,16 @@ def _registro_programa_007(anio, crear=False, usuario=None, seed_anio=None):
 
 
 def _anio_solicitado(request):
+    actual = timezone.localdate().year
     try:
-        return int(request.GET.get('anio') or request.POST.get('anio')
-                   or timezone.localdate().year)
+        anio = int(
+            request.GET.get('anio') or request.POST.get('anio') or actual,
+        )
     except (TypeError, ValueError):
-        return timezone.localdate().year
+        return actual
+    if not (2000 <= anio <= 2100):
+        return actual
+    return anio
 
 
 @login_required(login_url='/login/')
@@ -7532,13 +7541,16 @@ def programa_revision(request):
         )
         return redirect('documentos:formatos_lista')
 
+    disponibles = svc.anios_disponibles()
     anio = _anio_solicitado(request)
+    if not request.GET.get('anio') and anio not in disponibles and disponibles:
+        anio = disponibles[0]
     registro = _registro_programa_007(anio)
     puede_editar = _puede_editar_programa(request.user)
     contexto = {
         'formato': formato,
         'anio': anio,
-        'anios_disponibles': svc.anios_disponibles(),
+        'anios_disponibles': disponibles,
         'puede_editar': puede_editar,
         'es_admin': request.user.perfil.es_administrador,
     }
@@ -7547,7 +7559,12 @@ def programa_revision(request):
             messages.error(
                 request, 'El programa de ese año no existe.',
             )
-            return redirect('documentos:programa_revision')
+            if disponibles:
+                return redirect(
+                    f"{reverse('documentos:programa_revision')}"
+                    f"?anio={disponibles[0]}"
+                )
+            return redirect('documentos:mis_documentos')
         return render(request, 'documentos/programa_revision_crear.html', contexto)
 
     config = svc.config_for_007(formato)
@@ -7630,9 +7647,7 @@ def programa_revision_guardar(request):
         messages.error(request, 'No tienes permisos para editar el programa.')
         return redirect('documentos:programa_revision')
     anio = _anio_solicitado(request)
-    registro = _registro_programa_007(
-        anio, crear=True, usuario=request.user,
-    )
+    registro = _registro_programa_007(anio)
     if registro is None:
         messages.error(request, 'No se pudo abrir el programa.')
         return redirect('documentos:programa_revision')
@@ -7662,6 +7677,13 @@ def programa_revision_guardar(request):
                 request, registro, 'programa_revision_publicado',
                 {'anio': anio, 'version': version.numero},
             )
+            generado = svc.generar_y_guardar(registro, forzar=True)
+            if not generado.get('success'):
+                messages.warning(
+                    request,
+                    'Publicado, pero no se pudo generar el XLSX/PDF: '
+                    f"{generado.get('error') or 'error desconocido'}",
+                )
             messages.success(request, f'Programa {anio} publicado.')
         else:
             messages.info(request, f'El programa {anio} ya estaba publicado.')
@@ -7683,9 +7705,7 @@ def programa_revision_copiar(request):
         messages.error(request, 'No tienes permisos para editar el programa.')
         return redirect('documentos:programa_revision')
     anio = _anio_solicitado(request)
-    registro = _registro_programa_007(
-        anio, crear=True, usuario=request.user,
-    )
+    registro = _registro_programa_007(anio)
     if registro is None:
         messages.error(request, 'No se pudo abrir el programa.')
         return redirect('documentos:programa_revision')
@@ -7708,9 +7728,9 @@ def programa_revision_copiar(request):
 def programa_revision_generar(request):
     from .services import for_007 as svc
 
-    if not _puede_ver_programa(request.user):
-        messages.error(request, 'No tienes acceso al Programa de Revisión.')
-        return redirect('documentos:mis_documentos')
+    if not _puede_editar_programa(request.user):
+        messages.error(request, 'No tienes permisos para regenerar el programa.')
+        return redirect('documentos:programa_revision')
     anio = _anio_solicitado(request)
     registro = _registro_programa_007(anio)
     if registro is None:
@@ -7742,25 +7762,44 @@ def programa_revision_descargar(request, formato):
     registro = _registro_programa_007(anio)
     if registro is None:
         raise Http404
+    puede_editar = _puede_editar_programa(request.user)
+    destino = f"{reverse('documentos:programa_revision')}?anio={anio}"
     if formato == 'xlsx':
         if not registro.archivo:
+            if not puede_editar:
+                messages.error(
+                    request,
+                    'El XLSX no está generado. Solicita a un editor que lo '
+                    'regenere.',
+                )
+                return redirect(destino)
             svc.generar_y_guardar(registro, forzar=True)
         if not registro.archivo:
             messages.error(request, 'No se pudo generar el XLSX.')
-            return redirect(f"{reverse('documentos:programa_revision')}?anio={anio}")
-        return FileResponse(
+            return redirect(destino)
+        response = FileResponse(
             registro.archivo.open('rb'), as_attachment=True,
             filename=svc.nombre_archivo(registro, 'xlsx'),
         )
+        response['X-Content-Type-Options'] = 'nosniff'
+        return response
     if not registro.archivo_pdf:
+        if not puede_editar:
+            messages.error(
+                request,
+                'El PDF no está generado. Solicita a un editor que lo regenere.',
+            )
+            return redirect(destino)
         svc.generar_y_guardar(registro, forzar=True)
     if not registro.archivo_pdf:
         messages.error(request, 'No se pudo generar el PDF (LibreOffice).')
-        return redirect(f"{reverse('documentos:programa_revision')}?anio={anio}")
-    return FileResponse(
+        return redirect(destino)
+    response = FileResponse(
         registro.archivo_pdf.open('rb'), as_attachment=True,
         filename=svc.nombre_archivo(registro, 'pdf'),
     )
+    response['X-Content-Type-Options'] = 'nosniff'
+    return response
 
 
 @login_required(login_url='/login/')
@@ -7813,11 +7852,24 @@ def programa_revision_parametros(request):
         messages.error(request, 'El formato SGC-FOR-007 no está integrado.')
         return redirect('documentos:formatos_lista')
     campo = svc.campo_aspectos(formato)
+    if campo is None:
+        messages.error(
+            request, 'El formato SGC-FOR-007 no tiene el campo aspectos.',
+        )
+        return redirect('documentos:formatos_lista')
     config = svc.config_for_007(formato)
 
     if request.method == 'POST':
+        indices = set()
+        for clave in request.POST:
+            for prefijo in ('seed_etiqueta_', 'seed_informacion_'):
+                if clave.startswith(prefijo):
+                    try:
+                        indices.add(int(clave[len(prefijo):]))
+                    except (TypeError, ValueError):
+                        pass
         seed = []
-        for i in range(0, 500):
+        for i in sorted(indices):
             etiqueta = (request.POST.get(f'seed_etiqueta_{i}') or '').strip()
             informacion = (
                 request.POST.get(f'seed_informacion_{i}') or ''

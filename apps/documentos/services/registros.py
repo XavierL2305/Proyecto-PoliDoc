@@ -25,12 +25,19 @@ def _es_admin(usuario):
     )
 
 
+#: Contextos de "registro vivo" con vista exclusiva propia (FOR-006/FOR-007).
+#: No deben aparecer ni editarse desde el editor genérico de registros.
+CONTEXTOS_VISTA_EXCLUSIVA = ('sistema', 'programa_revision')
+
+
 def registros_visibles(usuario):
     """QuerySet de registros que el usuario puede ver."""
     from ..models import Documento, RegistroFormato
     from ..permissions import q_documentos_visibles
 
-    qs = RegistroFormato.objects.all()
+    qs = RegistroFormato.objects.exclude(
+        contexto_tipo__in=CONTEXTOS_VISTA_EXCLUSIVA,
+    )
     if _es_admin(usuario):
         return qs
     uuids = [
@@ -46,18 +53,24 @@ def registros_visibles(usuario):
 
 
 def puede_ver_registro(usuario, registro):
+    if registro.contexto_tipo in CONTEXTOS_VISTA_EXCLUSIVA:
+        return False
     return _es_admin(usuario) or registros_visibles(usuario).filter(
         pk=registro.pk,
     ).exists()
 
 
 def puede_editar_registro(usuario, registro):
+    if registro.contexto_tipo in CONTEXTOS_VISTA_EXCLUSIVA:
+        return False
     if registro.estado not in ('borrador', 'rechazado'):
         return False
     return registro.responsable_id == usuario.id or _es_admin(usuario)
 
 
 def puede_aprobar_registro(usuario, registro):
+    if registro.contexto_tipo in CONTEXTOS_VISTA_EXCLUSIVA:
+        return False
     if registro.estado != 'en_revision':
         return False
     if _es_admin(usuario):

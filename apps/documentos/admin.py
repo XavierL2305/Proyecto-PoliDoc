@@ -7,6 +7,8 @@ from .models import (
     DistribucionDocumento, SolicitudAprobacionDocumento,
     ReferenciaDocumento, Formato, SeccionFormato, CampoFormato,
     SolicitudCambio, RegistroFormato, DistribucionRegistro,
+    DocumentoSinCodigo, ActaDesincorporacion, AccesoFormato,
+    VersionRegistroFormato,
 )
 
 
@@ -180,3 +182,41 @@ class RegistroFormatoAdmin(admin.ModelAdmin):
     list_filter = ['estado', 'formato', 'contexto_tipo']
     search_fields = ['formato_codigo', 'titulo', 'contexto_id']
     readonly_fields = ['uuid', 'hash_integridad', 'creado', 'actualizado']
+
+
+@admin.register(DocumentoSinCodigo)
+class DocumentoSinCodigoAdmin(admin.ModelAdmin):
+    list_display = ['titulo', 'ambito', 'propietario', 'activo', 'creado']
+    list_filter = ['ambito', 'activo', 'clasificacion']
+    search_fields = ['titulo', 'referencia']
+    readonly_fields = ['uuid', 'creado', 'actualizado']
+
+
+@admin.register(ActaDesincorporacion)
+class ActaDesincorporacionAdmin(admin.ModelAdmin):
+    list_display = ['codigo', 'documento_codigo', 'estado', 'fecha', 'creado_por']
+    list_filter = ['estado']
+    search_fields = ['codigo', 'documento_codigo', 'documento_nombre']
+    readonly_fields = ['uuid', 'creado', 'actualizado']
+
+
+@admin.register(AccesoFormato)
+class AccesoFormatoAdmin(admin.ModelAdmin):
+    list_display = ['usuario', 'formato', 'nivel', 'activo', 'fecha_creacion']
+    list_filter = ['nivel', 'activo', 'formato']
+    search_fields = ['usuario__username', 'formato__codigo']
+
+
+@admin.register(VersionRegistroFormato)
+class VersionRegistroFormatoAdmin(admin.ModelAdmin):
+    list_display = ['registro', 'numero', 'creado', 'creado_por']
+    readonly_fields = [campo.name for campo in VersionRegistroFormato._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

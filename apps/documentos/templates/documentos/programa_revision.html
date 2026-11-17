@@ -40,6 +40,7 @@
       <button type="submit" class="btn btn--ghost btn--sm">Ir</button>
     </form>
     {% if not version_info %}
+    {% if puede_editar %}
     <form method="post" action="{% url 'documentos:programa_revision_generar' %}">
       {% csrf_token %}
       <input type="hidden" name="anio" value="{{ anio }}">
@@ -47,6 +48,7 @@
         <i class="fa-solid fa-file-arrow-down"></i> Regenerar
       </button>
     </form>
+    {% endif %}
     <a class="btn btn--ghost btn--sm"
        href="{% url 'documentos:programa_revision_descargar' formato='xlsx' %}?anio={{ anio }}">
       <i class="fa-solid fa-file-excel"></i> XLSX
