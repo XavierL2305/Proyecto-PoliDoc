@@ -20,12 +20,11 @@ import copy
 import io
 import logging
 import math
-import os
-import tempfile
 import uuid
 
 from django.db import transaction
 from django.utils import timezone
+from .pdf_utils import xlsx_bytes_a_pdf as _xlsx_a_pdf
 
 logger = logging.getLogger(__name__)
 
@@ -643,31 +642,6 @@ def generar_xlsx(registro=None):
     return salida.getvalue()
 
 
-def _xlsx_a_pdf(xlsx_bytes):
-    """PDF del XLSX con el conversor del proyecto (o ``None``)."""
-    with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp:
-        tmp.write(xlsx_bytes)
-        ruta_xlsx = tmp.name
-    try:
-        from ..tasks import convertir_a_pdf_sync
-
-        pdf_path = convertir_a_pdf_sync(ruta_xlsx, reparar_sincrono=True)
-        if not pdf_path:
-            return None
-        with open(pdf_path, 'rb') as fh:
-            data = fh.read()
-        try:
-            os.unlink(pdf_path)
-        except OSError:
-            pass
-        return data
-    finally:
-        try:
-            os.unlink(ruta_xlsx)
-        except OSError:
-            pass
-
-
 def generar_pdf(registro=None):
     """Bytes del PDF de la lista (o ``None`` si LibreOffice no está)."""
     return _xlsx_a_pdf(generar_xlsx(registro))
@@ -731,13 +705,14 @@ def generar_y_guardar(registro, forzar=False):
 
 def agregar_fila_manual(registro, valores, usuario=None):
     """Agrega una fila manual (no se toca en la sincronización)."""
+    definiciones = columnas(getattr(registro, 'formato', None))
     fila = {
         '_clave': f'man:{uuid.uuid4().hex}',
         '_origen_tipo': ORIGEN_MANUAL,
-        '_manual': [c.get('clave') for c in columnas() if c.get('clave')],
+        '_manual': [c.get('clave') for c in definiciones if c.get('clave')],
         '_sin_codigo': True,
     }
-    for col in columnas():
+    for col in definiciones:
         clave = col.get('clave')
         if clave:
             fila[clave] = valores.get(clave, '')

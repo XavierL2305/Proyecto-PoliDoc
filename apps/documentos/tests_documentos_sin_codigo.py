@@ -80,6 +80,18 @@ class CreacionTest(BaseSinCodigoTest):
         self._crear('personal', usuario=self.user_trabajador)
         self.assertEqual(Documento.objects.count(), antes)
 
+    def test_crear_infiere_tipo_archivo(self):
+        self.client.force_login(self.user_trabajador)
+        url = reverse('documentos:documento_sin_codigo_crear', args=['personal'])
+        archivo = SimpleUploadedFile(
+            'hoja.xlsx', b'PK\x03\x04' + b'\x00' * 8,
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        resp = self.client.post(url, {'titulo': 'Hoja', 'archivo': archivo})
+        self.assertEqual(resp.status_code, 302)
+        doc = DocumentoSinCodigo.objects.get()
+        self.assertEqual(doc.tipo_archivo, 'xlsx')
+
     def test_selector_muestra_opciones(self):
         self.client.force_login(self.user_trabajador)
         html = self.client.get(reverse('documentos:seleccionar_tipo')).content.decode()
@@ -168,6 +180,7 @@ class PermisosTest(BaseSinCodigoTest):
         ))
         self.assertEqual(resp.status_code, 200)
         self.assertIn('attachment', resp['Content-Disposition'])
+        self.assertEqual(resp['X-Content-Type-Options'], 'nosniff')
 
 
 class BandejasTest(BaseSinCodigoTest):

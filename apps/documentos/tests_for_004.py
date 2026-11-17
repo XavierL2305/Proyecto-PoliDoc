@@ -619,6 +619,40 @@ class InvitacionVistaTest(BaseFor004Test):
         self.assertEqual(resp.status_code, 200)
         acta.refresh_from_db()
         self.assertIsNotNone(acta.firma_aprobado_id)
+        # La confirmación muestra el acta (no un "Documento" vacío).
+        self.assertContains(resp, acta.codigo)
+        self.assertContains(resp, 'SGC-FOR-004')
+
+    def test_invitacion_de_acta_expirada_muestra_acta(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from documentos.models import InvitacionFirma
+
+        acta, _ = self._acta(self.doc_activo, aprobado_por=self.user_jefe_gg)
+        invitacion, token = svc.crear_invitacion_rol(acta, 'aprobado')
+        InvitacionFirma.objects.filter(pk=invitacion.pk).update(
+            expira=timezone.now() - timedelta(days=1),
+        )
+        resp = self.client.get(reverse('documentos:firmar_invitacion', args=[token]))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'expiró')
+        self.assertContains(resp, acta.codigo)
+        self.assertContains(resp, 'SGC-FOR-004')
+
+    def test_firmada_muestra_acta_sin_padre(self):
+        acta, _ = self._acta(self.doc_activo, aprobado_por=self.user_jefe_gg)
+        _, token = svc.crear_invitacion_rol(acta, 'aprobado')
+        acta.padre = None
+        acta.save(update_fields=['padre'])
+        resp = self.client.post(
+            reverse('documentos:firmar_invitacion', args=[token]),
+            {'consentimiento': 'on'},
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, acta.codigo)
+        self.assertContains(resp, 'SGC-FOR-004')
 
     def test_invitacion_de_acta_anulada_bloqueada(self):
         acta, _ = self._acta(self.doc_activo, aprobado_por=self.user_jefe_gg)

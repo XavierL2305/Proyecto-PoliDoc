@@ -313,17 +313,17 @@ def procesar_purga_personal(ahora=None, dry_run=False):
     purge_dias = getattr(settings, 'PERSONAL_DOCS_PURGE_DIAS', 90)
 
     resumen = {'avisos': 0, 'segundos': 0, 'purgados': 0, 'reiniciados': 0}
-    propietarios = (
+    propietarios = list(
         DocumentoSinCodigo.objects
         .filter(ambito=AMBITO_PERSONAL, activo=True)
         .values_list('propietario_id', flat=True)
         .distinct()
     )
+    usuarios = User.objects.filter(pk__in=propietarios).select_related(
+        'perfil__departamento__jefe',
+    )
 
-    for usuario_id in propietarios:
-        usuario = User.objects.filter(pk=usuario_id).first()
-        if usuario is None:
-            continue
+    for usuario in usuarios:
         docs = DocumentoSinCodigo.objects.filter(
             propietario=usuario, ambito=AMBITO_PERSONAL, activo=True,
         )

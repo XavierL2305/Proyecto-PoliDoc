@@ -89,8 +89,8 @@
         al emisor.
       </div>
       <div class="detail-row">
-        <span class="detail-label">Registro</span>
-        <span class="detail-value">{{ registro.formato_codigo }} - {{ registro.titulo|default:documento.nombre }}</span>
+        <span class="detail-label">{% if acta %}Acta{% elif registro %}Registro{% else %}Documento{% endif %}</span>
+        <span class="detail-value">{% if acta %}{{ acta.codigo }} — SGC-FOR-004{% elif registro %}{{ registro.formato_codigo }} - {{ registro.titulo|default:documento.nombre }}{% else %}{{ documento.codigo }} - {{ documento.nombre }}{% endif %}</span>
       </div>
     </div>
 
@@ -111,9 +111,9 @@
         {% endif %}
       </div>
       <div class="detail-row">
-        <span class="detail-label">{% if registro %}Registro{% else %}Documento{% endif %}</span>
+        <span class="detail-label">{% if acta %}Acta{% elif registro %}Registro{% else %}Documento{% endif %}</span>
         <span class="detail-value">
-          {% if registro %}{{ registro.formato_codigo }} - {{ registro.titulo }}{% else %}{{ documento.codigo }} - {{ documento.nombre }}{% endif %}
+          {% if acta %}{{ acta.codigo }} — SGC-FOR-004{% elif registro %}{{ registro.formato_codigo }} - {{ registro.titulo }}{% else %}{{ documento.codigo }} - {{ documento.nombre }}{% endif %}
         </span>
       </div>
       <div class="detail-row">

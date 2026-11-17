@@ -8,8 +8,11 @@ import os
 import tempfile
 from unittest.mock import MagicMock, patch
 
+from django.contrib.auth.models import User
 from django.core.management import call_command
+from django.db import connection
 from django.test import Client, override_settings
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from tests_base import BaseDocumentosTest, MONGO_PATCH_TARGET
@@ -394,6 +397,15 @@ class AccesoTest(BaseFor006Test):
         ))
         self.assertEqual(resp.status_code, 302)
         self.assertFalse(self.acceso.puede_ver_lista(self.user_trabajador))
+
+    def test_puede_ver_lista_una_sola_consulta(self):
+        self.acceso.otorgar(self.user_trabajador, otorgado_por=self.user_admin)
+        usuario = User.objects.select_related('perfil').get(
+            pk=self.user_trabajador.pk,
+        )
+        with CaptureQueriesContext(connection) as ctx:
+            self.assertTrue(self.acceso.puede_ver_lista(usuario))
+        self.assertEqual(len(ctx.captured_queries), 1)
 
     def test_sidebar_lista_maestra(self):
         self.client.force_login(self.user_admin)

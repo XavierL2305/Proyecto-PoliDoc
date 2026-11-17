@@ -3376,6 +3376,21 @@ class DocumentoSinCodigo(models.Model):
     creado = models.DateTimeField(auto_now_add=True)
     actualizado = models.DateTimeField(auto_now=True)
 
+    def save(self, *args, **kwargs):
+        # Igual que ``Documento``: el tipo se infiere de la extensión real
+        # (evita que un .xlsx/.docx quede como 'pdf').
+        if self.archivo:
+            nuevo_tipo = tipo_archivo_desde_nombre(
+                self.archivo.name, self.tipo_archivo,
+            )
+            if nuevo_tipo != self.tipo_archivo:
+                self.tipo_archivo = nuevo_tipo
+                update_fields = kwargs.get('update_fields')
+                if (update_fields is not None
+                        and 'tipo_archivo' not in update_fields):
+                    kwargs['update_fields'] = list(update_fields) + ['tipo_archivo']
+        super().save(*args, **kwargs)
+
     class Meta:
         verbose_name = 'Documento sin código'
         verbose_name_plural = 'Documentos sin código'

@@ -5,7 +5,7 @@ tenga una concesión activa puede hacer todo en la vista (ver, editar filas,
 sincronizar, regenerar y descargar). El administrador siempre tiene acceso.
 """
 from ..models import AccesoListaMaestra
-from .for_006 import formato_for_006
+from .for_006 import FORMATO_FOR_006, formato_for_006
 
 
 def es_administrador(usuario):
@@ -13,21 +13,18 @@ def es_administrador(usuario):
     return bool(perfil and perfil.es_administrador)
 
 
-def _concesion_activa(usuario, formato):
-    if usuario is None or not getattr(usuario, 'is_authenticated', False):
-        return None
-    if formato is None:
-        return None
-    return AccesoListaMaestra.objects.filter(
-        formato=formato, usuario=usuario, activo=True,
-    ).first()
-
-
 def puede_ver_lista(usuario):
-    """Administrador o persona con concesión activa."""
+    """Administrador o persona con concesión activa (una sola consulta)."""
+    if usuario is None or not getattr(usuario, 'is_authenticated', False):
+        return False
     if es_administrador(usuario):
         return True
-    return _concesion_activa(usuario, formato_for_006()) is not None
+    return AccesoListaMaestra.objects.filter(
+        formato__codigo=FORMATO_FOR_006,
+        formato__activo=True,
+        usuario=usuario,
+        activo=True,
+    ).exists()
 
 
 def puede_gestionar_acceso(usuario):

@@ -47,6 +47,41 @@ from . import ai
 logger = logging.getLogger(__name__)
 
 
+def _ip_auditoria(request):
+    """IP real del cliente (proxy-aware); cae a REMOTE_ADDR sin middleware."""
+    try:
+        from auditoria.middleware import get_client_ip, resolver_ip_cliente
+
+        return get_client_ip() or resolver_ip_cliente(request)
+    except Exception:  # noqa: BLE001 - nunca romper por la auditoría
+        return request.META.get('REMOTE_ADDR')
+
+
+def _registrar_auditoria(request, *, accion, categoria='documento',
+                         recurso_tipo, recurso_id, recurso_codigo='',
+                         recurso_nombre='', detalles=None):
+    """Auditoría ISO de una acción web; nunca rompe la petición."""
+    try:
+        from auditoria.services import registrar_log_iso
+
+        registrar_log_iso(
+            usuario=request.user,
+            accion_tipo=accion,
+            accion_categoria=categoria,
+            recurso_tipo=recurso_tipo,
+            recurso_id=str(recurso_id),
+            recurso_codigo=recurso_codigo or '',
+            recurso_nombre=recurso_nombre or '',
+            detalles=detalles or {},
+            resultado_exitoso=True,
+            resultado_mensaje=accion,
+            ip_address=_ip_auditoria(request),
+            user_agent=request.META.get('HTTP_USER_AGENT', ''),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error('Auditoría %s: %s', accion, exc)
+
+
 class _PaginatorConteoFijo(Paginator):
     """Paginator con el total ya calculado (evita un COUNT por página/tipo)."""
 
@@ -1929,7 +1964,7 @@ def eliminar_documento(request, tipo, documento_id):
                 documento, request.user, 'inhabilitar',
                 solicitud_cambio=sol_cambio,
                 observaciones=f'Estado previo: {documento.estado}',
-                ip_address=request.META.get('REMOTE_ADDR'),
+                ip_address=_ip_auditoria(request),
                 user_agent=request.META.get('HTTP_USER_AGENT'),
             )
             if resultado.aplicado:
@@ -2547,7 +2582,7 @@ def eliminar_version(request, tipo, documento_id, version_id):
             registrar_eliminacion_version(
                 user, tipo, str(documento.uuid),
                 version.numero_version, documento.codigo,
-                ip_address=request.META.get('REMOTE_ADDR'),
+                ip_address=_ip_auditoria(request),
             )
         except Exception:
             pass
@@ -2589,7 +2624,7 @@ def renovar_vencimiento(request, tipo, documento_id):
         documento, user, 'renovar',
         observaciones=observacion,
         fecha_propuesta=fecha_nueva_dt,
-        ip_address=request.META.get('REMOTE_ADDR'),
+        ip_address=_ip_auditoria(request),
         user_agent=request.META.get('HTTP_USER_AGENT'),
     )
     if resultado.aplicado:
@@ -4026,6 +4061,13 @@ def crear_acta_desincorporacion(request, tipo, documento_id):
             )
         return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
 
+    _registrar_auditoria(
+        request, accion='acta_desincorporacion_creada',
+        recurso_tipo='acta_desincorporacion', recurso_id=acta.uuid,
+        recurso_codigo=acta.codigo, recurso_nombre=documento.nombre,
+        detalles={'registros': acta.registros.count()},
+    )
+
     resultado = svc_for_004.generar_y_guardar(acta)
     if not resultado.get('success'):
         logger.warning('FOR-004 no generado al crear %s: %s',
@@ -4169,6 +4211,13 @@ def anular_acta_desincorporacion(request, tipo, documento_id, acta_uuid):
             bloqueada.save(update_fields=[
                 'estado', 'anulada_en', 'anulada_motivo', 'actualizado',
             ])
+            _registrar_auditoria(
+                request, accion='acta_desincorporacion_anulada',
+                recurso_tipo='acta_desincorporacion', recurso_id=bloqueada.uuid,
+                recurso_codigo=bloqueada.codigo,
+                recurso_nombre=bloqueada.documento_nombre,
+                detalles={'motivo': motivo},
+            )
             messages.success(
                 request,
                 f'Acta {bloqueada.codigo} anulada. Puedes generar una nueva '
@@ -6904,6 +6953,14 @@ def _form_sin_codigo(request, ambito, documento=None):
                 doc.propietario = request.user
                 doc.creado_por = request.user
             doc.save()
+            _registrar_auditoria(
+                request,
+                accion=('documentos_sin_codigo_editado' if documento is not None
+                        else 'documentos_sin_codigo_creado'),
+                recurso_tipo='documentos_sin_codigo', recurso_id=doc.uuid,
+                recurso_nombre=doc.titulo,
+                detalles={'ambito': ambito},
+            )
             messages.success(
                 request,
                 'Documento guardado correctamente.'
@@ -6964,6 +7021,11 @@ def documento_sin_codigo_eliminar(request, uuid):
     documento.activo = False
     documento.eliminado_en = timezone.now()
     documento.save(update_fields=['activo', 'eliminado_en', 'actualizado'])
+    _registrar_auditoria(
+        request, accion='documentos_sin_codigo_eliminado',
+        recurso_tipo='documentos_sin_codigo', recurso_id=documento.uuid,
+        recurso_nombre=documento.titulo, detalles={'ambito': documento.ambito},
+    )
     messages.success(request, 'Documento eliminado.')
     if documento.ambito == svc.AMBITO_SGC:
         return redirect('documentos:documentos_sgc_sin_codigo')
@@ -6977,10 +7039,17 @@ def documento_sin_codigo_descargar(request, uuid):
     documento = get_object_or_404(DocumentoSinCodigo, uuid=uuid, activo=True)
     if not svc.puede_ver(request.user, documento) or not documento.archivo:
         raise Http404
-    return FileResponse(
+    _registrar_auditoria(
+        request, accion='documentos_sin_codigo_descarga',
+        recurso_tipo='documentos_sin_codigo', recurso_id=documento.uuid,
+        recurso_nombre=documento.titulo, detalles={'ambito': documento.ambito},
+    )
+    response = FileResponse(
         documento.archivo.open('rb'), as_attachment=True,
         filename=os.path.basename(documento.archivo.name),
     )
+    response['X-Content-Type-Options'] = 'nosniff'
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -6995,25 +7064,11 @@ def _registro_lista(crear=False, usuario=None):
 
 def _auditar_lista(request, registro, accion, detalles=None):
     """Auditoría ISO de las acciones de la Lista Maestra (no rompe nada)."""
-    try:
-        from auditoria.services import registrar_log_iso
-
-        registrar_log_iso(
-            usuario=request.user,
-            accion_tipo=accion,
-            accion_categoria='documento',
-            recurso_tipo='lista_maestra',
-            recurso_id=str(getattr(registro, 'pk', '')),
-            recurso_codigo='SGC-FOR-006',
-            recurso_nombre='Lista Maestra de Documentos',
-            detalles=detalles or {},
-            resultado_exitoso=True,
-            resultado_mensaje=accion,
-            ip_address=request.META.get('REMOTE_ADDR'),
-            user_agent=request.META.get('HTTP_USER_AGENT', ''),
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.error('Auditoría Lista Maestra: %s', exc)
+    _registrar_auditoria(
+        request, accion=accion, recurso_tipo='lista_maestra',
+        recurso_id=getattr(registro, 'pk', ''), recurso_codigo='SGC-FOR-006',
+        recurso_nombre='Lista Maestra de Documentos', detalles=detalles,
+    )
 
 
 def _historial_lista(registro):

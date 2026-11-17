@@ -33,13 +33,13 @@ La hoja instructiva ``SGC-IDL-010`` (con imágenes) se conserva intacta.
 """
 import io
 import logging
-import os
 import re
-import tempfile
 
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
+
+from .pdf_utils import xlsx_bytes_a_pdf as _xlsx_a_pdf
 
 logger = logging.getLogger(__name__)
 
@@ -506,8 +506,6 @@ def crear_acta(*, padre, participantes, registro_ids, creado_por,
 
 def _aprobador_por_defecto(padre, creado_por):
     """Jefe efectivo del departamento; si no, el propietario; si no, el creador."""
-    from ..jefatura import es_jefe_efectivo
-
     departamento = padre.departamento
     if departamento and departamento.jefe_id:
         return departamento.jefe
@@ -715,31 +713,6 @@ def generar_xlsx(acta):
     salida = io.BytesIO()
     wb.save(salida)
     return salida.getvalue()
-
-
-def _xlsx_a_pdf(xlsx_bytes):
-    """PDF del XLSX con el conversor del proyecto (o ``None``)."""
-    with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp:
-        tmp.write(xlsx_bytes)
-        ruta_xlsx = tmp.name
-    try:
-        from ..tasks import convertir_a_pdf_sync
-
-        pdf_path = convertir_a_pdf_sync(ruta_xlsx, reparar_sincrono=True)
-        if not pdf_path:
-            return None
-        with open(pdf_path, 'rb') as fh:
-            data = fh.read()
-        try:
-            os.unlink(pdf_path)
-        except OSError:
-            pass
-        return data
-    finally:
-        try:
-            os.unlink(ruta_xlsx)
-        except OSError:
-            pass
 
 
 def generar_pdf(acta):
