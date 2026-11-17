@@ -141,14 +141,13 @@ FOR-007 — PROGRAMA DE REVISIÓN POR LA DIRECCIÓN
 [x] CONTEXT §29.11 + docs/adr/0005-sgc-for-007-programa-revision.md.
 
 FOR-009 — MINUTA
-[ ] integrar_formatos_sgc --solo=009 (Formato + campos/secciones + mapeo celdas).
-[ ] Captura con motor dinámico; asistentes 3 iniciales + agregar; 7/hoja + continuación.
-[ ] services/for_009.py (export a cajas exactas, continuación, IDL-015 intacta).
-[ ] Acceso AccesoFormato ver/editar; listado/detalle.
-[ ] Campos tipo_reunion/anio/mes + hook marcar_ejecutado (sin integrar aún).
-[ ] Tests + CONTEXT §29.12 + docs/adr/0006-sgc-for-009-minuta.md.
+[x] integrar_formatos_sgc --solo=009 (Formato + campos/secciones + mapeo celdas).
+[x] Captura con motor dinámico; asistentes 3 iniciales + agregar; 7/hoja + continuación.
+[x] services/for_009.py (export a cajas exactas, continuación, IDL-015 intacta).
+[x] Acceso AccesoFormato ver/editar; listado/detalle.
+[x] Campos tipo_reunion/anio/mes + hook marcar_ejecutado (checkbox).
+[x] Tests + CONTEXT §29.12 + docs/adr/0006-sgc-for-009-minuta.md.
 
 BACKLOG
 [ ] FOR-007: restaurar versión.
 [ ] FOR-009: versionado de minutas.
-[ ] Enlace Minuta <-> Programa (marcar_ejecutado).

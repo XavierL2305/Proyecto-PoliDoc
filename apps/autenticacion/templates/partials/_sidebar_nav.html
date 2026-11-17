@@ -44,6 +44,11 @@
               <i class="fa-solid fa-calendar-days" aria-hidden="true"></i><span>Programa de Revisión</span>
             </a>
             {% endif %}
+            {% if nav_minutas %}
+            <a href="{% url 'documentos:minutas_lista' %}" class="sidebar-item sidebar-item--child {% if 'minuta' in url_name %}active{% endif %}"{% if url_name == 'minutas_lista' %} aria-current="page"{% endif %}>
+              <i class="fa-solid fa-people-group" aria-hidden="true"></i><span>Minutas</span>
+            </a>
+            {% endif %}
             <a href="{% url 'documentos:registros_lista' %}" class="sidebar-item sidebar-item--child {% if 'registro' in url_name %}active{% endif %}"{% if 'registro' in url_name %} aria-current="page"{% endif %}>
               <i class="fa-solid fa-clipboard-check" aria-hidden="true"></i><span>Registros</span>
             </a>

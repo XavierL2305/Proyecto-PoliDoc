@@ -7971,3 +7971,338 @@ def programa_revision_revocar(request, usuario_id):
             f'Acceso revocado a {usuario.get_full_name() or usuario.username}.',
         )
     return redirect('documentos:programa_revision_acceso')
+
+
+# ---------------------------------------------------------------------------
+# SGC-FOR-009 — Minuta de reunión
+# ---------------------------------------------------------------------------
+
+def _formato_009():
+    from .services import for_009 as svc
+
+    return svc.formato_for_009()
+
+
+def _puede_ver_minuta(usuario):
+    from .services import acceso_formato
+
+    formato = _formato_009()
+    return bool(formato and acceso_formato.puede_ver(usuario, formato))
+
+
+def _puede_editar_minuta(usuario):
+    from .services import acceso_formato
+
+    formato = _formato_009()
+    return bool(formato and acceso_formato.puede_editar(usuario, formato))
+
+
+def _minutas_queryset():
+    formato = _formato_009()
+    if formato is None:
+        return RegistroFormato.objects.none()
+    return RegistroFormato.objects.filter(formato=formato, contexto_tipo='minuta')
+
+
+def _minuta_o_404(minuta_uuid):
+    return get_object_or_404(
+        _minutas_queryset().select_related('formato', 'responsable'),
+        uuid=minuta_uuid,
+    )
+
+
+def _auditar_minuta(request, registro, accion, detalles=None):
+    from .services import for_009 as svc
+
+    respuesta = (registro.respuestas or {}) if registro else {}
+    _registrar_auditoria(
+        request, accion=accion, recurso_tipo='minuta',
+        recurso_id=getattr(registro, 'pk', ''),
+        recurso_codigo='SGC-FOR-009',
+        recurso_nombre=(
+            f'Minuta {respuesta.get("reunion_no", "")}'.strip()
+            if registro else 'Minuta de reunión'
+        ),
+        detalles=detalles,
+    )
+
+
+def _marcar_ejecutado_desde_minuta(request, registro, respuestas):
+    from .services import for_007 as programa
+    from .services import for_009 as svc
+
+    anio, mes = svc.anio_mes(respuestas, registro.fecha)
+    try:
+        marcados = programa.marcar_ejecutado(anio, mes, usuario=request.user)
+    except Exception as exc:  # noqa: BLE001 - no romper el alta de la minuta
+        logger.warning('No se pudo marcar el FOR-007 desde la minuta: %s', exc)
+        messages.warning(
+            request,
+            'La minuta se guardó, pero no se pudo actualizar el Programa de '
+            'Revisión.',
+        )
+        return
+    if marcados:
+        messages.success(
+            request,
+            f'Se marcaron {marcados} aspecto(s) de {mes} {anio} como '
+            f'ejecutados en el Programa de Revisión.',
+        )
+    else:
+        messages.info(
+            request,
+            f'No había aspectos planificados en {mes} {anio} del Programa '
+            f'de Revisión (o el programa no existe).',
+        )
+
+
+@login_required(login_url='/login/')
+def minutas_lista(request):
+    formato = _formato_009()
+    if formato is None:
+        messages.error(
+            request, 'El formato SGC-FOR-009 no está integrado.',
+        )
+        return redirect('documentos:formatos_lista')
+    if not _puede_ver_minuta(request.user):
+        messages.error(request, 'No tienes acceso a las minutas.')
+        return redirect('documentos:mis_documentos')
+
+    qs = _minutas_queryset().select_related('responsable')
+    buscar = (request.GET.get('q') or '').strip()
+    if buscar:
+        qs = qs.filter(
+            Q(titulo__icontains=buscar)
+            | Q(responsable__first_name__icontains=buscar)
+            | Q(responsable__last_name__icontains=buscar),
+        )
+    page = Paginator(qs.order_by('-fecha', '-creado'), 20).get_page(
+        request.GET.get('page', 1),
+    )
+    return render(request, 'documentos/minutas_lista.html', {
+        'formato': formato,
+        'minutas': page,
+        'page_obj': page,
+        'q': buscar,
+        'puede_editar': _puede_editar_minuta(request.user),
+        'puede_gestionar_acceso': request.user.perfil.es_administrador,
+    })
+
+
+def _form_minuta(request, registro=None):
+    from .forms import MinutaForm
+    from .services import for_009 as svc
+    from .forms import validar_respuestas
+
+    formato = _formato_009()
+    if formato is None:
+        messages.error(request, 'El formato SGC-FOR-009 no está integrado.')
+        return redirect('documentos:formatos_lista')
+    if not _puede_editar_minuta(request.user):
+        messages.error(request, 'No tienes permisos para editar minutas.')
+        return redirect('documentos:minutas_lista')
+
+    es_edicion = registro is not None
+    respuestas = dict(registro.respuestas or {}) if es_edicion else {}
+    if not respuestas.get('asistentes'):
+        respuestas['asistentes'] = [{}, {}, {}]
+    if not es_edicion:
+        hoy = timezone.localdate()
+        respuestas.setdefault('tipo_reunion', 'revision')
+        respuestas.setdefault('anio', str(hoy.year))
+        respuestas.setdefault('mes', svc.MES_POR_NUMERO[hoy.month])
+        respuestas.setdefault(
+            'responsables_aprobacion', svc.responsables_sugeridos(),
+        )
+
+    if request.method == 'POST':
+        form = MinutaForm(request.POST, instance=registro)
+        nuevas, errores = validar_respuestas(
+            formato, request.POST, parcial=False,
+        )
+        try:
+            if nuevas.get('reunion_no'):
+                nuevas['reunion_no'] = svc.validar_reunion_no(
+                    nuevas.get('reunion_no'),
+                )
+        except ValueError as exc:
+            errores.append(str(exc))
+        if not svc.asistentes(nuevas):
+            errores.append('Registra al menos un asistente a la reunión.')
+
+        if form.is_valid() and not errores:
+            fecha = form.cleaned_data['fecha']
+            if es_edicion:
+                svc.guardar_minuta(
+                    registro, nuevas, fecha=fecha, usuario=request.user,
+                )
+                accion = 'minuta_editada'
+            else:
+                registro = svc.crear_minuta(
+                    fecha=fecha, respuestas=nuevas, usuario=request.user,
+                )
+                accion = 'minuta_creada'
+            _auditar_minuta(request, registro, accion)
+            if (nuevas.get('tipo_reunion') == 'revision'
+                    and request.POST.get('marcar_ejecutado')):
+                _marcar_ejecutado_desde_minuta(request, registro, nuevas)
+            messages.success(request, 'Minuta guardada correctamente.')
+            return redirect(
+                'documentos:minuta_detalle', minuta_uuid=registro.uuid,
+            )
+        for error in errores:
+            messages.error(request, error)
+        respuestas = nuevas
+    else:
+        form = MinutaForm(instance=registro)
+
+    return render(request, 'documentos/minuta_form.html', {
+        'form': form,
+        'formato': formato,
+        'respuestas': respuestas,
+        'edicion': es_edicion,
+        'registro': registro,
+    })
+
+
+@login_required(login_url='/login/')
+def minuta_crear(request):
+    return _form_minuta(request)
+
+
+@login_required(login_url='/login/')
+def minuta_editar(request, minuta_uuid):
+    registro = _minuta_o_404(minuta_uuid)
+    if not _puede_editar_minuta(request.user):
+        messages.error(request, 'No tienes permisos para editar esta minuta.')
+        return redirect('documentos:minuta_detalle', minuta_uuid=registro.uuid)
+    return _form_minuta(request, registro=registro)
+
+
+@login_required(login_url='/login/')
+def minuta_detalle(request, minuta_uuid):
+    registro = _minuta_o_404(minuta_uuid)
+    if not _puede_ver_minuta(request.user):
+        messages.error(request, 'No tienes acceso a esta minuta.')
+        return redirect('documentos:minutas_lista')
+    return render(request, 'documentos/minuta_detalle.html', {
+        'registro': registro,
+        'formato': registro.formato,
+        'respuestas': dict(registro.respuestas or {}),
+        'puede_editar': _puede_editar_minuta(request.user),
+        'puede_gestionar_acceso': request.user.perfil.es_administrador,
+    })
+
+
+@login_required(login_url='/login/')
+def minuta_descargar(request, minuta_uuid, formato):
+    from .services import for_009 as svc
+
+    registro = _minuta_o_404(minuta_uuid)
+    if not _puede_ver_minuta(request.user):
+        raise Http404
+    if formato not in ('xlsx', 'pdf'):
+        raise Http404
+    puede_editar = _puede_editar_minuta(request.user)
+    destino = reverse(
+        'documentos:minuta_detalle', kwargs={'minuta_uuid': registro.uuid},
+    )
+    campo = 'archivo' if formato == 'xlsx' else 'archivo_pdf'
+    if not getattr(registro, campo):
+        if not puede_editar:
+            messages.error(
+                request,
+                'El archivo no está generado. Solicita a un editor que lo '
+                'regenere.',
+            )
+            return redirect(destino)
+        resultado = svc.generar_y_guardar(registro, forzar=True)
+        if not resultado.get('success'):
+            messages.error(
+                request,
+                resultado.get('error') or 'No se pudo generar la minuta.',
+            )
+            return redirect(destino)
+    archivo = getattr(registro, campo)
+    if not archivo:
+        messages.error(
+            request,
+            'No se pudo generar el PDF (LibreOffice).'
+            if formato == 'pdf' else 'No se pudo generar el XLSX.',
+        )
+        return redirect(destino)
+    _auditar_minuta(request, registro, 'minuta_descargada', {
+        'formato': formato,
+    })
+    response = FileResponse(
+        archivo.open('rb'), as_attachment=True,
+        filename=svc.nombre_archivo(registro, formato),
+    )
+    response['X-Content-Type-Options'] = 'nosniff'
+    return response
+
+
+@login_required(login_url='/login/')
+def minuta_acceso(request):
+    from .services import acceso_formato
+
+    if not request.user.perfil.es_administrador:
+        messages.error(request, 'Solo el administrador gestiona estos accesos.')
+        return redirect('documentos:minutas_lista')
+    formato = _formato_009()
+    if formato is None:
+        messages.error(request, 'El formato SGC-FOR-009 no está integrado.')
+        return redirect('documentos:formatos_lista')
+
+    if request.method == 'POST':
+        usuario = User.objects.filter(
+            pk=request.POST.get('usuario_id'), is_active=True,
+        ).first()
+        if usuario is None:
+            messages.error(request, 'Selecciona un usuario válido.')
+        else:
+            nivel = request.POST.get('nivel') or 'editar'
+            acceso_formato.otorgar(
+                usuario, formato, nivel=nivel, otorgado_por=request.user,
+            )
+            _auditar_minuta(request, None, 'minuta_acceso', {
+                'usuario_id': usuario.id, 'nivel': nivel,
+            })
+            messages.success(
+                request,
+                f'Acceso {nivel} otorgado a '
+                f'{usuario.get_full_name() or usuario.username}.',
+            )
+        return redirect('documentos:minuta_acceso')
+
+    concesiones = acceso_formato.concesiones(formato)
+    otorgados = set(concesiones.values_list('usuario_id', flat=True))
+    usuarios = User.objects.filter(is_active=True).exclude(
+        id__in=list(otorgados),
+    ).order_by('first_name', 'last_name', 'username')
+    return render(request, 'documentos/minuta_acceso.html', {
+        'formato': formato,
+        'concesiones': concesiones,
+        'usuarios': usuarios,
+    })
+
+
+@login_required(login_url='/login/')
+@require_POST
+def minuta_revocar(request, usuario_id):
+    from .services import acceso_formato
+
+    if not request.user.perfil.es_administrador:
+        messages.error(request, 'Solo el administrador gestiona estos accesos.')
+        return redirect('documentos:minutas_lista')
+    formato = _formato_009()
+    usuario = get_object_or_404(User, pk=usuario_id)
+    if formato is not None and acceso_formato.revocar(usuario, formato):
+        _auditar_minuta(request, None, 'minuta_acceso_revocado', {
+            'usuario_id': usuario.id,
+        })
+        messages.success(
+            request,
+            f'Acceso revocado a {usuario.get_full_name() or usuario.username}.',
+        )
+    return redirect('documentos:minuta_acceso')

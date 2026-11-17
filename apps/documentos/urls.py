@@ -119,6 +119,19 @@ urlpatterns = [
          views.programa_revision_revocar,
          name='programa_revision_revocar'),
 
+    # SGC-FOR-009 — Minuta de reunión
+    path('minutas/', views.minutas_lista, name='minutas_lista'),
+    path('minutas/nueva/', views.minuta_crear, name='minuta_crear'),
+    path('minutas/acceso/', views.minuta_acceso, name='minuta_acceso'),
+    path('minutas/acceso/<int:usuario_id>/revocar/', views.minuta_revocar,
+         name='minuta_revocar'),
+    path('minutas/<uuid:minuta_uuid>/', views.minuta_detalle,
+         name='minuta_detalle'),
+    path('minutas/<uuid:minuta_uuid>/editar/', views.minuta_editar,
+         name='minuta_editar'),
+    path('minutas/<uuid:minuta_uuid>/<str:formato>/', views.minuta_descargar,
+         name='minuta_descargar'),
+
     path('nuevo/<str:tipo>/', views.crear_documento, name='crear_documento'),
     path('nuevo/<str:tipo>/plantilla/<uuid:documento_id>/preview/',
          views.preview_plantilla, name='preview_plantilla'),

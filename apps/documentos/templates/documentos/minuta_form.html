@@ -1,0 +1,64 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}{% if edicion %}Editar{% else %}Nueva{% endif %} minuta - POLIDOC{% endblock %}
+
+{% block app_content %}
+<div class="form-card" style="max-width:980px;margin:0 auto;">
+  <div class="form-card-header">
+    <h3>{% if edicion %}Editar{% else %}Nueva{% endif %} minuta · {{ formato.codigo }} — {{ formato.nombre }}</h3>
+    <p style="font-size:.8rem;color:var(--color-muted);margin:.35rem 0 0;">
+      Edición {{ formato.edicion }} · versión {{ formato.version }}.
+      Al guardar se puede generar el XLSX/PDF y, si es Revisión por la Dirección,
+      marcar el mes correspondiente en el Programa de Revisión.
+    </p>
+  </div>
+  <form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    <div class="form-card-body">
+      <div class="form-group" style="max-width:260px;">
+        <label class="form-label">Fecha de la reunión <span style="color:var(--color-danger);">*</span></label>
+        {{ form.fecha }}
+        {% if form.fecha.errors %}<p class="form-error">{{ form.fecha.errors|join:', ' }}</p>{% endif %}
+      </div>
+
+      <hr style="margin:1rem 0;">
+      {% include 'documentos/_formato_dinamico.html' with formato=formato respuestas=respuestas read_only=False %}
+
+      <div id="marcar-ejecutado-wrap" class="form-group" style="margin-top:1rem;padding:1rem;border:1px solid var(--color-border);border-radius:.5rem;">
+        <label style="display:flex;gap:.6rem;align-items:flex-start;cursor:pointer;">
+          <input type="checkbox" name="marcar_ejecutado" value="1" {% if not edicion %}checked{% endif %}>
+          <span>
+            <strong>Marcar el mes como ejecutado en el Programa de Revisión (FOR-007)</strong>
+            <span style="display:block;font-size:.8rem;color:var(--color-muted);">
+              Solo aplica a reuniones de Revisión por la Dirección. Cambia de
+              “Planificado” a “Ejecutado” los aspectos del mes/año indicados.
+            </span>
+          </span>
+        </label>
+      </div>
+    </div>
+    <div class="form-card-footer">
+      {% if edicion %}
+      <a class="btn btn--ghost" href="{% url 'documentos:minuta_detalle' minuta_uuid=registro.uuid %}">Cancelar</a>
+      {% else %}
+      <a class="btn btn--ghost" href="{% url 'documentos:minutas_lista' %}">Cancelar</a>
+      {% endif %}
+      <button type="submit" class="btn btn--primary">Guardar minuta</button>
+    </div>
+  </form>
+</div>
+
+<script>
+(function () {
+  var tipo = document.getElementById('campo_tipo_reunion');
+  var wrap = document.getElementById('marcar-ejecutado-wrap');
+  function toggle() {
+    if (!tipo || !wrap) return;
+    wrap.style.display = tipo.value === 'revision' ? '' : 'none';
+  }
+  if (tipo) { tipo.addEventListener('change', toggle); }
+  toggle();
+})();
+</script>
+{% endblock %}

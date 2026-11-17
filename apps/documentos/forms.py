@@ -652,6 +652,19 @@ class RegistroFormatoForm(forms.ModelForm):
         }
 
 
+class MinutaForm(forms.ModelForm):
+    """Fecha de la reunión de una minuta FOR-009 (el resto es dinámico)."""
+
+    class Meta:
+        model = RegistroFormato
+        fields = ['fecha']
+        widgets = {
+            'fecha': forms.DateInput(
+                attrs={'class': 'form-input', 'type': 'date'},
+            ),
+        }
+
+
 class SeccionFormatoForm(forms.ModelForm):
     class Meta:
         model = SeccionFormato

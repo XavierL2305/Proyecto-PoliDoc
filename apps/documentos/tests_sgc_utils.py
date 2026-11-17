@@ -407,3 +407,70 @@ def crear_plantilla_for_007(ruta):
     os.makedirs(os.path.dirname(ruta), exist_ok=True)
     wb.save(ruta)
     return ruta
+
+
+def crear_plantilla_for_009(ruta):
+    """XLSX sintético con el layout del FOR-009 (Minuta).
+
+    Reproduce la hoja ``SGC-FOR-009`` (cabecera, datos, 7 asistentes, bloques
+    de texto y aprobación) y una hoja instructiva ``SGC-IDL-015``. Las cajas de
+    objetivo/lugar/fecha/responsable/duración quedan SIN mergear a propósito:
+    el export las mergea y ajusta wrap.
+    """
+    from openpyxl.styles import Alignment, Border, Side
+
+    fino = Side(style='thin')
+    borde = Border(left=fino, right=fino, top=fino, bottom=fino)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'SGC-FOR-009'
+
+    for rango, texto in (
+        ('C1:J2', 'MINUTA DE REUNION'),
+        ('C3:J3', 'INFORMACION DOCUMENTADA'),
+        ('C4:J5', '9.3 REVISION POR LA DIRECCION'),
+        ('A6:B7', 'Nº DE IDENTIFICACION:  SGC-FOR-009'),
+        ('C6:D7', 'VERSION: 1'),
+        ('E6:F7', 'EDICION: 1'),
+        ('G6:H7', 'FECHA DE VIGENCIA: 18/03/2025'),
+        ('I6:J7', 'PAGINA:   1 DE 1'),
+        ('A8:J8', 'PROCEDIMIENTO DE REVISION POR LA DIRECCION'),
+        ('B10:C11', ''),
+        ('A13:B13', 'Objetivo de la Reunión:'),
+        ('A25:C25', 'Nombre'),
+        ('D25:F25', 'Cargo'),
+        ('G25:J25', 'Departamento/área/proceso'),
+        ('A33:J36', 'Descripciòn del Tema tratado:'),
+        ('A38:J44', 'Conclusiones:'),
+        ('A46:J52', 'Acuerdos Cerrados:'),
+        ('A54:J60', 'Acuerdos Pendientes:'),
+        ('A65:H65', 'Responsables de la Aprobaciòn:'),
+    ):
+        ws.merge_cells(rango)
+        ws[rango.split(':')[0]] = texto
+
+    for fila in range(26, 33):
+        ws.merge_cells(f'A{fila}:C{fila}')
+        ws.merge_cells(f'D{fila}:F{fila}')
+        ws.merge_cells(f'G{fila}:J{fila}')
+        for col in 'ABCDEFGHIJ':
+            ws[f'{col}{fila}'].border = borde
+
+    ws['A11'] = 'REUNION Nº:'
+    ws['A16'] = 'Lugar:'
+    ws['A18'] = 'Fecha:'
+    ws['A20'] = 'Responsable de la Elaboración:'
+    ws['A22'] = 'Duración:'
+    ws['I6'] = 'PAGINA:   1 DE 1'
+    for ref in ('A11', 'A16', 'A18', 'A20', 'A22', 'B16', 'B18', 'B20',
+                'B22', 'C13', 'A65'):
+        ws[ref].alignment = Alignment(vertical='center', wrap_text=True)
+
+    idl = wb.create_sheet('SGC-IDL-015')
+    idl['B1'] = 'INSTRUCTIVO DE LLENADO PARA EL FORMULARIO DE MINUTA'
+    idl['B2'] = 'PAGINA: 1 DE 2'
+
+    os.makedirs(os.path.dirname(ruta), exist_ok=True)
+    wb.save(ruta)
+    return ruta

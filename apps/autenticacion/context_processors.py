@@ -31,6 +31,8 @@ URLS_DOCUMENTACION = frozenset({
     'programa_revision_generar', 'programa_revision_descargar',
     'programa_revision_version', 'programa_revision_parametros',
     'programa_revision_acceso', 'programa_revision_revocar',
+    'minutas_lista', 'minuta_crear', 'minuta_editar', 'minuta_detalle',
+    'minuta_descargar', 'minuta_acceso', 'minuta_revocar',
 })
 
 #: ``url_name`` de páginas que pertenecen al grupo "Configuración".
@@ -99,4 +101,11 @@ def navegacion(request):
             )
         except Exception:  # noqa: BLE001
             contexto['nav_programa_revision'] = False
+        try:
+            from documentos.services import acceso_formato
+            contexto['nav_minutas'] = (
+                acceso_formato.puede_ver_codigo(usuario, 'SGC-FOR-009')
+            )
+        except Exception:  # noqa: BLE001
+            contexto['nav_minutas'] = False
     return contexto

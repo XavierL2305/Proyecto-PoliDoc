@@ -265,6 +265,28 @@ FOR_007_CONFIG = {
     ],
 }
 
+
+#: SGC-FOR-009 — Minuta de reunión (P1). Captura con el motor dinámico y
+#: export dedicado (services/for_009.py).
+FOR_009_XLSX = 'SGC-FOR-009  Minuta.xlsx'
+FOR_009_TABLA_ASISTENTES = {
+    'fila_inicio': 26,
+    'fila_fin': 32,
+    'max_filas': 7,
+    'columnas': [
+        {'clave': 'nombre', 'etiqueta': 'Nombre', 'celda': 'A'},
+        {'clave': 'cargo', 'etiqueta': 'Cargo', 'celda': 'D'},
+        {'clave': 'departamento', 'etiqueta': 'Departamento/área/proceso',
+         'celda': 'G'},
+    ],
+}
+FOR_009_MESES = [
+    ('ENE', 'Enero'), ('FEB', 'Febrero'), ('MAR', 'Marzo'),
+    ('ABR', 'Abril'), ('MAY', 'Mayo'), ('JUN', 'Junio'),
+    ('JUL', 'Julio'), ('AGO', 'Agosto'), ('SEP', 'Septiembre'),
+    ('OCT', 'Octubre'), ('NOV', 'Noviembre'), ('DIC', 'Diciembre'),
+]
+
 class Command(BaseCommand):
     help = (
         'Integra los formatos SGC (documentacion/*.xlsx) al motor de '
@@ -321,6 +343,7 @@ class Command(BaseCommand):
             'SGC-FOR-004': self._integrar_for_004,
             'SGC-FOR-006': self._integrar_for_006,
             'SGC-FOR-007': self._integrar_for_007,
+            'SGC-FOR-009': self._integrar_for_009,
         }
         for codigo in codigos:
             if codigo not in implementados:
@@ -344,7 +367,7 @@ class Command(BaseCommand):
         crudo = (crudo or '').strip()
         implementados = [
             'SGC-FOR-002', 'SGC-FOR-003', 'SGC-FOR-004', 'SGC-FOR-006',
-            'SGC-FOR-007',
+            'SGC-FOR-007', 'SGC-FOR-009',
         ]
         if not crudo:
             return implementados
@@ -989,3 +1012,149 @@ class Command(BaseCommand):
                 ),
             },
         )
+
+    # ------------------------------------------------------------------
+    # SGC-FOR-009
+    # ------------------------------------------------------------------
+
+    def _integrar_for_009(self, aplicar, forzar, forzar_estructura=False,
+                          plantilla=''):
+        self.stdout.write(self.style.HTTP_INFO(
+            '\n=== SGC-FOR-009 — Minuta de reunión ==='
+        ))
+
+        origen = plantilla or self._ruta_plantilla(FOR_009_XLSX)
+        if not os.path.exists(origen):
+            raise CommandError(
+                f'No se encontró la plantilla del FOR-009: {origen}\n'
+                + (
+                    'Revisa la ruta indicada con --plantilla.'
+                    if plantilla else
+                    'Coloca el XLSX en documentacion/ o indica su ruta con '
+                    '--plantilla.'
+                )
+            )
+
+        existente = Formato.objects.filter(codigo='SGC-FOR-009').first()
+        estado = 'ACTUALIZAR' if existente else 'CREAR'
+        self.stdout.write(f'Formato: {estado} (plantilla {os.path.basename(origen)})')
+
+        if not aplicar:
+            self.stdout.write(self.style.WARNING(
+                '  [dry-run] No se modificó la base de datos. '
+                'Repite con --apply para escribir.'
+            ))
+            return
+
+        formato, _creado = Formato.objects.update_or_create(
+            codigo='SGC-FOR-009',
+            defaults={
+                'nombre': 'Minuta de Reunión',
+                'version': '1',
+                'edicion': '1',
+                'aplica_creacion': False,
+                'aplica_modificacion': False,
+                'aplica_eliminacion': False,
+                'permite_registros': False,
+                'activo': True,
+                'instructivo_html': '',
+            },
+        )
+
+        if forzar or not formato.plantilla_xlsx:
+            destino = self._destino_media('SGC-FOR-009')
+            os.makedirs(os.path.dirname(destino), exist_ok=True)
+            shutil.copy2(origen, destino)
+            formato.plantilla_xlsx = os.path.relpath(destino, settings.MEDIA_ROOT)
+            formato.save(update_fields=['plantilla_xlsx'])
+            self.stdout.write(self.style.SUCCESS(
+                f'  Plantilla copiada a MEDIA: {formato.plantilla_xlsx}'
+            ))
+        else:
+            self.stdout.write(
+                '  Plantilla ya existe; no se sobrescribe (usa --forzar-plantilla).'
+            )
+
+        self._recrear_estructura_009(formato, forzar=forzar_estructura)
+        self.stdout.write(self.style.SUCCESS(
+            '  Estructura y metadatos de SGC-FOR-009 listos.'
+        ))
+
+    def _recrear_estructura_009(self, formato, forzar=False):
+        """Secciones/campos de la Minuta (motor dinámico)."""
+        if not forzar and CampoFormato.objects.filter(
+            seccion__formato=formato, clave='reunion_no',
+        ).exists():
+            self.stdout.write('  Estructura existente conservada.')
+            return
+
+        if forzar:
+            formato.secciones.all().delete()
+
+        sec_datos, _ = SeccionFormato.objects.update_or_create(
+            formato=formato, titulo='Datos de la reunión',
+            defaults={'orden': 1},
+        )
+        sec_asistentes, _ = SeccionFormato.objects.update_or_create(
+            formato=formato, titulo='Asistentes', defaults={'orden': 2},
+        )
+        sec_contenido, _ = SeccionFormato.objects.update_or_create(
+            formato=formato, titulo='Contenido', defaults={'orden': 3},
+        )
+        sec_aprobacion, _ = SeccionFormato.objects.update_or_create(
+            formato=formato, titulo='Aprobación', defaults={'orden': 4},
+        )
+
+        campos = [
+            (sec_datos, 'reunion_no', 'Reunión Nº', 'texto', 'B10', True, None,
+             'Ej.: 1, 2, 3… o 001 - NPR (reunión no planificada).'),
+            (sec_datos, 'objetivo', 'Objetivo de la Reunión', 'textarea',
+             'C13', True, None, ''),
+            (sec_datos, 'lugar', 'Lugar', 'texto', 'B16', False, None, ''),
+            (sec_datos, 'responsable_elaboracion',
+             'Responsable de la Elaboración', 'texto', 'B20', False, None, ''),
+            (sec_datos, 'duracion', 'Duración', 'texto', 'B22', False, None, ''),
+            (sec_datos, 'tipo_reunion', 'Tipo de reunión', 'select', '', True,
+             [
+                 {'valor': 'revision',
+                  'etiqueta': 'Revisión por la Dirección'},
+                 {'valor': 'otra', 'etiqueta': 'Otra reunión'},
+             ], ''),
+            (sec_datos, 'anio', 'Año', 'texto', '', False, None, ''),
+            (sec_datos, 'mes', 'Mes', 'select', '', False,
+             [{'valor': valor, 'etiqueta': etiqueta}
+              for valor, etiqueta in FOR_009_MESES], ''),
+            (sec_asistentes, 'asistentes', 'Asistentes', 'tabla', 'A26',
+             False, None, ''),
+            (sec_contenido, 'tema', 'Descripción del tema tratado', 'textarea',
+             'A33', False, None, ''),
+            (sec_contenido, 'conclusiones', 'Conclusiones', 'textarea',
+             'A38', False, None, ''),
+            (sec_contenido, 'acuerdos_cerrados', 'Acuerdos cerrados',
+             'textarea', 'A46', False, None, ''),
+            (sec_contenido, 'acuerdos_pendientes', 'Acuerdos pendientes',
+             'textarea', 'A54', False, None, ''),
+            (sec_aprobacion, 'responsables_aprobacion',
+             'Responsables de la Aprobación', 'textarea', 'A65', False, None,
+             'Se prefija desde la minuta más reciente; editable.'),
+        ]
+        for i, (seccion, clave, etiqueta, tipo, celda, requerido, opciones,
+                ayuda) in enumerate(campos):
+            defaults = {
+                'etiqueta': etiqueta,
+                'tipo': tipo,
+                'origen': 'usuario',
+                'celda_excel': celda,
+                'requerido': requerido,
+                'orden': i,
+                'ayuda': ayuda,
+            }
+            if opciones is not None:
+                defaults['opciones'] = opciones
+            if clave == 'asistentes':
+                defaults['config_tabla'] = copy.deepcopy(
+                    FOR_009_TABLA_ASISTENTES,
+                )
+            CampoFormato.objects.update_or_create(
+                seccion=seccion, clave=clave, defaults=defaults,
+            )

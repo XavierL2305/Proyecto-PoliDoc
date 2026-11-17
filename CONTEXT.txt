@@ -2952,11 +2952,12 @@ origen (p. ej. en CI, donde `documentacion/` no está versionado),
     - SGC-FOR-002 (Control de Distribución), SGC-FOR-003 (Tabla de cambios
       y modificaciones, §29.7), SGC-FOR-004 (Acta de desincorporación de
       archivos inactivos, §29.8) y SGC-FOR-006 (Lista Maestra de Documentos,
-      §29.10) y SGC-FOR-007 (Programa de Revisión por la Dirección, §29.11).
+      §29.10), SGC-FOR-007 (Programa de Revisión por la Dirección, §29.11) y
+      SGC-FOR-009 (Minuta de reunión, §29.12).
       Los demás SGC-FOR-005…018 quedan pendientes (el comando los omite con
       aviso). No hay catálogo/menú de "Formatos SGC": cada FOR se genera desde
-      su flujo (FOR-003, FOR-004, FOR-006 y FOR-007 aparecen en Configuración
-      → Formatos con badge "Planilla automática").
+      su flujo (FOR-003, FOR-004, FOR-006, FOR-007 y FOR-009 aparecen en
+      Configuración → Formatos con badge "Planilla automática").
       `Formato.requiere_firma` NO existe todavía; la firma se decide por la
       existencia de la plantilla FOR-002.
     - Documentos sin código (no ISO): entidad aparte `DocumentoSinCodigo`
@@ -3200,6 +3201,41 @@ origen (p. ej. en CI, donde `documentacion/` no está versionado),
       nombres editables y fecha día/mes/año. Sin SES (firma física).
     - Tests: `tests_for_007` (24) con plantilla sintética; seed, marcas,
       versiones, unicidad, acceso ver/editar, export N=3/14/31 y continuación.
+
+  29.12 SGC-FOR-009 — MINUTA DE REUNIÓN (sin migración)
+    - Formato `SGC-FOR-009` (`aplica_*=False`, `permite_registros=False`) con
+      secciones/campos del **motor dinámico** y `config_tabla` de asistentes
+      (7 filas/hoja). Se integra con `integrar_formatos_sgc --solo=009 --apply`
+      desde `documentacion/SGC-FOR-009  Minuta.xlsx` (doble espacio).
+    - Cada minuta es un `RegistroFormato` con contexto `minuta`/uuid,
+      `estado='borrador'`, `fecha` de la reunión y título automático
+      `Minuta {reunion_no} — {dd/mm/aaaa}`. **Sin versionado** (backlog).
+    - Campos: `reunion_no` (consecutivo `1..9999` o `001 - NPR`), `objetivo`,
+      `lugar`, `responsable_elaboracion`, `duracion`, `tipo_reunion`
+      (Revisión por la Dirección / Otra), `anio`, `mes` (clave ENE..DIC),
+      `asistentes` (nombre/cargo/departamento), `tema`, `conclusiones`,
+      `acuerdos_cerrados`, `acuerdos_pendientes` y `responsables_aprobacion`.
+    - `responsables_aprobacion` es texto libre y se **prefija desde la minuta
+      más reciente** (cualquier año), editable. La fecha del formulario es la
+      del `RegistroFormato` y alimenta la celda B18.
+    - **Hook FOR-007**: checkbox (marcado por defecto al crear) para
+      `tipo_reunion='revision'`: llama `for_007.marcar_ejecutado(anio, mes)` y
+      convierte P→V los aspectos planificados de ese mes; informa cuántos
+      marcó. Las minutas quedan excluidas de `/documentos/registros/`
+      (`CONTEXTOS_VISTA_EXCLUSIVA` incluye `minuta`).
+    - Acceso `AccesoFormato` ver/editar (admin siempre); menú “Minutas” visible
+      con ver. Rutas: `/documentos/minutas/`, `/nueva/`, `/<uuid>/`,
+      `/<uuid>/editar/`, `/<uuid>/<xlsx|pdf>/`, `/acceso/`.
+    - Export dedicado `services/for_009.py`: cajas exactas de la hoja
+      `SGC-FOR-009` con merges/wrap (`C13:J14`, `B16:F16`, `B18:C18`,
+      `B20:H20`, `B22:C22`; bloque A65 con altura), **7 asistentes/hoja** y
+      continuación `SGC-FOR-009 (2)…` con `PAGINA k DE n`; conserva
+      `SGC-IDL-015` (sus 2 páginas, imágenes y bloque de firmas del
+      instructivo) intacto. Sin SES: la minuta no tiene bloque de firmas, se
+      imprime y firma en físico. XLSX/PDF bajo demanda; editar invalida ambos.
+    - Tests: `tests_for_009` (19) con plantilla sintética; validación de Nº,
+      prefijo, hook P→V, acceso ver/editar, exclusión de registros, export a
+      celdas/merges, continuación 10 asistentes e IDL.
 
 -------------------------------------------------------------------
 30. FIRMA ELECTRÓNICA DE DISTRIBUCIÓN (SES)
@@ -3497,6 +3533,9 @@ alternativas en docs/adr/0001-modelo-documento-formato-registro.md.
     - SGC-FOR-007 Programa de Revisión por la Dirección (migración 0068):
       matriz anual con filas N variables, marcas P/V, versiones, acceso
       ver/editar y XLSX/PDF con continuación (§29.11).
+    - SGC-FOR-009 Minuta de reunión: motor dinámico, acceso ver/editar, hook
+      P→V del FOR-007, export a celdas exactas con continuación e IDL-015
+      intacta (§29.12).
     - Pendiente de P1: campaña de revisión masiva (§34) y validación legal
       de los textos de aviso.
   35.4 P2

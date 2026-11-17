@@ -1,0 +1,48 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}{{ registro.titulo }} - POLIDOC{% endblock %}
+
+{% block app_content %}
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap;margin-bottom:1.5rem;">
+  <div>
+    <h1 style="font-size:1.25rem;margin:0;">{{ registro.titulo }}</h1>
+    <p style="color:var(--color-muted);font-size:.85rem;margin:.35rem 0 0;">
+      {{ formato.codigo }} — {{ formato.nombre }} · {{ registro.fecha|date:"d/m/Y" }}
+      {% if respuestas.tipo_reunion == 'revision' %}
+      · Revisión por la Dirección
+      {% elif respuestas.tipo_reunion %}
+      · Otra reunión
+      {% endif %}
+      · {{ registro.get_estado_display }}
+    </p>
+  </div>
+  <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
+    <a class="btn btn--ghost btn--sm" href="{% url 'documentos:minutas_lista' %}">
+      <i class="fa-solid fa-arrow-left"></i> Volver
+    </a>
+    {% if puede_gestionar_acceso %}
+    <a class="btn btn--ghost btn--sm" href="{% url 'documentos:minuta_acceso' %}">
+      <i class="fa-solid fa-user-shield"></i> Acceso
+    </a>
+    {% endif %}
+    {% if puede_editar %}
+    <a class="btn btn--ghost btn--sm" href="{% url 'documentos:minuta_editar' minuta_uuid=registro.uuid %}">
+      <i class="fa-solid fa-pen"></i> Editar
+    </a>
+    {% endif %}
+    <a class="btn btn--ghost btn--sm" href="{% url 'documentos:minuta_descargar' minuta_uuid=registro.uuid formato='xlsx' %}">
+      <i class="fa-solid fa-file-excel"></i> XLSX
+    </a>
+    <a class="btn btn--primary btn--sm" href="{% url 'documentos:minuta_descargar' minuta_uuid=registro.uuid formato='pdf' %}">
+      <i class="fa-solid fa-file-pdf"></i> PDF
+    </a>
+  </div>
+</div>
+
+<div class="form-card" style="max-width:980px;margin:0 auto;">
+  <div class="form-card-body">
+    {% include 'documentos/_formato_dinamico.html' with formato=formato respuestas=respuestas read_only=True %}
+  </div>
+</div>
+{% endblock %}

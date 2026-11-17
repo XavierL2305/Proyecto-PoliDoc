@@ -27,7 +27,7 @@ def _es_admin(usuario):
 
 #: Contextos de "registro vivo" con vista exclusiva propia (FOR-006/FOR-007).
 #: No deben aparecer ni editarse desde el editor genérico de registros.
-CONTEXTOS_VISTA_EXCLUSIVA = ('sistema', 'programa_revision')
+CONTEXTOS_VISTA_EXCLUSIVA = ('sistema', 'programa_revision', 'minuta')
 
 
 def registros_visibles(usuario):

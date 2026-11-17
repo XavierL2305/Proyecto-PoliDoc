@@ -1,0 +1,88 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Minutas - POLIDOC{% endblock %}
+
+{% block app_content %}
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap;margin-bottom:1.5rem;">
+  <div>
+    <h1 style="font-size:1.25rem;margin:0;">Minutas de reunión</h1>
+    <p style="color:var(--color-muted);font-size:.85rem;margin:.35rem 0 0;">
+      {{ formato.codigo }} — {{ formato.nombre }}. Sirven para reuniones del SGC
+      y de Revisión por la Dirección (FOR-007).
+    </p>
+  </div>
+  <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
+    {% if puede_gestionar_acceso %}
+    <a class="btn btn--ghost btn--sm" href="{% url 'documentos:minuta_acceso' %}">
+      <i class="fa-solid fa-user-shield"></i> Acceso
+    </a>
+    {% endif %}
+    {% if puede_editar %}
+    <a class="btn btn--primary" href="{% url 'documentos:minuta_crear' %}">
+      <i class="fa-solid fa-plus"></i> Nueva minuta
+    </a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="form-card">
+  <div class="form-card-body" style="padding-bottom:.5rem;">
+    <form method="get" style="display:flex;gap:.5rem;flex-wrap:wrap;">
+      <input type="search" name="q" value="{{ q }}" class="form-input"
+             placeholder="Buscar por título o responsable…" style="flex:1 1 260px;">
+      <button type="submit" class="btn btn--ghost">Buscar</button>
+      {% if q %}<a class="btn btn--ghost" href="{% url 'documentos:minutas_lista' %}">Limpiar</a>{% endif %}
+    </form>
+  </div>
+  <div class="form-card-body" style="padding:0;">
+    {% if minutas %}
+    <div style="overflow-x:auto;">
+      <table class="table" style="width:100%;">
+        <thead>
+          <tr><th>Minuta</th><th>Fecha</th><th>Nº</th><th>Tipo</th><th>Responsable</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for m in minutas %}
+          <tr>
+            <td><strong>{{ m.titulo|default:"Minuta" }}</strong></td>
+            <td>{{ m.fecha|date:"d/m/Y" }}</td>
+            <td>{{ m.respuestas.reunion_no|default:"—" }}</td>
+            <td>
+              {% if m.respuestas.tipo_reunion == 'revision' %}Revisión por la Dirección{% else %}Otra reunión{% endif %}
+            </td>
+            <td>{{ m.responsable.get_full_name|default:m.responsable.username }}</td>
+            <td style="text-align:right;white-space:nowrap;">
+              <a class="btn btn--ghost btn--sm" href="{% url 'documentos:minuta_detalle' minuta_uuid=m.uuid %}">Ver</a>
+              {% if puede_editar %}
+              <a class="btn btn--ghost btn--sm" href="{% url 'documentos:minuta_editar' minuta_uuid=m.uuid %}">Editar</a>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state" style="padding:2.5rem;text-align:center;color:var(--color-muted);">
+      <p style="margin:0;">No hay minutas registradas.</p>
+      {% if puede_editar %}
+      <p style="margin:.5rem 0 0;"><a href="{% url 'documentos:minuta_crear' %}">Crear la primera minuta</a></p>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{% if page_obj.has_other_pages %}
+<div style="display:flex;gap:.5rem;justify-content:center;margin-top:1rem;">
+  {% if page_obj.has_previous %}
+  <a class="btn btn--ghost btn--sm" href="?page={{ page_obj.previous_page_number }}{% if q %}&q={{ q|urlencode }}{% endif %}">Anterior</a>
+  {% endif %}
+  <span style="font-size:.85rem;color:var(--color-muted);align-self:center;">Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</span>
+  {% if page_obj.has_next %}
+  <a class="btn btn--ghost btn--sm" href="?page={{ page_obj.next_page_number }}{% if q %}&q={{ q|urlencode }}{% endif %}">Siguiente</a>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}
