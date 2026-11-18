@@ -189,11 +189,11 @@ def exportar_xlsx_formato(formato, respuestas, para_pdf=False):
             except KeyError:
                 sheet1 = None
 
-            reemplazos = {}
+            reemplazos = _quitar_vinculos_externos(zf_in)
             nuevos = {}
             if anexos:
                 reemplazos, nuevos = _preparar_anexo(
-                    zf_in, formato, anexos,
+                    zf_in, formato, anexos, reemplazos,
                 )
             rango_impresion = None
             if para_pdf and sheet1:
@@ -216,6 +216,8 @@ def exportar_xlsx_formato(formato, respuestas, para_pdf=False):
                 )
 
             for item in zf_in.infolist():
+                if item.filename.startswith('xl/externalLinks/'):
+                    continue
                 data = zf_in.read(item.filename)
 
                 if item.filename == 'xl/worksheets/sheet1.xml' and sheet1:
@@ -311,11 +313,13 @@ def _patch_sheet1(sheet_data, formato, respuestas, shared_strings,
             columnas = config.get('columnas', [])
             filas = list(valor) if isinstance(valor, list) else []
 
-            # Limpieza de filas no usadas (CA-4): la plantilla puede traer
-            # datos de ejemplo (p. ej. las 6 causas del FOR-010) que no deben
-            # sobrevivir si el registro tiene menos filas.
+            # Limpieza de filas (CA-4): la plantilla puede traer datos de
+            # ejemplo (p. ej. las 6 causas del FOR-010) que no deben
+            # sobrevivir. Se limpian TODAS las filas antes de escribir para
+            # que una fila del usuario con una columna vacía no conserve el
+            # dato de ejemplo de esa celda.
             if config.get('limpiar_filas'):
-                for i in range(len(filas), max_filas):
+                for i in range(0, max_filas):
                     row_num = fila_inicio + i
                     for col_def in columnas:
                         for ref in _refs_columna(col_def, row_num):
@@ -633,11 +637,20 @@ def _escribir_bloque(root, rango, texto, etiqueta, estilos, anexos):
         altura = por_fila * 15 + 2
 
     pos = 0
-    for ref, fila in destinos:
+    ultimo_idx = len(destinos) - 1
+    for idx, (ref, fila) in enumerate(destinos):
         bloque = lineas[pos:pos + por_fila]
         pos += por_fila
         if not bloque:
-            break
+            # El texto ocupó menos filas que el rango: las sobrantes pueden
+            # traer contenido de la plantilla, así que se limpian.
+            _limpiar_celda(root, ref)
+            continue
+        if idx == ultimo_idx and pos < len(lineas):
+            # Quien lea la página impresa debe saber que el resto está en el
+            # anexo.
+            bloque = list(bloque)
+            bloque[-1] = f'{bloque[-1]} … (ver anexo)'
         style = _get_existing_style(root, ref)
         if por_fila > 1:
             style = estilos.con_wrap(style)
@@ -878,14 +891,22 @@ def _hoja_anexo_xml(anexos):
     return _serializar(root)
 
 
-def _preparar_anexo(zf, formato, anexos):
+def _preparar_anexo(zf, formato, anexos, previos=None):
     """Añade la hoja ``<código> (Anexo)`` al paquete.
+
+    Args:
+        zf: ZIP de entrada.
+        formato: Formato dueño del registro.
+        anexos: Textos que no caben en la plantilla.
+        previos: Reemplazos ya calculados (p. ej. tras quitar los vínculos
+            externos); se parte de ellos para no perder esos parches.
 
     Returns:
         ``(reemplazos, nuevas_entradas)``: contenidos que sustituyen partes
         existentes del zip y archivos nuevos que hay que agregar.
     """
     ns = NS['s']
+    reemplazos = dict(previos or {})
     nombres = set(zf.namelist())
     numeros = [
         int(m.group(1))
@@ -896,7 +917,9 @@ def _preparar_anexo(zf, formato, anexos):
     numero = max([n for n in numeros if n >= 1], default=1) + 1
     ruta = f'xl/worksheets/sheet{numero}.xml'
 
-    wb = etree.fromstring(zf.read('xl/workbook.xml'))
+    wb = etree.fromstring(
+        reemplazos.get('xl/workbook.xml', zf.read('xl/workbook.xml')),
+    )
     hojas = wb.find(f'{{{ns}}}sheets')
     if hojas is None:
         hojas = etree.SubElement(wb, f'{{{ns}}}sheets')
@@ -914,7 +937,10 @@ def _preparar_anexo(zf, formato, anexos):
     ]
     nuevo_sheet_id = (max(ids) + 1) if ids else 1
 
-    rels = etree.fromstring(zf.read('xl/_rels/workbook.xml.rels'))
+    rels = etree.fromstring(reemplazos.get(
+        'xl/_rels/workbook.xml.rels',
+        zf.read('xl/_rels/workbook.xml.rels'),
+    ))
     rel_ns = 'http://schemas.openxmlformats.org/package/2006/relationships'
     usados_rid = [
         int(m.group(1))
@@ -941,7 +967,9 @@ def _preparar_anexo(zf, formato, anexos):
         'relationships}id', nuevo_rid,
     )
 
-    tipos = etree.fromstring(zf.read('[Content_Types].xml'))
+    tipos = etree.fromstring(reemplazos.get(
+        '[Content_Types].xml', zf.read('[Content_Types].xml'),
+    ))
     ct_ns = 'http://schemas.openxmlformats.org/package/2006/content-types'
     etree.SubElement(
         tipos, f'{{{ct_ns}}}Override',
@@ -952,13 +980,74 @@ def _preparar_anexo(zf, formato, anexos):
         ),
     )
 
-    reemplazos = {
-        'xl/workbook.xml': _serializar(wb),
-        'xl/_rels/workbook.xml.rels': _serializar(rels),
-        '[Content_Types].xml': _serializar(tipos),
-    }
+    reemplazos['xl/workbook.xml'] = _serializar(wb)
+    reemplazos['xl/_rels/workbook.xml.rels'] = _serializar(rels)
+    reemplazos['[Content_Types].xml'] = _serializar(tipos)
     nuevos = {ruta: _hoja_anexo_xml(anexos)}
     return reemplazos, nuevos
+
+
+def _quitar_vinculos_externos(zf):
+    """Elimina los vínculos externos de la plantilla.
+
+    La plantilla oficial del FOR-010 trae un ``externalLink`` a un XLSX de
+    otra máquina; al abrir el export, Excel avisa de "vínculos a fuentes
+    externas". Se eliminan las partes ``xl/externalLinks/*`` y sus
+    referencias: ``<externalReferences>`` y los ``definedName`` que apuntan a
+    ``[n]...`` en ``workbook.xml``, la relación en
+    ``xl/_rels/workbook.xml.rels`` y el ``Override`` en
+    ``[Content_Types].xml``.
+
+    Returns:
+        dict: partes reemplazadas (vacío si la plantilla no trae vínculos).
+    """
+    if not any(
+        nombre.startswith('xl/externalLinks/') for nombre in zf.namelist()
+    ):
+        return {}
+    ns = NS['s']
+    reemplazos = {}
+
+    wb = etree.fromstring(zf.read('xl/workbook.xml'))
+    cambio = False
+    referencias = wb.find(f'{{{ns}}}externalReferences')
+    if referencias is not None:
+        wb.remove(referencias)
+        cambio = True
+    definidos = wb.find(f'{{{ns}}}definedNames')
+    if definidos is not None:
+        for nombre in list(definidos):
+            if re.search(r'\[\d+\]', nombre.text or ''):
+                definidos.remove(nombre)
+                cambio = True
+        if len(definidos) == 0:
+            wb.remove(definidos)
+    if cambio:
+        reemplazos['xl/workbook.xml'] = _serializar(wb)
+
+    rels = etree.fromstring(zf.read('xl/_rels/workbook.xml.rels'))
+    cambio = False
+    for rel in list(rels):
+        tipo = rel.get('Type') or ''
+        destino = rel.get('Target') or ''
+        if (
+            tipo.endswith('/externalLink')
+            or destino.startswith('externalLinks/')
+        ):
+            rels.remove(rel)
+            cambio = True
+    if cambio:
+        reemplazos['xl/_rels/workbook.xml.rels'] = _serializar(rels)
+
+    tipos = etree.fromstring(zf.read('[Content_Types].xml'))
+    cambio = False
+    for override in list(tipos):
+        if 'externalLink' in (override.get('ContentType') or ''):
+            tipos.remove(override)
+            cambio = True
+    if cambio:
+        reemplazos['[Content_Types].xml'] = _serializar(tipos)
+    return reemplazos
 
 
 def _rango_impresion(root, zf):

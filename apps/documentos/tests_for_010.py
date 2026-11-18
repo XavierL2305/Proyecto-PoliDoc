@@ -33,6 +33,11 @@ TEST_MEDIA = tempfile.mkdtemp(prefix='polidoc_media_for010_')
 PDF = b'%PDF-1.4\n%prueba\n'
 
 
+def wb_sheetnames(data):
+    """Nombres de las hojas del XLSX exportado."""
+    return openpyxl.load_workbook(BytesIO(data)).sheetnames
+
+
 def datos_for_010(**overrides):
     datos = {
         'nc_numero': 'NC-2026-001',
@@ -262,6 +267,62 @@ class ExportTest(BaseFor010Test):
         self.assertEqual(ws['F58'].value, 0)
         self.assertFalse(ws['G58'].value)
 
+    def test_bloque_corto_limpia_filas_sobrantes(self):
+        registro = self._registro(
+            respuestas=datos_for_010(descripcion_nc='Descripción breve.'),
+        )
+        ws = self._wb(self._xlsx(registro))['SGC-FOR-010']
+        self.assertEqual(ws['D11'].value, 'Descripción breve.')
+        # D12/D13 traen texto de ejemplo en la plantilla sintética.
+        self.assertIsNone(ws['D12'].value)
+        self.assertIsNone(ws['D13'].value)
+
+    def test_desborde_marca_continuacion_en_anexo(self):
+        muchas = '\n'.join(f'Línea {i}' for i in range(120))
+        registro = self._registro(
+            respuestas=datos_for_010(descripcion_nc=muchas),
+        )
+        data = self._xlsx(registro)
+        ws = self._wb(data)['SGC-FOR-010']
+        self.assertIn('ver anexo', str(ws['D13'].value))
+        self.assertIn('SGC-FOR-010 (Anexo)', wb_sheetnames(data))
+
+    def test_fila_parcial_no_conserva_el_ejemplo(self):
+        registro = self._registro(respuestas=datos_for_010(causas=[
+            {'descripcion': 'Causa sin incidencia', 'incidencia': ''},
+        ]))
+        data = self._xlsx(registro)
+        ws = self._wb(data)['SGC-FOR-010']
+        self.assertEqual(ws['A52'].value, 'Causa sin incidencia')
+        self.assertIsNone(ws['F52'].value)
+        self.assertEqual(ws['F58'].value, 0)
+        # La fórmula de porcentaje de la fila usada sigue intacta.
+        wb = openpyxl.load_workbook(BytesIO(data))
+        self.assertTrue(
+            str(wb['SGC-FOR-010']['G52'].value).startswith('=IFERROR'),
+        )
+
+    def test_plantilla_sintetica_incluye_vinculo_externo(self):
+        ruta = os.path.join(TEST_MEDIA, 'for010_sintetica.xlsx')
+        with zipfile.ZipFile(ruta) as z:
+            self.assertTrue(
+                any('externalLinks/' in n for n in z.namelist()),
+            )
+
+    def test_export_quita_vinculos_externos(self):
+        z = zipfile.ZipFile(BytesIO(self._xlsx()))
+        self.assertFalse([
+            n for n in z.namelist() if n.startswith('xl/externalLinks/')
+        ])
+        wb_xml = z.read('xl/workbook.xml').decode('utf-8')
+        self.assertNotIn('externalReferences', wb_xml)
+        self.assertNotIn('[1]', wb_xml)
+        rels = z.read('xl/_rels/workbook.xml.rels').decode('utf-8')
+        self.assertNotIn('externalLink', rels)
+        tipos = z.read('[Content_Types].xml').decode('utf-8')
+        self.assertNotIn('externalLink', tipos)
+        self.assertIn('SGC-IDL-016', wb_sheetnames(self._xlsx()))
+
     def test_bloque_largo_reparte_y_ajusta_altura(self):
         largo = (
             'El proceso de auditoría interna no evidencia la determinación '
@@ -354,6 +415,24 @@ class ExportTest(BaseFor010Test):
         registro.refresh_from_db()
         self.assertTrue(ruta)
         self.assertTrue(registro.archivo_pdf.name)
+
+    def test_servicio_pdf_resuelve_ruta_relativa_a_media(self):
+        registro = self._registro()
+        relativa = os.path.join('registros', 'relativo.pdf')
+        absoluta = os.path.join(TEST_MEDIA, relativa)
+        os.makedirs(os.path.dirname(absoluta), exist_ok=True)
+        with open(absoluta, 'wb') as fh:
+            fh.write(PDF)
+        with patch(
+            'documentos.tasks.convertir_a_pdf_sync',
+            return_value=relativa,
+        ):
+            ruta = regsvc.exportar_registro_pdf(registro)
+        registro.refresh_from_db()
+        self.assertTrue(ruta)
+        with registro.archivo_pdf.open('rb') as fh:
+            self.assertEqual(fh.read(), PDF)
+        self.assertFalse(os.path.exists(absoluta))
 
 
 class ValidacionTest(BaseFor010Test):
@@ -510,3 +589,33 @@ class VersionadoTest(BaseFor010Test):
         registro.refresh_from_db()
         self.assertFalse(registro.archivo)
         self.assertFalse(registro.archivo_pdf)
+
+    def test_editar_con_archivo_nuevo_y_cambios_conserva_el_nuevo(self):
+        registro = self._crear()
+        registro.archivo.save(
+            'anterior.pdf',
+            SimpleUploadedFile('anterior.pdf', PDF), save=True,
+        )
+        viejo = registro.archivo.name
+        data = self._post_data(
+            descripcion_nc='Otra descripción con cambios.',
+        )
+        data['archivo'] = SimpleUploadedFile(
+            'nuevo.xlsx', b'PK\x03\x04nuevo',
+        )
+        respuesta = self.client.post(
+            reverse('documentos:registro_editar', args=[registro.uuid]),
+            data,
+        )
+        self.assertEqual(respuesta.status_code, 302)
+        registro.refresh_from_db()
+        self.assertTrue(registro.archivo.name.endswith('.xlsx'))
+        with registro.archivo.open('rb') as fh:
+            self.assertEqual(fh.read(), b'PK\x03\x04nuevo')
+        # El archivo anterior no queda huérfano en el almacenamiento.
+        self.assertFalse(registro.archivo.storage.exists(viejo))
+        self.assertFalse(registro.archivo_pdf)
+        self.assertEqual(
+            VersionRegistroFormato.objects.filter(registro=registro).count(),
+            2,
+        )

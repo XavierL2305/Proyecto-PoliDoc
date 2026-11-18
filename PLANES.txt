@@ -169,6 +169,9 @@ FOR-010 — PLAN DE ACCIÓN ANTE NO CONFORMIDADES (registro)
     el export limpia las causas de ejemplo de la plantilla.
 [x] PDF: variante de 2 páginas (formulario + Pareto) que oculta el instructivo.
 [x] Tests tests_for_010 (26) + CONTEXT §33.5.
+[x] Endurecimiento tras revisión (CONTEXT §33.6): archivo nuevo en edición,
+    limpieza de filas parciales, aviso "(ver anexo)", sin externalLinks y
+    PDF vía xlsx_bytes_a_pdf (rutas relativas a MEDIA_ROOT). Tests (33).
 
 BACKLOG
 [ ] FOR-007: restaurar versión.

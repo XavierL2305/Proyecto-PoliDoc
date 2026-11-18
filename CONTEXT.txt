@@ -3536,8 +3536,26 @@ alternativas en docs/adr/0001-modelo-documento-formato-registro.md.
       fija el área de impresión (celdas + dibujos) y `fitToWidth=1` →
       formulario + Pareto en 2 páginas; el anexo, si existe, también se
       imprime. El XLSX descargable conserva todas las hojas.
-    - Tests: `tests_for_010` (26) con plantilla sintética (layout real,
+    - Tests: `tests_for_010` (33) con plantilla sintética (layout real,
       causas de ejemplo, fórmulas, Pareto e Ishikawa/casillas).
+
+  33.6 ENDURECIMIENTO DE FOR-010 (revisión de código)
+    - `registro_editar`: subir un archivo nuevo y editar respuestas en el
+      mismo POST **conserva** el archivo subido; solo se borra el previo (y
+      el PDF) para no dejarlos huérfanos en el almacenamiento.
+    - `limpiar_filas` limpia **todas** las filas de la tabla antes de
+      escribir: una fila del usuario con una columna vacía ya no conserva el
+      dato de ejemplo de esa celda (p. ej. el 87 de las causas).
+    - `_escribir_bloque` limpia las filas sobrantes del rango y marca
+      `… (ver anexo)` en la última fila visible cuando hay desborde.
+    - El export elimina los vínculos externos de la plantilla
+      (`xl/externalLinks/*`, `<externalReferences>`, los definedName que
+      apuntan a `[n]`, su relación y su Override): Excel ya no muestra el
+      aviso de "fuentes externas" al abrir el XLSX descargado.
+    - `exportar_registro_pdf` y `constancia_pdf` usan
+      `xlsx_comun.xlsx_bytes_a_pdf`, que resuelve las rutas relativas a
+      `MEDIA_ROOT` (antes abrían el retorno de `convertir_a_pdf_sync` tal
+      cual).
 
 
 34. CAMPAÑAS DE REVISIÓN MASIVA

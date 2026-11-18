@@ -531,6 +531,115 @@ def _inyectar_casillas_for_010(ruta):
             zout.writestr(info, data)
 
 
+_EXTERNO_FOR_010 = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    '<externalLink '
+    'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+    'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/'
+    'relationships">'
+    '<externalBook r:id="rId1">'
+    '<sheetNames><sheetName val="PLAN DE ACCION"/></sheetNames>'
+    '<sheetDataSet><sheetData sheetId="0" refreshError="1"/></sheetDataSet>'
+    '</externalBook></externalLink>'
+)
+
+_RELS_EXTERNO_FOR_010 = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/'
+    'relationships">'
+    '<Relationship Id="rId1" '
+    'Type="http://schemas.openxmlformats.org/officeDocument/2006/'
+    'relationships/externalLinkPath" '
+    'Target="/Users/acastellano/Documents/DPR-23 Auditoria Interna.xlsx" '
+    'TargetMode="External"/>'
+    '</Relationships>'
+)
+
+
+def _inyectar_vinculo_externo_for_010(ruta):
+    """Inyecta un ``externalLink`` como el de la plantilla oficial.
+
+    La plantilla real incluye un vínculo a un XLSX local de otra máquina, que
+    hace que Excel muestre el aviso de "fuentes externas". El export debe
+    eliminarlo; este fixture garantiza que se pruebe ese camino.
+    """
+    from lxml import etree
+
+    main = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+    rel = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+    pkg = 'http://schemas.openxmlformats.org/package/2006/relationships'
+    ct = 'http://schemas.openxmlformats.org/package/2006/content-types'
+
+    def _serializar(root):
+        return etree.tostring(
+            root, xml_declaration=True, encoding='UTF-8', standalone=True,
+        )
+
+    with zipfile.ZipFile(ruta) as zin:
+        entradas = [(info, zin.read(info.filename)) for info in zin.infolist()]
+
+    with zipfile.ZipFile(ruta, 'w', zipfile.ZIP_DEFLATED) as zout:
+        for info, data in entradas:
+            if info.filename == 'xl/workbook.xml':
+                root = etree.fromstring(data)
+                refs = etree.Element(f'{{{main}}}externalReferences')
+                referencia = etree.SubElement(
+                    refs, f'{{{main}}}externalReference',
+                )
+                referencia.set(f'{{{rel}}}id', 'rIdExt1')
+                hojas = root.find(f'{{{main}}}sheets')
+                root.insert(list(root).index(hojas) + 1, refs)
+                definidos = root.find(f'{{{main}}}definedNames')
+                if definidos is None:
+                    definidos = etree.Element(f'{{{main}}}definedNames')
+                    calc = root.find(f'{{{main}}}calcPr')
+                    if calc is not None:
+                        root.insert(list(root).index(calc), definidos)
+                    else:
+                        root.append(definidos)
+                for nombre, valor in (
+                    ('_xlchart.v1.0', "'[1]PLAN DE ACCION'!$A$51:$A$56"),
+                    ('_xlchart.v1.1', "'[1]PLAN DE ACCION'!$F$50"),
+                    ('_xlchart.v1.2', "'[1]PLAN DE ACCION'!$F$51:$F$56"),
+                ):
+                    item = etree.SubElement(
+                        definidos, f'{{{main}}}definedName',
+                    )
+                    item.set('name', nombre)
+                    item.set('hidden', '1')
+                    item.text = valor
+                data = _serializar(root)
+            elif info.filename == 'xl/_rels/workbook.xml.rels':
+                root = etree.fromstring(data)
+                nuevo = etree.SubElement(
+                    root, f'{{{pkg}}}Relationship',
+                )
+                nuevo.set('Id', 'rIdExt1')
+                nuevo.set('Type', f'{rel}/externalLink')
+                nuevo.set('Target', 'externalLinks/externalLink1.xml')
+                data = _serializar(root)
+            elif info.filename == '[Content_Types].xml':
+                root = etree.fromstring(data)
+                override = etree.SubElement(root, f'{{{ct}}}Override')
+                override.set(
+                    'PartName', '/xl/externalLinks/externalLink1.xml',
+                )
+                override.set(
+                    'ContentType',
+                    'application/vnd.openxmlformats-officedocument.'
+                    'spreadsheetml.externalLink+xml',
+                )
+                data = _serializar(root)
+            zout.writestr(info, data)
+        zout.writestr(
+            'xl/externalLinks/externalLink1.xml', _EXTERNO_FOR_010,
+        )
+        zout.writestr(
+            'xl/externalLinks/_rels/externalLink1.xml.rels',
+            _RELS_EXTERNO_FOR_010,
+        )
+
+
 def crear_plantilla_for_010(ruta):
     """XLSX sintético con el layout del FOR-010 (Plan de Acción ante NC).
 
@@ -610,6 +719,11 @@ def crear_plantilla_for_010(ruta):
     for fila in range(60, 67):
         ws.merge_cells(f'A{fila}:C{fila}')
 
+    # Filas sobrantes del bloque de descripción con contenido de plantilla:
+    # el export debe limpiarlas cuando el texto no las ocupa.
+    ws['D12'] = 'TEXTO DE EJEMPLO (fila 12)'
+    ws['D13'] = 'TEXTO DE EJEMPLO (fila 13)'
+
     causas = [
         ('FALTA DE PERSONAL PARA LA REALIZACION DE LOS ESTUDIOS', 87),
         ('FALTA DE CONOCIMIENTO DE LA METODOLOGIA', 38),
@@ -641,4 +755,5 @@ def crear_plantilla_for_010(ruta):
     os.makedirs(os.path.dirname(ruta), exist_ok=True)
     wb.save(ruta)
     _inyectar_casillas_for_010(ruta)
+    _inyectar_vinculo_externo_for_010(ruta)
     return ruta

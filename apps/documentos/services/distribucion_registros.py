@@ -22,7 +22,6 @@ import io
 import logging
 import os
 import secrets
-import tempfile
 from datetime import timedelta
 from typing import NamedTuple
 
@@ -683,24 +682,6 @@ def constancia_pdf(registro):
         bytes | None: ``None`` si la conversión falla.
     """
     xlsx = constancia_xlsx(registro)
-    with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp:
-        tmp.write(xlsx)
-        ruta_xlsx = tmp.name
-    try:
-        from ..tasks import convertir_a_pdf_sync
+    from .xlsx_comun import xlsx_bytes_a_pdf
 
-        pdf_path = convertir_a_pdf_sync(ruta_xlsx, reparar_sincrono=True)
-        if not pdf_path:
-            return None
-        with open(pdf_path, 'rb') as fh:
-            data = fh.read()
-        try:
-            os.unlink(pdf_path)
-        except OSError:
-            pass
-        return data
-    finally:
-        try:
-            os.unlink(ruta_xlsx)
-        except OSError:
-            pass
+    return xlsx_bytes_a_pdf(xlsx)

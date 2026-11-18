@@ -4,9 +4,6 @@ Un ``RegistroFormato`` es la evidencia de haber llenado un ``Formato`` para un
 contexto (primer caso: un documento/DPR). El código del formato se repite; la
 identidad es el ``uuid``. Ver ``CONTEXT.txt`` §32-§33.
 """
-import os
-import tempfile
-
 from django.db.models import Q
 
 
@@ -160,29 +157,15 @@ def exportar_registro_pdf(registro):
     """Ruta del PDF del registro (lo genera y lo persiste si hace falta)."""
     if registro.archivo_pdf:
         return registro.archivo_pdf.path
+    from django.core.files.base import ContentFile
+
+    from .xlsx_comun import xlsx_bytes_a_pdf
+
     contenido = exportar_registro_xlsx(registro, para_pdf=True)
-    with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp:
-        tmp.write(contenido)
-        xlsx_path = tmp.name
-    try:
-        from django.core.files.base import ContentFile
-
-        from ..tasks import convertir_a_pdf_sync
-
-        pdf_path = convertir_a_pdf_sync(xlsx_path, reparar_sincrono=True)
-        if not pdf_path:
-            return None
-        with open(pdf_path, 'rb') as fh:
-            registro.archivo_pdf.save(
-                f'{registro.uuid.hex}.pdf', ContentFile(fh.read()), save=True,
-            )
-        try:
-            os.unlink(pdf_path)
-        except OSError:
-            pass
-        return registro.archivo_pdf.path
-    finally:
-        try:
-            os.unlink(xlsx_path)
-        except OSError:
-            pass
+    pdf_bytes = xlsx_bytes_a_pdf(contenido)
+    if not pdf_bytes:
+        return None
+    registro.archivo_pdf.save(
+        f'{registro.uuid.hex}.pdf', ContentFile(pdf_bytes), save=True,
+    )
+    return registro.archivo_pdf.path

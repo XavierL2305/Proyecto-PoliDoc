@@ -6535,16 +6535,22 @@ def registro_editar(request, registro_uuid):
                 )
                 actualizado.respuestas = nuevas
                 actualizado.estado = 'borrador'
-                if cambio_respuestas:
-                    # El XLSX/PDF previo ya no representa las respuestas.
-                    if actualizado.archivo and str(
-                        actualizado.archivo.name or '',
-                    ).lower().endswith('.xlsx'):
-                        actualizado.archivo.delete(save=False)
-                        actualizado.archivo = ''
-                    if actualizado.archivo_pdf:
-                        actualizado.archivo_pdf.delete(save=False)
-                        actualizado.archivo_pdf = ''
+                subio_archivo = bool(request.FILES.get('archivo'))
+                if subio_archivo:
+                    # El archivo recién subido reemplaza al anterior: se borra
+                    # el previo para no dejarlo huérfano en el almacenamiento.
+                    if previo.archivo:
+                        previo.archivo.delete(save=False)
+                elif cambio_respuestas and str(
+                    previo.archivo.name if previo.archivo else '',
+                ).lower().endswith('.xlsx'):
+                    # El XLSX generado ya no representa las respuestas.
+                    previo.archivo.delete(save=False)
+                    actualizado.archivo = ''
+                if (cambio_respuestas or subio_archivo) and previo.archivo_pdf:
+                    # El PDF previo tampoco representa el registro.
+                    previo.archivo_pdf.delete(save=False)
+                    actualizado.archivo_pdf = ''
                 actualizado.save()
                 if hubo_cambios:
                     registrar_version(
