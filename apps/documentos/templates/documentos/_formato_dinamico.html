@@ -175,6 +175,12 @@
     var tbody = document.querySelector('[data-campo="' + campo_clave + '"] .tabla-body');
     var columnas = {{ campo.config_tabla.columnas|to_json|safe }};
     var storedData = {{ respuestas|get_item:campo.clave|to_json|safe }};
+    var maxFilas = {% if campo.config_tabla.max_filas %}{{ campo.config_tabla.max_filas }}{% else %}0{% endif %};
+    var addBtn = document.querySelector('.tabla-add-btn[data-campo="' + campo_clave + '"]');
+    function syncAddButton() {
+      if (!addBtn || !maxFilas) return;
+      addBtn.disabled = tbody.children.length >= maxFilas;
+    }
 
     function buildRow(data) {
       var tr = document.createElement('tr');
@@ -199,21 +205,27 @@
       rmBtn.addEventListener('click', function() {
         tr.remove();
         renumberRows(campo_clave);
+        syncAddButton();
       });
       rmTd.appendChild(rmBtn);
       tr.appendChild(rmTd);
       tbody.appendChild(tr);
       renumberRows(campo_clave);
+      syncAddButton();
     }
 
     window.addTablaRow = window.addTablaRow || {};
-    window.addTablaRow[campo_clave] = function() { buildRow(null); };
+    window.addTablaRow[campo_clave] = function() {
+      if (maxFilas && tbody.children.length >= maxFilas) return;
+      buildRow(null);
+    };
 
     if (Array.isArray(storedData) && storedData.length > 0) {
       storedData.forEach(function(row) { buildRow(row); });
     } else {
       buildRow(null);
     }
+    syncAddButton();
 
     var form = tbody.closest('form');
     if (form) {

@@ -138,7 +138,7 @@ def rechazar_registro(registro, usuario, observaciones=''):
     return registro
 
 
-def exportar_registro_xlsx(registro):
+def exportar_registro_xlsx(registro, para_pdf=False):
     """Bytes XLSX del registro (archivo subido o generado desde el formato)."""
     archivo = registro.archivo
     if archivo and str(archivo.name).lower().endswith('.xlsx'):
@@ -151,14 +151,16 @@ def exportar_registro_xlsx(registro):
         raise ValueError('El registro no tiene archivo ni plantilla XLSX')
     from .exportacion import exportar_xlsx_formato
 
-    return exportar_xlsx_formato(registro.formato, registro.respuestas or {})
+    return exportar_xlsx_formato(
+        registro.formato, registro.respuestas or {}, para_pdf=para_pdf,
+    )
 
 
 def exportar_registro_pdf(registro):
     """Ruta del PDF del registro (lo genera y lo persiste si hace falta)."""
     if registro.archivo_pdf:
         return registro.archivo_pdf.path
-    contenido = exportar_registro_xlsx(registro)
+    contenido = exportar_registro_xlsx(registro, para_pdf=True)
     with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp:
         tmp.write(contenido)
         xlsx_path = tmp.name

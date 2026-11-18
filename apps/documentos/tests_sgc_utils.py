@@ -474,3 +474,171 @@ def crear_plantilla_for_009(ruta):
     os.makedirs(os.path.dirname(ruta), exist_ok=True)
     wb.save(ruta)
     return ruta
+
+
+def _inyectar_casillas_for_010(ruta):
+    """Agrega las 4 casillas (shapes) de Detección al ``drawing1.xml``.
+
+    openpyxl no crea formas; se inyectan como ``xdr:sp`` con los mismos
+    nombres que usa la plantilla oficial (Rectángulo 70/71/79/80).
+    """
+    from lxml import etree
+
+    xdr = 'http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing'
+    a = 'http://schemas.openxmlformats.org/drawingml/2006/main'
+    plantilla = '''<xdr:twoCellAnchor xmlns:xdr="{xdr}" xmlns:a="{a}">
+  <xdr:from><xdr:col>{col}</xdr:col><xdr:colOff>0</xdr:colOff>
+    <xdr:row>13</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>
+  <xdr:to><xdr:col>{col}</xdr:col><xdr:colOff>285750</xdr:colOff>
+    <xdr:row>13</xdr:row><xdr:rowOff>228600</xdr:rowOff></xdr:to>
+  <xdr:sp macro="" textlink="">
+    <xdr:nvSpPr>
+      <xdr:cNvPr id="{cid}" name="{nombre}"/><xdr:cNvSpPr/>
+    </xdr:nvSpPr>
+    <xdr:spPr>
+      <a:xfrm><a:off x="0" y="0"/><a:ext cx="285750" cy="228600"/></a:xfrm>
+      <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+      <a:solidFill><a:schemeClr val="bg1"/></a:solidFill>
+      <a:ln><a:solidFill><a:sysClr val="windowText" lastClr="000000"/>
+      </a:solidFill></a:ln>
+    </xdr:spPr>
+    <xdr:txBody><a:bodyPr/><a:lstStyle/><a:p/></xdr:txBody>
+  </xdr:sp>
+  <xdr:clientData/>
+</xdr:twoCellAnchor>'''
+
+    with zipfile.ZipFile(ruta) as zin:
+        entradas = [(info, zin.read(info.filename)) for info in zin.infolist()]
+
+    with zipfile.ZipFile(ruta, 'w', zipfile.ZIP_DEFLATED) as zout:
+        for info, data in entradas:
+            if info.filename == 'xl/drawings/drawing1.xml':
+                root = etree.fromstring(data)
+                for cid, col, nombre in (
+                    (71, 3, 'Rectángulo 70'),
+                    (72, 4, 'Rectángulo 71'),
+                    (80, 5, 'Rectángulo 79'),
+                    (81, 6, 'Rectángulo 80'),
+                ):
+                    xml = plantilla.format(
+                        xdr=xdr, a=a, col=col, cid=cid, nombre=nombre,
+                    )
+                    root.append(etree.fromstring(xml.encode('utf-8')))
+                data = etree.tostring(
+                    root, xml_declaration=True, encoding='UTF-8',
+                    standalone=True,
+                )
+            zout.writestr(info, data)
+
+
+def crear_plantilla_for_010(ruta):
+    """XLSX sintético con el layout del FOR-010 (Plan de Acción ante NC).
+
+    Reproduce la hoja ``SGC-FOR-010`` (identificación, tablas, causas de
+    ejemplo, fórmulas de totales, firmas), el gráfico Pareto y una hoja
+    instructiva ``SGC-IDL-016``. Las casillas de detección se inyectan como
+    formas en ``drawing1.xml``.
+    """
+    from datetime import date
+
+    from openpyxl.chart import BarChart, Reference
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'SGC-FOR-010'
+    for columna, ancho in (
+        ('B', 12.71), ('C', 11.14), ('D', 21.0),
+        ('E', 13.71), ('F', 21.0), ('G', 14.43),
+    ):
+        ws.column_dimensions[columna].width = ancho
+
+    ws['B1'] = 'PLANES DE ACCION ANTE NO CONFORMIDADES'
+    ws['B2'] = 'INFORMACION DOCUMENTADA'
+    ws['B3'] = 'NO CONFORMIDAD Y ACCION CORRECTIVA'
+    for celda, texto in (
+        ('B4', 'Nº DE IDENTIFICACION'), ('D4', 'VERSION'),
+        ('E4', 'EDICION'), ('F4', 'FECHA DE VIGENCIA'), ('G4', 'PAGINA'),
+        ('B5', 'SGC-FOR-010'), ('D5', 1), ('E5', 1),
+        ('F5', date(2025, 3, 18)), ('G5', '1 DE 1'),
+        ('A6', 'PROCEDIMIENTO DE NO CONFORMIDAD Y ACCION CORRECTIVA'),
+        ('A7', 'NC Nº'), ('E7', 'FECHA DEL ANALISIS'),
+        ('A9', 'Proceso/ Departamento/ Unidad de Origen: '),
+        ('A11', 'Descripciòn de la No conformidad: '),
+        ('A14', 'Detecciòn de la No conformidad: '),
+        ('C14', 'Auditoria'),
+        ('D14', '                  Revisiòn por la Direcciòn'),
+        ('F14', 'Quejas o Reclamos'), ('G14', 'Otros:'),
+        ('A15', '1. ACCIONES DE CORRECCION'),
+        ('D15', 'FECHA INI'), ('E15', 'FECHA FIN'),
+        ('F15', 'RESPONSABLE'), ('G15', '% DE AVANCE'),
+        ('A23', '2. ANALISIS Y SOLUCION DE PROBLEMAS'),
+        ('A24', '2.1. INTEGRANTES DEL EQUIPO'),
+        ('E24', 'LIDER DEL EQUIPO'),
+        ('A31', '2.2. DATOS Y DESCRIPCION DEL PROBLEMA'),
+        ('A32', 'GRAFICO O ESQUEMA REPRESENTATIVO DEL PROBLEMA'),
+        ('A43', '2.3. ANALISIS DEL PROBLEMA'),
+        ('A50', '2.4. CAUSAS DEL PROBLEMA'),
+        ('A51', 'DESCRIPCION'), ('F51', 'INCIDENCIA'),
+        ('G51', '% DE INCIDENCIA'),
+        ('A59', '3. ACCIONES DE CORRECTIVAS'),
+        ('D59', 'FECHA INI'), ('E59', 'FECHA FIN'),
+        ('F59', 'RESPONSABLE'), ('G59', '% DE AVANCE'),
+        ('A67', '4. REVISION DE LA EFICACIA DE LAS ACCIONES'),
+        ('A69', 'FIRMA DEL LIDER'),
+        ('D69', 'FIRMA DEL RESPONSABLE DE HACER LA REVISION'),
+    ):
+        ws[celda] = texto
+
+    for rango in (
+        'A14:B14', 'A15:C15', 'A23:G23', 'A24:D24', 'E24:G24',
+        'A31:G31', 'A32:D42', 'A43:G43', 'A50:G50', 'A51:E51',
+        'A58:C58', 'A59:C59', 'A67:G67', 'A68:G68', 'A69:C69',
+        'D69:G69', 'A70:C70', 'D70:G70', 'E32:G33',
+        'E25:G30',
+    ):
+        ws.merge_cells(rango)
+    for fila in range(16, 23):
+        ws.merge_cells(f'A{fila}:C{fila}')
+    for fila in range(25, 31):
+        ws.merge_cells(f'A{fila}:D{fila}')
+    for fila in range(34, 43):
+        ws.merge_cells(f'E{fila}:G{fila}')
+    for fila in range(44, 50):
+        ws.merge_cells(f'A{fila}:G{fila}')
+    for fila in range(52, 58):
+        ws.merge_cells(f'A{fila}:E{fila}')
+    for fila in range(60, 67):
+        ws.merge_cells(f'A{fila}:C{fila}')
+
+    causas = [
+        ('FALTA DE PERSONAL PARA LA REALIZACION DE LOS ESTUDIOS', 87),
+        ('FALTA DE CONOCIMIENTO DE LA METODOLOGIA', 38),
+        ('MATERIALES DE MALA CALIDAD', 33),
+        ('FALTA DE DISPONIBILIDAD DE LA MAQUINA', 26),
+        ('FALTA DE CONDICIONES AMBIENTALES', 50),
+        ('EQUIPO DESCALIBRADO', 77),
+    ]
+    for indice, (descripcion, incidencia) in enumerate(causas):
+        fila = 52 + indice
+        ws[f'A{fila}'] = descripcion
+        ws[f'F{fila}'] = incidencia
+        ws[f'G{fila}'] = f'=IFERROR(F{fila}/$F$58,"")'
+    ws['F58'] = '=SUM(F52:F57)'
+    ws['G58'] = '=SUM(G52:G57)'
+
+    grafico = BarChart()
+    grafico.title = 'DIAGRAMA DE PARETO'
+    datos = Reference(ws, min_col=6, min_row=51, max_row=57)
+    categorias = Reference(ws, min_col=1, min_row=52, max_row=57)
+    grafico.add_data(datos, titles_from_data=True)
+    grafico.set_categories(categorias)
+    ws.add_chart(grafico, 'H50')
+
+    idl = wb.create_sheet('SGC-IDL-016')
+    idl['B1'] = 'INSTRUCTIVO DE LLENADO PARA EL PLAN DE ACCION ANTE NC'
+    idl['B2'] = 'PAGINA: 1 DE 3'
+
+    os.makedirs(os.path.dirname(ruta), exist_ok=True)
+    wb.save(ruta)
+    _inyectar_casillas_for_010(ruta)
+    return ruta

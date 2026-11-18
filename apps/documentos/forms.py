@@ -717,6 +717,83 @@ class SolicitudCambioForm(forms.ModelForm):
         }
 
 
+def _validar_tabla(campo, valor):
+    """Valida y normaliza las filas de un campo ``tabla``.
+
+    Aplica la configuración declarada en ``config_tabla``:
+
+    * ``max_filas``: rechaza más filas de las que caben en la plantilla
+      (el export ya no las descarta en silencio).
+    * ``columnas[].tipo`` = ``entero``/``numero``: rechaza valores no
+      numéricos o negativos (y decimales en ``entero``), y normaliza el
+      valor para que el XLSX lo escriba como celda numérica.
+
+    Returns:
+        (filas_normalizadas, errores)
+    """
+    errores = []
+    if valor in (None, ''):
+        return [], errores
+    if not isinstance(valor, list):
+        return [], [
+            f'El campo "{campo.etiqueta}" tiene un formato de tabla inválido.',
+        ]
+
+    config = campo.config_tabla or {}
+    max_filas = config.get('max_filas')
+    if max_filas and len(valor) > max_filas:
+        errores.append(
+            f'"{campo.etiqueta}" admite como máximo {max_filas} fila(s); '
+            f'se recibieron {len(valor)}.'
+        )
+
+    columnas = {
+        col.get('clave'): col
+        for col in (config.get('columnas') or [])
+        if isinstance(col, dict) and col.get('clave')
+    }
+    normalizadas = []
+    for numero, fila in enumerate(valor, start=1):
+        if not isinstance(fila, dict):
+            errores.append(
+                f'"{campo.etiqueta}" fila {numero}: formato inválido.'
+            )
+            continue
+        limpia = {
+            clave: (str(dato).strip() if dato is not None else '')
+            for clave, dato in fila.items()
+        }
+        for clave, col in columnas.items():
+            tipo = str(col.get('tipo') or '').strip().lower()
+            if tipo not in ('entero', 'numero'):
+                continue
+            etiqueta = col.get('etiqueta') or clave
+            bruto = limpia.get(clave, '')
+            if bruto == '':
+                continue
+            try:
+                numerico = float(bruto.replace(',', '.'))
+            except (TypeError, ValueError):
+                numerico = None
+            if (
+                numerico is None
+                or numerico < 0
+                or (tipo == 'entero' and not numerico.is_integer())
+            ):
+                esperado = (
+                    'un número entero mayor o igual a 0'
+                    if tipo == 'entero'
+                    else 'un número mayor o igual a 0'
+                )
+                errores.append(
+                    f'"{etiqueta}" (fila {numero}) debe ser {esperado}.'
+                )
+                continue
+            limpia[clave] = int(numerico) if tipo == 'entero' else numerico
+        normalizadas.append(limpia)
+    return normalizadas, errores
+
+
 def validar_respuestas(formato, data, parcial=False):
     """Valida las respuestas del formulario dinámico contra el formato.
 
@@ -746,6 +823,8 @@ def validar_respuestas(formato, data, parcial=False):
                 valor = json.loads(raw) if raw else []
             except (json.JSONDecodeError, TypeError):
                 valor = []
+            valor, errores_tabla = _validar_tabla(campo, valor)
+            errores.extend(errores_tabla)
 
         es_auto = campo.origen != 'usuario'
 
@@ -794,6 +873,10 @@ def validar_respuestas_guardadas(formato, respuestas):
                 opt_vals.append(o.get('valor', o) if isinstance(o, dict) else o)
             if valor not in opt_vals:
                 errores.append(f'El valor "{valor}" no es válido para "{campo.etiqueta}".')
+
+        if campo.tipo == 'tabla':
+            _, errores_tabla = _validar_tabla(campo, valor)
+            errores.extend(errores_tabla)
 
     return errores
 

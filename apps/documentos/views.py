@@ -6457,16 +6457,24 @@ def registro_crear(request):
             formato, request.POST, parcial=False,
         )
         if form.is_valid() and not errores:
-            registro = form.save(commit=False)
-            registro.formato = formato
-            registro.formato_codigo = formato.codigo
-            registro.formato_version = formato.version
-            registro.formato_edicion = formato.edicion
-            registro.contexto_tipo = contexto_tipo or 'documento'
-            registro.contexto_id = contexto_id
-            registro.responsable = request.user
-            registro.respuestas = respuestas
-            registro.save()
+            from django.db import transaction
+
+            from .services.versiones import registrar_version
+
+            with transaction.atomic():
+                registro = form.save(commit=False)
+                registro.formato = formato
+                registro.formato_codigo = formato.codigo
+                registro.formato_version = formato.version
+                registro.formato_edicion = formato.edicion
+                registro.contexto_tipo = contexto_tipo or 'documento'
+                registro.contexto_id = contexto_id
+                registro.responsable = request.user
+                registro.respuestas = respuestas
+                registro.save()
+                registrar_version(
+                    registro, request.user, resumen='Alta de registro',
+                )
             messages.success(request, 'Registro guardado correctamente.')
             return redirect(
                 'documentos:registro_detalle', registro_uuid=registro.uuid,
@@ -6509,10 +6517,40 @@ def registro_editar(request, registro_uuid):
         )
         nuevas, errores = validar_respuestas(formato, request.POST, parcial=False)
         if form.is_valid() and not errores:
-            actualizado = form.save(commit=False)
-            actualizado.respuestas = nuevas
-            actualizado.estado = 'borrador'
-            actualizado.save()
+            from django.db import transaction
+
+            from .services.versiones import registrar_version
+
+            with transaction.atomic():
+                previo = RegistroFormato.objects.select_for_update().get(
+                    pk=registro.pk,
+                )
+                actualizado = form.save(commit=False)
+                cambio_respuestas = (
+                    dict(previo.respuestas or {}) != dict(nuevas or {})
+                )
+                hubo_cambios = cambio_respuestas or (
+                    previo.titulo != actualizado.titulo
+                    or previo.fecha != actualizado.fecha
+                )
+                actualizado.respuestas = nuevas
+                actualizado.estado = 'borrador'
+                if cambio_respuestas:
+                    # El XLSX/PDF previo ya no representa las respuestas.
+                    if actualizado.archivo and str(
+                        actualizado.archivo.name or '',
+                    ).lower().endswith('.xlsx'):
+                        actualizado.archivo.delete(save=False)
+                        actualizado.archivo = ''
+                    if actualizado.archivo_pdf:
+                        actualizado.archivo_pdf.delete(save=False)
+                        actualizado.archivo_pdf = ''
+                actualizado.save()
+                if hubo_cambios:
+                    registrar_version(
+                        actualizado, request.user,
+                        resumen='Edición de registro',
+                    )
             messages.success(request, 'Registro actualizado.')
             return redirect(
                 'documentos:registro_detalle', registro_uuid=registro.uuid,
@@ -6563,9 +6601,12 @@ def registro_detalle(request, registro_uuid):
             'first_name', 'last_name', 'username',
         ) if puede_distribuir else []
     )
+    from .services.versiones import versiones as versiones_registro
+
     return render(request, 'documentos/registro_detalle.html', {
         'registro': registro,
         'formato': registro.formato,
+        'versiones': versiones_registro(registro),
         'documento_contexto': svc.documento_de_contexto(registro),
         'puede_editar': svc.puede_editar_registro(request.user, registro),
         'puede_aprobar': svc.puede_aprobar_registro(request.user, registro),

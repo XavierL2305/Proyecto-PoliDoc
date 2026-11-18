@@ -155,6 +155,21 @@ ENDURECIMIENTO FOR-009 (post 5819963)
 [x] Merges sin solapes, escritura segura y alturas/anexo para texto largo.
 [x] Permisos antes de buscar UUID + validación de año 2000–2100.
 
+FOR-010 — PLAN DE ACCIÓN ANTE NO CONFORMIDADES (registro)
+[x] integrar_formatos_sgc --solo=010 (plantilla real; IDL-016 al instructivo).
+[x] Estructura dinámica: 5 secciones/13 campos; tablas con topes y detección
+    por shapes (Rectángulo 70/71/79/80).
+[x] Export por parcheo XML del zip: Pareto chartEx, Ishikawa, casillas,
+    imágenes e IDL-016 preservados (openpyxl los descartaría).
+[x] CA-1 desbordes: block-write con merges/alturas y hoja (Anexo), sin truncar.
+[x] CA-2 incidencias: entero >= 0 validado; celda numérica real (Pareto/SUM).
+[x] CA-3 versionado: alta v1 / edición con cambios vN+1, historial e
+    invalidación de XLSX/PDF obsoletos.
+[x] CA-4 límite 6 causas: UI deshabilita "Agregar fila", servidor rechaza y
+    el export limpia las causas de ejemplo de la plantilla.
+[x] PDF: variante de 2 páginas (formulario + Pareto) que oculta el instructivo.
+[x] Tests tests_for_010 (26) + CONTEXT §33.5.
+
 BACKLOG
 [ ] FOR-007: restaurar versión.
 [x] FOR-009: versionado de minutas.

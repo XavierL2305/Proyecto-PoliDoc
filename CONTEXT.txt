@@ -3499,6 +3499,47 @@ alternativas en docs/adr/0001-modelo-documento-formato-registro.md.
       (AUTH_LDAP_SERVER_URI vacío por defecto = sin LDAP; se configura en
       .env). tests_distribucion_registros.py cubre el flujo completo.
 
+  33.5 SGC-FOR-010 — PLAN DE ACCIÓN ANTE NC (registro vivo)
+    - Integración `integrar_formatos_sgc --solo=010` desde
+      `documentacion/SGC-FOR-010 Plan de Acciòn ante NC.xlsx` (doble espacio).
+      El XLSX trae 2 hojas: el formulario y el instructivo **SGC-IDL-016**
+      (3 páginas), que se carga en `Formato.instructivo_html`.
+    - Metadatos: v1/E1, vigencia 18/03/2025, procedimiento de NC y acción
+      correctiva, `permite_registros=True` (usa el flujo genérico §33) y
+      `aplica_*=False` (no es formato de solicitud de cambio).
+    - Estructura dinámica (5 secciones/13 campos): identificación (NC Nº,
+      fecha, proceso, descripción, detección), §1 correcciones (7 filas),
+      §2 integrantes (6) + líder + datos + análisis + causas (6), §3
+      correctivas (7) y §4 eficacia. Las 4 casillas de detección son formas
+      (`Rectángulo 70/71/79/80`) y se marcan de verde con `_patch_drawing1`.
+    - **Export por parcheo XML del zip** (`services/exportacion.py`), NO
+      openpyxl: conserva el gráfico **Pareto chartEx** (H50:N63), el
+      diagrama de Ishikawa, las casillas, las imágenes y el IDL-016. Además:
+      * incidencias como celdas **numéricas** reales (el `cx:numDim` del
+        Pareto no lee `inlineStr`);
+      * fórmulas `G52:G57`, `F58` y `G58` conservadas con su `<v>` en caché
+        recalculado + `fullCalcOnLoad` (los visores no siempre recalculan);
+      * limpieza de las 6 causas de ejemplo de la plantilla (`limpiar_filas`)
+        y de las filas de tabla no usadas;
+      * **CA-1 desbordes**: los textarea con rango (`D11:G13`, `E32:G42`,
+        `A44:G49`, `A68:G68`) se reparten por filas, mergean la fila si hace
+        falta, ajustan `ht` (tope 409) y, si aún no cabe, el texto completo
+        va a la hoja `SGC-FOR-010 (Anexo)` (nunca se trunca).
+    - Validación: `config_tabla.columnas[].tipo='entero'` exige incidencia
+      entero ≥ 0; `max_filas` se rechaza en el servidor y el botón "Agregar
+      fila" se deshabilita en el cliente (máx. 6 causas).
+    - Versionado genérico de Registros: el alta crea la versión 1; la
+      edición con cambios (respuestas/título/fecha) crea la siguiente y
+      muestra el historial read-only en el detalle. Una edición con cambios
+      de respuestas invalida `archivo_pdf` y el `archivo` si era `.xlsx`.
+    - PDF: variante `para_pdf` que oculta las hojas auxiliares (IDL-016),
+      fija el área de impresión (celdas + dibujos) y `fitToWidth=1` →
+      formulario + Pareto en 2 páginas; el anexo, si existe, también se
+      imprime. El XLSX descargable conserva todas las hojas.
+    - Tests: `tests_for_010` (26) con plantilla sintética (layout real,
+      causas de ejemplo, fórmulas, Pareto e Ishikawa/casillas).
+
+
 34. CAMPAÑAS DE REVISIÓN MASIVA
 ===================================================================
 

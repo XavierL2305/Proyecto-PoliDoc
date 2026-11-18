@@ -22,6 +22,7 @@ usa ``--plantilla``).
 import copy
 import os
 import shutil
+from datetime import date
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
@@ -287,6 +288,151 @@ FOR_009_MESES = [
     ('OCT', 'Octubre'), ('NOV', 'Noviembre'), ('DIC', 'Diciembre'),
 ]
 
+#: SGC-FOR-010 — Plan de Acción ante No Conformidades (registro vivo).
+#: Se llena con el motor dinámico y se exporta parcheando el XML del XLSX
+#: (``services/exportacion.py``) para conservar el diagrama de Ishikawa, las
+#: casillas de detección y el gráfico Pareto (que openpyxl descartaría).
+FOR_010_XLSX = 'SGC-FOR-010 Plan de Acciòn ante NC.xlsx'
+
+#: Casillas de detección: cada opción tiene su forma (rectángulo) en drawing1.
+FOR_010_DETECCION = [
+    {'valor': 'auditoria', 'etiqueta': 'Auditoría',
+     'shape': 'Rectángulo 70'},
+    {'valor': 'revision', 'etiqueta': 'Revisión por la Dirección',
+     'shape': 'Rectángulo 71'},
+    {'valor': 'quejas', 'etiqueta': 'Quejas o Reclamos',
+     'shape': 'Rectángulo 79'},
+    {'valor': 'otros', 'etiqueta': 'Otros',
+     'shape': 'Rectángulo 80'},
+]
+
+#: §1 Acciones de corrección: filas 16-22 (7 filas).
+FOR_010_ACCIONES_CORRECCION = {
+    'fila_inicio': 16,
+    'fila_fin': 22,
+    'max_filas': 7,
+    'limpiar_filas': True,
+    'columnas': [
+        {'clave': 'descripcion', 'etiqueta': 'Acción de corrección',
+         'celda': 'A'},
+        {'clave': 'fecha_inicio', 'etiqueta': 'Fecha inicio',
+         'tipo': 'fecha', 'celda': 'D'},
+        {'clave': 'fecha_fin', 'etiqueta': 'Fecha fin',
+         'tipo': 'fecha', 'celda': 'E'},
+        {'clave': 'responsable', 'etiqueta': 'Responsable', 'celda': 'F'},
+        {'clave': 'avance', 'etiqueta': '% de avance', 'celda': 'G'},
+    ],
+}
+
+#: §2.1 Integrantes del equipo: filas 25-30 (6 filas).
+FOR_010_INTEGRANTES = {
+    'fila_inicio': 25,
+    'fila_fin': 30,
+    'max_filas': 6,
+    'limpiar_filas': True,
+    'columnas': [
+        {'clave': 'nombre', 'etiqueta': 'Nombre y apellido', 'celda': 'A'},
+    ],
+}
+
+#: §2.4 Causas del problema: filas 52-57 (6 filas, tope explícito).
+#: G es una fórmula (``=IFERROR(F/$F$58)``): el export conserva la fórmula y
+#: actualiza el valor en caché tras escribir las incidencias.
+FOR_010_CAUSAS = {
+    'fila_inicio': 52,
+    'fila_fin': 57,
+    'max_filas': 6,
+    'limpiar_filas': True,
+    'totales': {
+        'fila': 58,
+        'columna_valor': 'F',
+        'columna_porcentaje': 'G',
+    },
+    'columnas': [
+        {'clave': 'descripcion', 'etiqueta': 'Causa', 'celda': 'A'},
+        {'clave': 'incidencia', 'etiqueta': 'Incidencia',
+         'tipo': 'entero', 'celda': 'F'},
+    ],
+}
+
+#: §3 Acciones correctivas: filas 60-66 (7 filas).
+FOR_010_ACCIONES_CORRECTIVAS = {
+    'fila_inicio': 60,
+    'fila_fin': 66,
+    'max_filas': 7,
+    'limpiar_filas': True,
+    'columnas': [
+        {'clave': 'descripcion', 'etiqueta': 'Acción correctiva',
+         'celda': 'A'},
+        {'clave': 'fecha_inicio', 'etiqueta': 'Fecha inicio',
+         'tipo': 'fecha', 'celda': 'D'},
+        {'clave': 'fecha_fin', 'etiqueta': 'Fecha fin',
+         'tipo': 'fecha', 'celda': 'E'},
+        {'clave': 'responsable', 'etiqueta': 'Responsable', 'celda': 'F'},
+        {'clave': 'avance', 'etiqueta': '% de avance', 'celda': 'G'},
+    ],
+}
+
+#: Instructivo SGC-IDL-016 (incluido en la 2.ª hoja del mismo XLSX).
+FOR_010_INSTRUCTIVO = """
+<h3>Instructivo de llenado para el Plan de Acción ante No Conformidades</h3>
+<p><strong>Información documentada 10.2 — No conformidad y acción correctiva.</strong></p>
+<p>Las no conformidades se refieren al incumplimiento de los requisitos que
+permiten cumplir con la satisfacción del cliente. Pueden provenir de un
+proceso, departamento o aspecto reglamentario, y detectarse mediante
+auditorías, revisiones por la dirección, quejas o reclamos y cualquier otra
+fuente. Las salidas no conformes deben corregirse; la corrección elimina la
+no conformidad sin analizar las causas. Tanto a las correcciones como a las
+acciones correctivas se les debe establecer fechas límite y se debe realizar
+seguimiento para verificar su eficacia.</p>
+<h4>Instrucciones para llenar el formulario</h4>
+<ol>
+  <li><strong>NC Nº:</strong> número de la no conformidad detectada.</li>
+  <li><strong>Proceso / Departamento / Unidad de origen:</strong> lugar de
+      donde proviene la no conformidad (p. ej. Norma ISO 9001).</li>
+  <li><strong>Descripción de la no conformidad:</strong> lo que no se está
+      cumpliendo (p. ej. requisito 4.4 literal c de ISO 9001: determinación
+      de los indicadores).</li>
+  <li><strong>Detección de la no conformidad:</strong> vía por la que se
+      detectó: auditoría, revisión por la dirección, queja o reclamo, u otra
+      fuente.</li>
+  <li><strong>Acciones de corrección:</strong> acciones para eliminar la no
+      conformidad, con fechas de inicio y fin, responsable y % de avance.
+      Según aplique: <em>reclasificación</em> (el producto/servicio sirve en
+      otro proceso), <em>concesión</em> (autorización para utilizarlo pese a
+      no ser conforme), <em>permiso de desviación</em>, <em>reproceso</em>,
+      <em>reparación</em> o <em>desecho</em>.</li>
+  <li><strong>Análisis y solución de problemas:</strong>
+    <ul>
+      <li><strong>6.1 Integrantes del equipo:</strong> nombres del equipo
+          experto y de su líder.</li>
+      <li><strong>6.2 Datos de la descripción del problema:</strong> causas
+          reales clasificadas en las categorías del diagrama de Ishikawa
+          (Materiales, Maquinaria, Mano de Obra, Mediciones, Métodos, Medio
+          Ambiente).</li>
+      <li><strong>6.3 Análisis del problema:</strong> narración del problema y
+          de las causas que lo provocaron.</li>
+      <li><strong>6.4 Causas del problema:</strong> causas reales y cantidad
+          de veces detectadas (lluvia de ideas; 5 porqués si se requiere
+          profundizar).</li>
+    </ul>
+  </li>
+  <li><strong>Acciones correctivas:</strong> acciones para eliminar las causas
+      de la no conformidad, con fechas de inicio y fin, responsables y % de
+      avance al momento de la revisión.</li>
+  <li><strong>Revisión de la eficacia de las acciones:</strong> comentario de
+      la persona responsable del seguimiento a la no conformidad o plan de
+      acción.</li>
+  <li><strong>Firma del líder:</strong> firma del líder del equipo.</li>
+  <li><strong>Firma del responsable de la revisión:</strong> firma de quien
+      revisa la eficacia.</li>
+</ol>
+<p><small>Aprobación del instructivo: elaborado por Anna Altuve (Métodos y
+Procesos); revisado y aprobado por Sheyla Cardenas (Gerente General);
+vigencia 18/03/2025.</small></p>
+"""
+
+
 class Command(BaseCommand):
     help = (
         'Integra los formatos SGC (documentacion/*.xlsx) al motor de '
@@ -344,6 +490,7 @@ class Command(BaseCommand):
             'SGC-FOR-006': self._integrar_for_006,
             'SGC-FOR-007': self._integrar_for_007,
             'SGC-FOR-009': self._integrar_for_009,
+            'SGC-FOR-010': self._integrar_for_010,
         }
         for codigo in codigos:
             if codigo not in implementados:
@@ -367,7 +514,7 @@ class Command(BaseCommand):
         crudo = (crudo or '').strip()
         implementados = [
             'SGC-FOR-002', 'SGC-FOR-003', 'SGC-FOR-004', 'SGC-FOR-006',
-            'SGC-FOR-007', 'SGC-FOR-009',
+            'SGC-FOR-007', 'SGC-FOR-009', 'SGC-FOR-010',
         ]
         if not crudo:
             return implementados
@@ -1155,6 +1302,184 @@ class Command(BaseCommand):
                 defaults['config_tabla'] = copy.deepcopy(
                     FOR_009_TABLA_ASISTENTES,
                 )
+            CampoFormato.objects.update_or_create(
+                seccion=seccion, clave=clave, defaults=defaults,
+            )
+
+    # ------------------------------------------------------------------
+    # SGC-FOR-010
+    # ------------------------------------------------------------------
+
+    def _integrar_for_010(self, aplicar, forzar, forzar_estructura=False,
+                          plantilla=''):
+        self.stdout.write(self.style.HTTP_INFO(
+            '\n=== SGC-FOR-010 — Plan de Acción ante No Conformidades ==='
+        ))
+
+        origen = plantilla or self._ruta_plantilla(FOR_010_XLSX)
+        if not os.path.exists(origen):
+            raise CommandError(
+                f'No se encontró la plantilla del FOR-010: {origen}\n'
+                + (
+                    'Revisa la ruta indicada con --plantilla.'
+                    if plantilla else
+                    'Coloca el XLSX en documentacion/ o indica su ruta con '
+                    '--plantilla.'
+                )
+            )
+
+        existente = Formato.objects.filter(codigo='SGC-FOR-010').first()
+        estado = 'ACTUALIZAR' if existente else 'CREAR'
+        self.stdout.write(f'Formato: {estado} (plantilla {os.path.basename(origen)})')
+        self.stdout.write(
+            '  Tablas: correcciones '
+            f'{FOR_010_ACCIONES_CORRECCION["max_filas"]}, integrantes '
+            f'{FOR_010_INTEGRANTES["max_filas"]}, causas '
+            f'{FOR_010_CAUSAS["max_filas"]}, correctivas '
+            f'{FOR_010_ACCIONES_CORRECTIVAS["max_filas"]}'
+        )
+
+        if not aplicar:
+            self.stdout.write(self.style.WARNING(
+                '  [dry-run] No se modificó la base de datos. '
+                'Repite con --apply para escribir.'
+            ))
+            return
+
+        formato, _creado = Formato.objects.update_or_create(
+            codigo='SGC-FOR-010',
+            defaults={
+                'nombre': 'Plan de Acción ante No Conformidades',
+                'version': '1',
+                'edicion': '1',
+                'fecha_vigencia': date(2025, 3, 18),
+                'procedimiento': (
+                    'PROCEDIMIENTO DE NO CONFORMIDAD Y ACCION CORRECTIVA'
+                ),
+                'aplica_creacion': False,
+                'aplica_modificacion': False,
+                'aplica_eliminacion': False,
+                'permite_registros': True,
+                'activo': True,
+                'instructivo_html': FOR_010_INSTRUCTIVO,
+            },
+        )
+
+        if forzar or not formato.plantilla_xlsx:
+            destino = self._destino_media('SGC-FOR-010')
+            os.makedirs(os.path.dirname(destino), exist_ok=True)
+            shutil.copy2(origen, destino)
+            formato.plantilla_xlsx = os.path.relpath(destino, settings.MEDIA_ROOT)
+            formato.save(update_fields=['plantilla_xlsx'])
+            self.stdout.write(self.style.SUCCESS(
+                f'  Plantilla copiada a MEDIA: {formato.plantilla_xlsx}'
+            ))
+        else:
+            self.stdout.write(
+                '  Plantilla ya existe; no se sobrescribe (usa --forzar-plantilla).'
+            )
+
+        self._recrear_estructura_010(formato, forzar=forzar_estructura)
+        self.stdout.write(self.style.SUCCESS(
+            '  Estructura y metadatos de SGC-FOR-010 listos.'
+        ))
+
+    def _recrear_estructura_010(self, formato, forzar=False):
+        """Secciones/campos del Plan de Acción (motor dinámico + export XML)."""
+        if not forzar and CampoFormato.objects.filter(
+            seccion__formato=formato, clave='nc_numero',
+        ).exists():
+            self.stdout.write('  Estructura existente conservada.')
+            return
+
+        if forzar:
+            formato.secciones.all().delete()
+
+        secciones = {}
+        for orden, (clave, titulo) in enumerate([
+            ('identificacion', 'Identificación de la NC'),
+            ('correccion', '1. Acciones de corrección'),
+            ('analisis', '2. Análisis y solución de problemas'),
+            ('correctivas', '3. Acciones correctivas'),
+            ('eficacia', '4. Revisión de la eficacia'),
+        ], start=1):
+            secciones[clave], _ = SeccionFormato.objects.update_or_create(
+                formato=formato, titulo=titulo, defaults={'orden': orden},
+            )
+
+        campos = [
+            # sección, clave, etiqueta, tipo, celda, requerido, opciones,
+            # config_tabla, ayuda
+            (secciones['identificacion'], 'nc_numero', 'NC Nº', 'texto',
+             'B7', True, None, None,
+             'Número de la no conformidad detectada.'),
+            # La etiqueta E7 es ancha y en negrita: el valor va en G7.
+            (secciones['identificacion'], 'fecha_analisis',
+             'Fecha del análisis', 'fecha', 'G7', True, None, None, ''),
+            # La etiqueta A9 (negrita) desborda hasta D: el valor va en E9.
+            (secciones['identificacion'], 'proceso_origen',
+             'Proceso / Departamento / Unidad de origen', 'texto',
+             'E9', True, None, None,
+             'Lugar de donde proviene la no conformidad (p. ej. Norma ISO 9001).'),
+            # La etiqueta A11 ocupa A:C de la fila 11; el texto va de D11.
+            (secciones['identificacion'], 'descripcion_nc',
+             'Descripción de la no conformidad', 'textarea',
+             'D11:G13', True, None, None,
+             'Qué requisito no se está cumpliendo.'),
+            (secciones['identificacion'], 'deteccion',
+             'Detección de la no conformidad', 'checkbox_grupo',
+             '', True, FOR_010_DETECCION, None,
+             'Marque todas las vías por las que se detectó.'),
+            (secciones['correccion'], 'acciones_correccion',
+             'Acciones de corrección', 'tabla', 'A16', False, None,
+             FOR_010_ACCIONES_CORRECCION,
+             'Acciones para eliminar la no conformidad, con fechas, '
+             'responsable y % de avance.'),
+            (secciones['analisis'], 'integrantes',
+             'Integrantes del equipo', 'tabla', 'A25', False, None,
+             FOR_010_INTEGRANTES,
+             'Nombre y apellido de cada integrante del equipo experto.'),
+            (secciones['analisis'], 'lider_equipo',
+             'Líder del equipo', 'texto', 'E25', False, None, None, ''),
+            (secciones['analisis'], 'datos_problema',
+             'Datos y descripción del problema', 'textarea',
+             'E32:G42', False, None, None,
+             'Causas reales clasificadas en las categorías del diagrama de '
+             'Ishikawa (Materiales, Maquinaria, Mano de Obra, Mediciones, '
+             'Métodos, Medio Ambiente).'),
+            (secciones['analisis'], 'analisis_problema',
+             'Análisis del problema', 'textarea', 'A44:G49', False, None,
+             None, 'Narración del problema y de las causas que lo provocaron.'),
+            (secciones['analisis'], 'causas',
+             'Causas del problema', 'tabla', 'A52', False, None,
+             FOR_010_CAUSAS,
+             'Causas reales y cantidad de veces detectadas (máximo 6). '
+             'El % de incidencia y el total se calculan solos.'),
+            (secciones['correctivas'], 'acciones_correctivas',
+             'Acciones correctivas', 'tabla', 'A60', False, None,
+             FOR_010_ACCIONES_CORRECTIVAS,
+             'Acciones para eliminar las causas, con fechas, responsable '
+             'y % de avance.'),
+            (secciones['eficacia'], 'revision_eficacia',
+             'Revisión de la eficacia de las acciones', 'textarea',
+             'A68:G68', False, None, None,
+             'Comentario del responsable del seguimiento a la no conformidad.'),
+        ]
+        for i, (seccion, clave, etiqueta, tipo, celda, requerido, opciones,
+                config_tabla, ayuda) in enumerate(campos, start=1):
+            defaults = {
+                'etiqueta': etiqueta,
+                'tipo': tipo,
+                'origen': 'usuario',
+                'celda_excel': celda,
+                'requerido': requerido,
+                'orden': i,
+                'ayuda': ayuda,
+            }
+            if opciones is not None:
+                defaults['opciones'] = copy.deepcopy(opciones)
+            if config_tabla is not None:
+                defaults['config_tabla'] = copy.deepcopy(config_tabla)
             CampoFormato.objects.update_or_create(
                 seccion=seccion, clave=clave, defaults=defaults,
             )
