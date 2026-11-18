@@ -173,6 +173,17 @@ FOR-010 — PLAN DE ACCIÓN ANTE NO CONFORMIDADES (registro)
     limpieza de filas parciales, aviso "(ver anexo)", sin externalLinks y
     PDF vía xlsx_bytes_a_pdf (rutas relativas a MEDIA_ROOT). Tests (33).
 
+FOR-017 — DESCRIPCIÓN DE PROCESOS (registro)
+[x] integrar_formatos_sgc --solo=017 (plantilla real; IDL-023 al instructivo).
+[x] Estructura 4 secciones/23 campos; matriz 27 filas; indicadores tope 2.
+[x] Export: X en F9/G9/H9, cajas A11:B13 mergeadas por fila, matriz C:E
+    con wrap y alturas 121.5/63.75 intactas, fila 59 creada desde el
+    estilo de la 58, receptores H24:H47 preservados.
+[x] Ajustes opt-in AJUSTES_FORMATO (rótulo de firma conservado, fechas
+    dd/mm/aaaa, PDF a 2 páginas sin fitToWidth) sin tocar a los demás
+    formatos.
+[x] Tests tests_for_017 (24) + smoke oficial (PDF 2 páginas A4) + CONTEXT §33.7.
+
 BACKLOG
 [ ] FOR-007: restaurar versión.
 [x] FOR-009: versionado de minutas.

@@ -3,6 +3,7 @@ Servicio de exportación SGC-FOR-005: genera XLSX a partir de la plantilla
 rellenando celdas y rellenando formas de checkbox.
 """
 import copy
+from datetime import date, datetime
 import io
 import logging
 import math
@@ -21,6 +22,41 @@ NS = {
     'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
     's': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main',
 }
+
+#: Ajustes puntuales por formato que no caben en el modelo actual (evita
+#: migraciones por un puñado de flags). Claves soportadas:
+#:
+#: * ``rotulo_en_celda``: al escribir texto/fecha se conserva el rótulo que
+#:   trae la plantilla ("Nombre y Apellido:") y se le concatena el valor.
+#: * ``fecha_dma``: las fechas se escriben como ``dd/mm/aaaa`` (oficial).
+#: * ``pdf_sin_ajuste``: el PDF usa el pageSetup de la plantilla (no se
+#:   fuerza fitToWidth ni área de impresión); solo se ocultan hojas aux.
+AJUSTES_FORMATO = {
+    'SGC-FOR-017': {
+        'rotulo_en_celda': True,
+        'fecha_dma': True,
+        'pdf_sin_ajuste': True,
+    },
+}
+
+
+def _ajuste(formato, clave):
+    """¿El formato declara el ajuste ``clave`` en :data:`AJUSTES_FORMATO`?"""
+    codigo = str(getattr(formato, 'codigo', '') or '')
+    return bool((AJUSTES_FORMATO.get(codigo) or {}).get(clave))
+
+
+def _fecha_dma(valor):
+    """Fecha → ``dd/mm/aaaa``; conserva el texto si no se reconoce."""
+    if isinstance(valor, (datetime, date)):
+        return valor.strftime('%d/%m/%Y')
+    texto = str(valor).strip()
+    for plantilla in ('%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%Y/%m/%d'):
+        try:
+            return datetime.strptime(texto, plantilla).strftime('%d/%m/%Y')
+        except ValueError:
+            continue
+    return texto
 
 
 def _col_to_idx(col_str):
@@ -196,7 +232,7 @@ def exportar_xlsx_formato(formato, respuestas, para_pdf=False):
                     zf_in, formato, anexos, reemplazos,
                 )
             rango_impresion = None
-            if para_pdf and sheet1:
+            if para_pdf and sheet1 and not _ajuste(formato, 'pdf_sin_ajuste'):
                 raiz = etree.fromstring(sheet1)
                 rango_impresion = _preparar_pdf_hoja(raiz, zf_in)
                 sheet1 = _serializar(raiz)
@@ -272,7 +308,18 @@ def _patch_sheet1(sheet_data, formato, respuestas, shared_strings,
             ref = campo.celda_excel.strip().split(':')[0]
             style = _get_existing_style(root, ref)
             texto = str(valor)
-            if getattr(campo, 'incluir_etiqueta', False):
+            if campo.tipo == 'fecha' and _ajuste(formato, 'fecha_dma'):
+                texto = _fecha_dma(valor)
+            rotulo = ''
+            if _ajuste(formato, 'rotulo_en_celda'):
+                rotulo = _get_existing_label(
+                    root, ref, shared_strings,
+                ).strip()
+            if rotulo:
+                # La plantilla ya trae el rótulo ("Nombre y Apellido:"):
+                # se conserva y se le concatena el valor (SGC-FOR-017).
+                texto = f'{rotulo} {texto}'
+            elif getattr(campo, 'incluir_etiqueta', False):
                 texto = f'{campo.etiqueta}: {texto}'
             cell = _build_inline_cell(ref, texto, style)
             _replace_or_add_cell(root, cell, ref)
@@ -313,6 +360,25 @@ def _patch_sheet1(sheet_data, formato, respuestas, shared_strings,
             columnas = config.get('columnas', [])
             filas = list(valor) if isinstance(valor, list) else []
 
+            # Estilo de fila de referencia (SGC-FOR-017): la fila 59 no
+            # existe en la plantilla, así que se crean sus celdas copiando
+            # las de la fila 58 ANTES de limpiar, para que _limpiar_celda
+            # conserve ese estilo (bordes) en vez de dejar el '0' por
+            # defecto.
+            fila_estilo = config.get('estilo_fila')
+            if fila_estilo:
+                for i in range(max_filas):
+                    _copiar_estilos_fila(root, fila_estilo, fila_inicio + i)
+
+            # Merges declarados por columna (p. ej. C:E de la matriz): se
+            # crean para TODAS las filas de la tabla (datos y sobrantes) para
+            # que la caja quede uniforme. _agregar_merge ignora solapes y
+            # rangos ya cubiertos por la plantilla.
+            for i in range(max_filas):
+                row_num = fila_inicio + i
+                for col_def in columnas:
+                    _agregar_merge_columna(root, col_def, row_num)
+
             # Limpieza de filas (CA-4): la plantilla puede traer datos de
             # ejemplo (p. ej. las 6 causas del FOR-010) que no deben
             # sobrevivir. Se limpian TODAS las filas antes de escribir para
@@ -325,14 +391,31 @@ def _patch_sheet1(sheet_data, formato, respuestas, shared_strings,
                         for ref in _refs_columna(col_def, row_num):
                             _limpiar_celda(root, ref)
 
+            anchos = _anchos_columnas(root)
             for i, fila_data in enumerate(filas[:max_filas]):
                 row_num = fila_inicio + i
+                lineas_max = 1
                 for col_def in columnas:
                     cell_val = fila_data.get(col_def.get('clave', ''), '')
                     if cell_val in (None, ''):
                         continue
                     _escribir_columna_tabla(
                         root, col_def, row_num, cell_val,
+                        estilos=estilos, anchos=anchos,
+                    )
+                    if col_def.get('wrap'):
+                        lineas_max = max(
+                            lineas_max,
+                            _lineas_envueltas(
+                                cell_val, _ancho_columna_span(anchos, col_def),
+                            ),
+                        )
+                # Solo se sube la altura (nunca se aplasta la de la
+                # plantilla, p. ej. 121.5/63.75 de las filas 24/25) y solo
+                # si el texto envuelto ocupa más de una línea.
+                if lineas_max > 1:
+                    _set_row_height_max(
+                        root, row_num, lineas_max * 15 + 2,
                     )
 
             if config.get('totales'):
@@ -342,7 +425,8 @@ def _patch_sheet1(sheet_data, formato, respuestas, shared_strings,
     return etree.tostring(root, xml_declaration=True, encoding='UTF-8', standalone=True)
 
 
-def _escribir_columna_tabla(root, col_def, row_num, cell_val):
+def _escribir_columna_tabla(root, col_def, row_num, cell_val, estilos=None,
+                            anchos=None):
     """Escribe una celda de columna de tabla según su definición.
 
     Formas soportadas en ``col_def``:
@@ -354,6 +438,8 @@ def _escribir_columna_tabla(root, col_def, row_num, cell_val):
       RETIRO DE LA VERSIÓN ANTERIOR del SGC-FOR-002.
     * ``{'tipo': 'entero'|'numero'}`` — escribe una celda **numérica** real
       (``<v>87</v>``): el gráfico Pareto del FOR-010 solo lee números.
+    * ``{'wrap': True}`` — aplica una variante del estilo con ``wrapText``
+      (con ``estilos``) para que el texto envuelto se lea completo.
     """
     tipo = str(col_def.get('tipo') or '').strip().lower()
     if tipo == 'si_no':
@@ -376,6 +462,8 @@ def _escribir_columna_tabla(root, col_def, row_num, cell_val):
             return
         cell = _build_number_cell(ref, numero, style)
     else:
+        if col_def.get('wrap') and estilos is not None:
+            style = estilos.con_wrap(style)
         cell = _build_inline_cell(ref, marca, style)
     _replace_or_add_cell(root, cell, ref)
 
@@ -569,6 +657,96 @@ def _set_row_height(root, fila, altura):
             return
 
 
+def _get_row_height(root, fila):
+    """Altura declarada de la fila (``None`` si la plantilla no la fija)."""
+    ns = NS['s']
+    data = root.find(f'{{{ns}}}sheetData')
+    if data is None:
+        return None
+    for row in data.findall(f'{{{ns}}}row'):
+        if row.get('r') == str(fila):
+            try:
+                return float(row.get('ht'))
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _set_row_height_max(root, fila, altura):
+    """Sube la altura de la fila si hace falta; nunca la reduce.
+
+    Respeta las alturas fijadas por la plantilla (p. ej. 121.5/63.75 de las
+    filas 24/25 del SGC-FOR-017, que no deben aplastarse).
+    """
+    actual = _get_row_height(root, fila)
+    if actual is not None and actual >= altura:
+        return
+    _set_row_height(root, fila, altura)
+
+
+def _agregar_merge_columna(root, col_def, row_num):
+    """Merge declarado en ``col_def['merge']`` (``'C:E'``) para la fila."""
+    rango = str(col_def.get('merge') or '').strip().upper()
+    if not rango:
+        return
+    ini, _, fin = rango.partition(':')
+    ini, fin = ini.strip(), fin.strip()
+    if not ini or not fin or ini == fin:
+        return
+    _agregar_merge(root, f'{ini}{row_num}:{fin}{row_num}')
+
+
+def _copiar_estilos_fila(root, fila_origen, fila_destino, columnas='ABCDEFGH'):
+    """Crea en ``fila_destino`` las celdas que falten con el estilo de origen.
+
+    Es el caso de la fila 59 del SGC-FOR-017 (no existe en la plantilla):
+    se copian ``A58:H58`` para que la tabla conserve sus bordes. Debe
+    llamarse ANTES de limpiar, de modo que ``_limpiar_celda`` reutilice el
+    estilo copiado en vez del '0' por defecto.
+    """
+    ns = NS['s']
+    existentes = {c.get('r') for c in root.iter(f'{{{ns}}}c')}
+    for col in columnas:
+        ref = f'{col}{fila_destino}'
+        if ref in existentes:
+            continue
+        style = _get_existing_style(root, f'{col}{fila_origen}')
+        cell = etree.Element(f'{{{ns}}}c')
+        cell.set('r', ref)
+        cell.set('s', style)
+        _replace_or_add_cell(root, cell, ref)
+
+
+def _ancho_columna_span(anchos, col_def):
+    """Ancho en caracteres de la celda (o del merge) de una columna."""
+    rango = str(col_def.get('merge') or '').strip().upper()
+    if rango:
+        ini, _, fin = rango.partition(':')
+        ini, fin = ini.strip(), fin.strip()
+        if not ini or not fin:
+            return 8.43
+        c1, c2 = _col_to_idx(ini), _col_to_idx(fin)
+        if c2 < c1:
+            c1, c2 = c2, c1
+        return sum(anchos.get(idx, 8.43) for idx in range(c1, c2 + 1))
+    col = (col_def.get('celda') or '').strip()
+    if not col:
+        return 8.43
+    return anchos.get(_col_to_idx(col), 8.43)
+
+
+def _lineas_envueltas(valor, ancho):
+    """Cantidad de líneas que ocupa ``valor`` envuelto en ``ancho``."""
+    limite = max(10, int(ancho))
+    total = 0
+    for parrafo in str(valor or '').split('\n'):
+        if not parrafo.strip():
+            total += 1
+        else:
+            total += len(textwrap.wrap(parrafo, width=limite)) or 1
+    return total
+
+
 def _agregar_merge(root, ref):
     """Agrega un merge de fila si no existe ni solapa con otro."""
     datos = _parse_rango(ref)
@@ -626,6 +804,16 @@ def _escribir_bloque(root, rango, texto, etiqueta, estilos, anexos):
     if not destinos or not lineas:
         return
 
+    if col_fin > col_ini:
+        # El rango abarca varias columnas: se une CADA fila del rango aunque
+        # el texto no llegue a ella (p. ej. A11:B13 del SGC-FOR-017). Los
+        # merges que ya trae la plantilla se ignoran.
+        for _, fila in destinos:
+            _agregar_merge(
+                root,
+                f'{_col_letter(col_ini)}{fila}:{_col_letter(col_fin)}{fila}',
+            )
+
     if len(lineas) <= len(destinos):
         por_fila = 1
         altura = None
@@ -654,13 +842,10 @@ def _escribir_bloque(root, rango, texto, etiqueta, estilos, anexos):
         style = _get_existing_style(root, ref)
         if por_fila > 1:
             style = estilos.con_wrap(style)
-            _set_row_height(root, fila, altura)
-            _agregar_merge(
-                root,
-                f'{_col_letter(col_ini)}{fila}:{_col_letter(col_fin)}{fila}',
-            )
         cell = _build_inline_cell(ref, '\n'.join(bloque), style)
         _replace_or_add_cell(root, cell, ref)
+        if por_fila > 1:
+            _set_row_height(root, fila, altura)
 
     if pos < len(lineas) and (etiqueta, str(texto)) not in anexos:
         anexos.append((etiqueta, str(texto)))

@@ -3557,6 +3557,46 @@ alternativas en docs/adr/0001-modelo-documento-formato-registro.md.
       `MEDIA_ROOT` (antes abrían el retorno de `convertir_a_pdf_sync` tal
       cual).
 
+  33.7 SGC-FOR-017 — DESCRIPCIÓN DE PROCESOS (registro vivo)
+    - Integración `integrar_formatos_sgc --solo=017` desde
+      `documentacion/SGC-FOR-017 Descripción de Procesos.xlsx` (doble
+      espacio). El XLSX trae 2 hojas: el formulario (scale=70 → "PAGINA 1
+      de 2") y el instructivo **SGC-IDL-023** (3 páginas), que se carga en
+      `Formato.instructivo_html` con la introducción ISO 9001 (literales
+      a)…i) y las 26 instrucciones PH/DPR).
+    - Metadatos: v1/E1, vigencia 24/10/2025, procedimiento 4.4 SGC,
+      `permite_registros=True` y `aplica_*=False` (no es solicitud).
+    - Estructura (4 secciones/23 campos): identificación (A9/C9 y las 3
+      cajas F9/G9/H9), cajas dueño/participa/cliente (filas 11-13),
+      objetivo/alcance (15-20), matriz del proceso (21-48, 27 filas con
+      `merge C:E`), recursos/información/interacción (51/53/55),
+      indicadores (58-59, tope 2) y firmas de 3 roles (61-67).
+    - Marca de select: las opciones de tipo declaran `celda_marca`
+      (F9/G9/H9) y el export pone la X en esa caja.
+    - **Ajustes opt-in `AJUSTES_FORMATO`** en `services/exportacion.py`
+      (solo se aplican si `formato.codigo` está en el mapa; los demás
+      formatos conservan su comportamiento):
+      * `rotulo_en_celda` → conserva el rótulo de la plantilla
+        ("Nombre y Apellido:", "Cargo:", "Fecha:") y concatena el valor;
+      * `fecha_dma` → fechas `dd/mm/aaaa` (los demás formatos siguen en
+        ISO; FOR-003 formatea en su propio servicio);
+      * `pdf_sin_ajuste` → el PDF omite `_preparar_pdf_hoja` y conserva
+        el `pageSetup` scale=70 de la plantilla (2 páginas A4).
+    - Export por parcheo XML del zip (imagen, IDL y printerSettings
+      intactos): `_escribir_bloque` mergea **todas** las filas del rango
+      (A11:B11 … A13:B13) aunque el texto no llegue a la última; la
+      matriz escribe con `wrap` en A/B/C/F/G y `_set_row_height_max` (no
+      aplasta las alturas 121.5/63.75 de las filas 24/25); el merge
+      vertical `H24:H47` de receptores se conserva con su wrap; y
+      `estilo_fila: 58` **crea la fila 59** (la plantilla no la trae)
+      copiando bordes y los merges B:C / D:E / G:H de la 58.
+    - Validación: `max_filas` 27 en la matriz del proceso y 2 en los
+      indicadores (servidor y botón "Agregar fila" deshabilitado).
+    - Tests: `tests_for_017` (24) con plantilla sintética en
+      `tests_sgc_utils.crear_plantilla_for_017` (sin la fila 59, para
+      probar que el export la crea); smoke con la plantilla oficial +
+      LibreOffice → PDF de **2 páginas A4**. Suite completa: 1627 tests.
+
 
 34. CAMPAÑAS DE REVISIÓN MASIVA
 ===================================================================

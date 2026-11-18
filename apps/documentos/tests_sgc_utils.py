@@ -757,3 +757,149 @@ def crear_plantilla_for_010(ruta):
     _inyectar_casillas_for_010(ruta)
     _inyectar_vinculo_externo_for_010(ruta)
     return ruta
+
+
+# ---------------------------------------------------------------------------
+# SGC-FOR-017 — Descripción de Procesos
+# ---------------------------------------------------------------------------
+
+ARCHIVO_REAL_SGC017 = 'SGC-FOR-017 Descripción de Procesos.xlsx'
+
+
+def ruta_plantilla_real_017(base):
+    """Ruta absoluta al XLSX oficial del FOR-017 (o ``None``)."""
+    ruta = os.path.join(str(base), 'documentacion', ARCHIVO_REAL_SGC017)
+    return ruta if os.path.exists(ruta) else None
+
+
+def crear_plantilla_for_017(ruta):
+    """XLSX sintético con el layout del FOR-017 (Descripción de Procesos).
+
+    Reproduce la hoja ``SGC-FOR-017``: identificación (7-10), cajas de
+    dueño/participa/cliente (10-13), objetivo/alcance (14-20), matriz
+    21-48 con el merge vertical ``H24:H47``, bloque de recursos/información
+    (50-55), indicadores 57-58 **sin la fila 59** (el export debe crearla
+    copiando el estilo de la 58) y firmas 60-67 con sus rótulos. Las filas
+    24/25 llevan las alturas 121.5/63.75 de la plantilla oficial. Incluye
+    la hoja instructiva ``SGC-IDL-023``.
+    """
+    from openpyxl.styles import Alignment, Border, Font, Side
+
+    fino = Side(style='thin')
+    borde = Border(left=fino, right=fino, top=fino, bottom=fino)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'SGC-FOR-017'
+    for columna, ancho in (
+        ('A', 17.43), ('B', 16.71), ('C', 14.14), ('D', 15.29),
+        ('E', 13.14), ('F', 18.86), ('G', 13.57), ('H', 14.86),
+    ):
+        ws.column_dimensions[columna].width = ancho
+
+    for ref, texto in (
+        ('B1', 'DESCRIPCION DE PROCESOS'),
+        ('B2', 'INFORMACION DOCUMENTADA'),
+        ('B3', 'SISTEMA DE GESTION DE LA CALIDAD Y SUS PROCESOS'),
+        ('B4', 'Nº DE IDENTIFICACION:'), ('D4', 'VERSION:'),
+        ('E4', 'EDICION:'), ('F4', 'FECHA DE VIGENCIA:'),
+        ('H4', 'PAGINA:'),
+        ('B5', 'SGC-FOR-017'), ('D5', '1'), ('E5', '1'),
+        ('F5', '24/10/2025'), ('H5', '1 de 2'),
+        ('A7', 'CODIGO DEL PROCESO'),
+        ('C7', 'NOMBRE DEL PROCESO:'),
+        ('F7', 'TIPO DE PROCESO'),
+        ('F8', 'CONTRATADO'), ('G8', 'NO CONTRATADO'), ('H8', 'MIXTO'),
+        ('A10', 'DUEÑO (LIDER) DEL PROCESO'),
+        ('C10', 'PARTCIPA'), ('F10', 'CLIENTE'),
+        ('A14', 'OBJETIVO GENERAL'), ('A17', 'ALCANCE'),
+        ('A21', 'FUENTES DE LA ENTRADA'),
+        ('B21', 'ENTRADAS DEL PROCESO'),
+        ('C21', 'SECUENCIA DEL PROCESO'),
+        ('F21', 'RESPONSABLES'),
+        ('G21', 'SALIDAS DEL PROCESO'),
+        ('H21', 'RECEPTORES DEL PROCESO'),
+        ('A50', 'RECURSOS NECESARIOS PARA EL PROCESO:'),
+        ('A52', 'INFORMACION DOCUMENTADA:'),
+        ('A54', 'INTERACCION DE ESTOS PROCESOS:'),
+        ('A56', 'INDICADORES DE GESTION'),
+        ('A57', 'NOMBRE DEL INDICADOR'),
+        ('B57', 'OBJETIVO DEL INDICADOR'),
+        ('D57', 'FORMULA DEL INDICADOR'),
+        ('F57', 'FRECUENCIA DEL INDICADOR'),
+        ('G57', 'RESPONSABLE'),
+        ('A60', 'Elaborado por:'), ('C60', 'Revisado por:'),
+        ('F60', 'Aprobado por:'),
+        ('A61', 'Nombre y Apellido:  '),
+        ('C61', 'Nombre y Apellido:    '),
+        ('F61', 'Nombre y Apellido:'),
+        ('A63', 'Cargo:  '), ('C63', 'Cargo:  '), ('F63', 'Cargo:   '),
+        ('A65', 'Firma:'), ('C65', 'Firma:'), ('F65', 'Firma:'),
+        ('A67', 'Fecha:'), ('C67', 'Fecha:'), ('F67', 'Fecha:'),
+    ):
+        ws[ref] = texto
+
+    # Cajas de datos: bordes como en la plantilla oficial.
+    for fila in list(range(11, 14)) + list(range(21, 50)) + [57, 58] \
+            + list(range(61, 68)):
+        for col in 'ABCDEFGH':
+            ws[f'{col}{fila}'].border = borde
+    for col in 'ABCDEFGH':
+        ws[f'{col}58'].font = Font(bold=True)
+        ws[f'{col}58'].alignment = Alignment(wrap_text=True, vertical='top')
+    ws['H24'].alignment = Alignment(wrap_text=True, vertical='top')
+
+    for rango in (
+        'A7:B8', 'C7:E8', 'F7:H7', 'A9:B9', 'C9:E9',
+        'A10:B10', 'C10:E10', 'F10:H10',
+        'A14:H14', 'A15:H16', 'A17:H17', 'A18:H20',
+        'C21:E21', 'H24:H47',
+        'A50:H50', 'A51:H51', 'A52:H52', 'A53:H53',
+        'A54:H54', 'A55:H55', 'A56:H56',
+        'B57:C57', 'D57:E57', 'G57:H57',
+        'B58:C58', 'D58:E58', 'G58:H58',
+        'A60:B60', 'C60:E60', 'F60:H60',
+        'A61:B62', 'C61:E62', 'F61:H62',
+        'A63:B64', 'C63:E64', 'F63:H64',
+        'A65:B66', 'C65:E66', 'F65:H66',
+        'A67:B67', 'C67:E67', 'F67:H67',
+    ):
+        ws.merge_cells(rango)
+    for fila in range(11, 14):
+        ws.merge_cells(f'C{fila}:E{fila}')
+        ws.merge_cells(f'F{fila}:H{fila}')
+
+    # Alturas fijadas por la plantilla (no deben aplastarse al exportar).
+    for fila, alto in (
+        (21, 30), (24, 121.5), (25, 63.75), (53, 39), (57, 30),
+        (61, 15),
+    ):
+        ws.row_dimensions[fila].height = alto
+
+    # PageSetup de la plantilla oficial: A4 vertical al 70% → 2 páginas.
+    ws.page_setup.orientation = 'portrait'
+    ws.page_setup.scale = 70
+
+    idl = wb.create_sheet('SGC-IDL-023')
+    idl['B1'] = (
+        'INSTRUCTIVO DE LLENADO PARA EL FORMULARIO DE LA DESCRIPCION '
+        'DE PROCESOS'
+    )
+    idl['A4'] = 'Nº DE IDENTIFICACION:      SGC-IDL-023'
+    idl['E4'] = 'FECHA DE VIGENCIA:                                 24/10/2025'
+    idl['G4'] = 'PAGINA: 1 DE 3'
+    idl['A81'] = (
+        '1. Codigo del Proceso: Escribir el còdigo del proceso de acuerdo a '
+        'la nomenclatura indicada en el procedimiento de control de '
+        'documentos'
+    )
+    idl['A93'] = 'PH: Policlinica Hospitalizaciòn'
+    idl['A94'] = 'DPR: Descripciòn del Proceso'
+    idl['A137'] = (
+        '26. Fecha: Se escribe la fecha en que se elaboro, reviso y '
+        'aprobò la descripciòn del proceso.'
+    )
+
+    os.makedirs(os.path.dirname(ruta), exist_ok=True)
+    wb.save(ruta)
+    return ruta

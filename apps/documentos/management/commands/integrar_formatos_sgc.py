@@ -1,13 +1,14 @@
 """Integra los formatos SGC (XLSX en ``documentacion/``) al motor de formularios.
 
-Por ahora solo está especificado el **SGC-FOR-002 (Control de Distribución)**:
-su planilla se genera automáticamente por lote desde el flujo de distribución
-(ver ``services/distribucion.py``). Los demás formatos quedan pendientes.
+Formatos especificados hasta ahora: SGC-FOR-002 (Control de Distribución),
+003, 004, 006, 007, 009, 010 y 017 (Descripción de Procesos). Cada uno tiene
+su sección ``_integrar_for_XXX`` con el mapa de celdas verificado sobre el
+XLSX oficial. Los demás formatos quedan pendientes.
 
 Uso::
 
     python manage.py integrar_formatos_sgc --solo=002            # dry-run
-    python manage.py integrar_formatos_sgc --solo=002 --apply    # escribe
+    python manage.py integrar_formatos_sgc --solo=017 --apply    # escribe
     python manage.py integrar_formatos_sgc --solo=002 --apply \\
         --plantilla=/ruta/otro.xlsx                              # otro origen
 
@@ -433,6 +434,164 @@ vigencia 18/03/2025.</small></p>
 """
 
 
+#: SGC-FOR-017 — Descripción de Procesos (registro vivo).
+#: Se llena con el motor dinámico y se exporta parcheando el XML del XLSX
+#: (``services/exportacion.py``): la plantilla trae merges verticales
+#: (H24:H47), una fila de indicadores que no existe (59) y rótulos de firma
+#: que hay que conservar.
+FOR_017_XLSX = 'SGC-FOR-017 Descripción de Procesos.xlsx'
+
+#: Matriz del proceso: filas 22-48 (27 filas). ``C:E`` es la columna
+#: "Secuencia del proceso": la plantilla trae celdas sueltas y el export las
+#: une por fila para que el texto envuelto ocupe todo el ancho.
+FOR_017_PROCESO = {
+    'fila_inicio': 22,
+    'fila_fin': 48,
+    'max_filas': 27,
+    'limpiar_filas': True,
+    'columnas': [
+        {'clave': 'fuentes', 'etiqueta': 'Fuentes de la entrada',
+         'celda': 'A', 'wrap': True},
+        {'clave': 'entradas', 'etiqueta': 'Entradas del proceso',
+         'celda': 'B', 'wrap': True},
+        {'clave': 'secuencia', 'etiqueta': 'Secuencia del proceso',
+         'celda': 'C', 'merge': 'C:E', 'wrap': True},
+        {'clave': 'responsables', 'etiqueta': 'Responsables',
+         'celda': 'F', 'wrap': True},
+        {'clave': 'salidas', 'etiqueta': 'Salidas del proceso',
+         'celda': 'G', 'wrap': True},
+    ],
+}
+
+#: Indicadores de gestión: filas 58-59 (2 filas). La fila 59 NO existe en
+#: la plantilla: ``estilo_fila`` manda a copiar los estilos de la 58 (bordes)
+#: antes de limpiar/escribir, y las columnas declaran sus merges (B:C, D:E,
+#: G:H) para que la caja de la fila 59 quede igual que la de la 58.
+FOR_017_INDICADORES = {
+    'fila_inicio': 58,
+    'fila_fin': 59,
+    'max_filas': 2,
+    'limpiar_filas': True,
+    'estilo_fila': 58,
+    'columnas': [
+        {'clave': 'nombre', 'etiqueta': 'Nombre del indicador',
+         'celda': 'A', 'wrap': True},
+        {'clave': 'objetivo', 'etiqueta': 'Objetivo del indicador',
+         'celda': 'B', 'merge': 'B:C', 'wrap': True},
+        {'clave': 'formula', 'etiqueta': 'Fórmula del indicador',
+         'celda': 'D', 'merge': 'D:E', 'wrap': True},
+        {'clave': 'frecuencia', 'etiqueta': 'Frecuencia del indicador',
+         'celda': 'F'},
+        {'clave': 'responsable', 'etiqueta': 'Responsable',
+         'celda': 'G', 'merge': 'G:H', 'wrap': True},
+    ],
+}
+
+#: Instructivo SGC-IDL-023 (incluido en la 2.ª hoja del mismo XLSX).
+FOR_017_INSTRUCTIVO = """
+<h3>Instructivo de llenado para la Descripción de Procesos</h3>
+<p><strong>Información documentada 4.4 — Sistema de Gestión de la Calidad y
+sus procesos.</strong></p>
+<p>Una empresa es una cadena de procesos: los procesos son el corazón de ella
+y describen cómo se crea y entrega valor a sus clientes. La descripción de
+los procesos es un requisito de la norma ISO 9001:2015 para establecer,
+implementar, mantener y mejorar continuamente el sistema de gestión de la
+calidad; en la descripción de procesos se debe:</p>
+<ul>
+  <li>a) Determinar las entradas requeridas y las salidas esperadas de estos
+      procesos;</li>
+  <li>b) Determinar la secuencia e interacción de estos procesos;</li>
+  <li>c) Determinar y aplicar los criterios y los métodos (incluyendo el
+      seguimiento, las mediciones y los indicadores del desempeño
+      relacionados) necesarios para asegurarse de la operación eficaz y el
+      control de estos procesos;</li>
+  <li>d) Determinar los recursos necesarios para estos procesos y
+      asegurarse de su disponibilidad;</li>
+  <li>e) Asignar las responsabilidades y autoridades para estos
+      procesos;</li>
+  <li>f) Abordar los riesgos y oportunidades determinados de acuerdo con
+      los requisitos del apartado 6.1;</li>
+  <li>g) Evaluar estos procesos e implementar cualquier cambio necesario
+      para asegurarse de que estos procesos logran los resultados
+      previstos;</li>
+  <li>h) Mejorar los procesos y el sistema de gestión de la calidad;</li>
+  <li>i) Mantener la información documentada para apoyar la operación de
+      sus procesos.</li>
+</ul>
+<h4>Instrucciones para llenar el formulario</h4>
+<ol>
+  <li><strong>Código del proceso:</strong> escribir el código del proceso
+      de acuerdo a la nomenclatura indicada en el procedimiento de control
+      de documentos (PH: Policlínica Hospitalización; DPR: Descripción del
+      Proceso).</li>
+  <li><strong>Nombre del proceso:</strong> escribir el nombre del proceso
+      que se va a describir.</li>
+  <li><strong>Tipo de proceso:</strong> marcar con una equis (X) si es un
+      proceso contratado (proveedor externo); no contratado (perteneciente
+      a la empresa); o mixto (cuando el proceso es ejecutado por contrato y
+      por parte de la empresa).</li>
+  <li><strong>Dueño (líder) del proceso:</strong> escribir el responsable
+      del proceso.</li>
+  <li><strong>Participa:</strong> escribir el nombre y código de los cargos
+      de las personas que participan en el proceso.</li>
+  <li><strong>Cliente:</strong> escribir el nombre del consumidor, cliente o
+      usuario final: receptor de un producto o servicio de un proceso
+      interno, beneficiario o comprador.</li>
+  <li><strong>Objetivo general:</strong> escribir el objetivo general del
+      proceso para determinar el valor que va a aportar al sistema de
+      gestión de la empresa.</li>
+  <li><strong>Alcance:</strong> escribir desde dónde inicia hasta dónde
+      termina el proceso.</li>
+  <li><strong>Fuentes de la entrada:</strong> escribir el origen de las
+      entradas del proceso.</li>
+  <li><strong>Entradas del proceso:</strong> escribir los recursos que van
+      a ingresar en el proceso.</li>
+  <li><strong>Proceso:</strong> escribir la secuencia de las actividades
+      del proceso: fuentes, entradas, secuencia, responsables y
+      salidas.</li>
+  <li><strong>Salidas del proceso:</strong> escribir los datos que
+      recibirán los clientes luego de ser procesados.</li>
+  <li><strong>Receptores del proceso:</strong> escribir el proceso o
+      cliente final que recibirá las salidas.</li>
+  <li><strong>Recursos necesarios:</strong> escribir los recursos que se
+      usarán para ejecutar el proceso.</li>
+  <li><strong>Información documentada:</strong> escribir la información que
+      se requiere usar para la ejecución del proceso. Puede ser documentos
+      externos de la empresa (leyes) o internos (procedimientos,
+      formularios, instrucciones de trabajo, etc.).</li>
+  <li><strong>Interacción de estos procesos:</strong> escribir qué procesos
+      interactúan entre sí.</li>
+  <li><strong>Indicadores de gestión:</strong> escribir todos los
+      indicadores de gestión a los cuales se les vaya a hacer seguimiento
+      en el proceso.</li>
+  <li><strong>Nombre del indicador:</strong> escribir el nombre del
+      indicador.</li>
+  <li><strong>Objetivo del indicador:</strong> escribir el objetivo por el
+      cual se establece el indicador.</li>
+  <li><strong>Fórmula del indicador:</strong> escribir la fórmula con la
+      cual se calcula el indicador.</li>
+  <li><strong>Frecuencia del indicador:</strong> escribir el tiempo en el
+      que se le hará seguimiento al indicador.</li>
+  <li><strong>Responsable:</strong> escribir la persona que llevará el
+      indicador.</li>
+  <li><strong>Elaborado por:</strong> escribir el (nombre, apellido, cargo
+      y fecha) de la persona que elaboró la descripción del proceso
+      (Gerente o Jefe del Área).</li>
+  <li><strong>Revisado por:</strong> escribir el (nombre, apellido, cargo y
+      fecha) de la persona que revisó la descripción del proceso (Dueño o
+      Líder del Proceso).</li>
+  <li><strong>Aprobado por:</strong> escribir el (nombre, apellido, cargo y
+      fecha) de la persona que aprobó la descripción del proceso (Jefe
+      inmediato del dueño del proceso).</li>
+  <li><strong>Fecha:</strong> escribir la fecha en que se elaboró, revisó y
+      aprobó la descripción del proceso.</li>
+</ol>
+<p><small>Aprobación del instructivo: elaborado por Anna Altuve (Métodos y
+Procesos); revisado y aprobado por Sheyla Cardenas (Gerente General);
+vigencia 24/10/2025.</small></p>
+"""
+
+
 class Command(BaseCommand):
     help = (
         'Integra los formatos SGC (documentacion/*.xlsx) al motor de '
@@ -491,6 +650,7 @@ class Command(BaseCommand):
             'SGC-FOR-007': self._integrar_for_007,
             'SGC-FOR-009': self._integrar_for_009,
             'SGC-FOR-010': self._integrar_for_010,
+            'SGC-FOR-017': self._integrar_for_017,
         }
         for codigo in codigos:
             if codigo not in implementados:
@@ -514,7 +674,7 @@ class Command(BaseCommand):
         crudo = (crudo or '').strip()
         implementados = [
             'SGC-FOR-002', 'SGC-FOR-003', 'SGC-FOR-004', 'SGC-FOR-006',
-            'SGC-FOR-007', 'SGC-FOR-009', 'SGC-FOR-010',
+            'SGC-FOR-007', 'SGC-FOR-009', 'SGC-FOR-010', 'SGC-FOR-017',
         ]
         if not crudo:
             return implementados
@@ -1465,6 +1625,223 @@ class Command(BaseCommand):
              'A68:G68', False, None, None,
              'Comentario del responsable del seguimiento a la no conformidad.'),
         ]
+        for i, (seccion, clave, etiqueta, tipo, celda, requerido, opciones,
+                config_tabla, ayuda) in enumerate(campos, start=1):
+            defaults = {
+                'etiqueta': etiqueta,
+                'tipo': tipo,
+                'origen': 'usuario',
+                'celda_excel': celda,
+                'requerido': requerido,
+                'orden': i,
+                'ayuda': ayuda,
+            }
+            if opciones is not None:
+                defaults['opciones'] = copy.deepcopy(opciones)
+            if config_tabla is not None:
+                defaults['config_tabla'] = copy.deepcopy(config_tabla)
+            CampoFormato.objects.update_or_create(
+                seccion=seccion, clave=clave, defaults=defaults,
+            )
+
+    # ------------------------------------------------------------------
+    # SGC-FOR-017
+    # ------------------------------------------------------------------
+
+    def _integrar_for_017(self, aplicar, forzar, forzar_estructura=False,
+                          plantilla=''):
+        self.stdout.write(self.style.HTTP_INFO(
+            '\n=== SGC-FOR-017 — Descripción de Procesos ==='
+        ))
+
+        origen = plantilla or self._ruta_plantilla(FOR_017_XLSX)
+        if not os.path.exists(origen):
+            raise CommandError(
+                f'No se encontró la plantilla del FOR-017: {origen}\n'
+                + (
+                    'Revisa la ruta indicada con --plantilla.'
+                    if plantilla else
+                    'Coloca el XLSX en documentacion/ o indica su ruta con '
+                    '--plantilla.'
+                )
+            )
+
+        existente = Formato.objects.filter(codigo='SGC-FOR-017').first()
+        estado = 'ACTUALIZAR' if existente else 'CREAR'
+        self.stdout.write(f'Formato: {estado} (plantilla {os.path.basename(origen)})')
+        self.stdout.write(
+            f'  Tablas: proceso {FOR_017_PROCESO["max_filas"]} filas '
+            f'({FOR_017_PROCESO["fila_inicio"]}-{FOR_017_PROCESO["fila_fin"]}), '
+            f'indicadores {FOR_017_INDICADORES["max_filas"]} filas '
+            f'({FOR_017_INDICADORES["fila_inicio"]}-'
+            f'{FOR_017_INDICADORES["fila_fin"]})'
+        )
+
+        if not aplicar:
+            self.stdout.write(self.style.WARNING(
+                '  [dry-run] No se modificó la base de datos. '
+                'Repite con --apply para escribir.'
+            ))
+            return
+
+        formato, _creado = Formato.objects.update_or_create(
+            codigo='SGC-FOR-017',
+            defaults={
+                'nombre': 'Descripción de Procesos',
+                'version': '1',
+                'edicion': '1',
+                'fecha_vigencia': date(2025, 10, 24),
+                'procedimiento': (
+                    'SISTEMA DE GESTION DE LA CALIDAD Y SUS PROCESOS'
+                ),
+                'aplica_creacion': False,
+                'aplica_modificacion': False,
+                'aplica_eliminacion': False,
+                'permite_registros': True,
+                'activo': True,
+                'instructivo_html': FOR_017_INSTRUCTIVO,
+            },
+        )
+
+        if forzar or not formato.plantilla_xlsx:
+            destino = self._destino_media('SGC-FOR-017')
+            os.makedirs(os.path.dirname(destino), exist_ok=True)
+            shutil.copy2(origen, destino)
+            formato.plantilla_xlsx = os.path.relpath(destino, settings.MEDIA_ROOT)
+            formato.save(update_fields=['plantilla_xlsx'])
+            self.stdout.write(self.style.SUCCESS(
+                f'  Plantilla copiada a MEDIA: {formato.plantilla_xlsx}'
+            ))
+        else:
+            self.stdout.write(
+                '  Plantilla ya existe; no se sobrescribe (usa --forzar-plantilla).'
+            )
+
+        self._recrear_estructura_017(formato, forzar=forzar_estructura)
+        self.stdout.write(self.style.SUCCESS(
+            '  Estructura y metadatos de SGC-FOR-017 listos.'
+        ))
+
+    def _recrear_estructura_017(self, formato, forzar=False):
+        """Secciones/campos de la Descripción de Procesos (motor dinámico).
+
+        4 secciones / 23 campos. Las firmas (nombre/cargo/fecha de los 3
+        roles) conservan el rótulo que trae la plantilla gracias al ajuste
+        ``rotulo_en_celda`` de ``services/exportacion.py``.
+        """
+        if not forzar and CampoFormato.objects.filter(
+            seccion__formato=formato, clave='codigo_proceso',
+        ).exists():
+            self.stdout.write('  Estructura existente conservada.')
+            return
+
+        if forzar:
+            formato.secciones.all().delete()
+
+        secciones = {}
+        for orden, (clave, titulo) in enumerate([
+            ('identificacion', 'Identificación del proceso'),
+            ('descripcion', 'Descripción del proceso'),
+            ('indicadores', 'Indicadores de gestión'),
+            ('aprobacion', 'Aprobación'),
+        ], start=1):
+            secciones[clave], _ = SeccionFormato.objects.update_or_create(
+                formato=formato, titulo=titulo, defaults={'orden': orden},
+            )
+
+        campos = [
+            # sección, clave, etiqueta, tipo, celda, requerido, opciones,
+            # config_tabla, ayuda
+            (secciones['identificacion'], 'codigo_proceso',
+             'Código del proceso', 'texto', 'A9', True, None, None,
+             'Nomenclatura del procedimiento de control de documentos '
+             '(p. ej. PH-DPR-01).'),
+            (secciones['identificacion'], 'nombre_proceso',
+             'Nombre del proceso', 'texto', 'C9', True, None, None, ''),
+            # La X va en F9/G9/H9 según la opción (cajas de la plantilla).
+            (secciones['identificacion'], 'tipo_proceso',
+             'Tipo de proceso', 'select', '', True, [
+                 {'valor': 'contratado', 'etiqueta': 'Contratado',
+                  'celda_marca': 'F9'},
+                 {'valor': 'no_contratado', 'etiqueta': 'No contratado',
+                  'celda_marca': 'G9'},
+                 {'valor': 'mixto', 'etiqueta': 'Mixto',
+                  'celda_marca': 'H9'},
+             ], None,
+             'Contratado (proveedor externo), no contratado (de la empresa) '
+             'o mixto.'),
+            (secciones['identificacion'], 'dueno_proceso',
+             'Dueño (líder) del proceso', 'textarea', 'A11:B13', True, None,
+             None, 'Responsable del proceso.'),
+            (secciones['identificacion'], 'participa',
+             'Participa', 'textarea', 'C11:E13', False, None, None,
+             'Nombre y código de los cargos de las personas que participan '
+             'en el proceso.'),
+            (secciones['identificacion'], 'cliente',
+             'Cliente', 'textarea', 'F11:H13', False, None, None,
+             'Consumidor, cliente o usuario final del proceso.'),
+            (secciones['identificacion'], 'objetivo_general',
+             'Objetivo general', 'textarea', 'A15:H16', True, None, None,
+             'Valor que aporta el proceso al sistema de gestión.'),
+            (secciones['identificacion'], 'alcance',
+             'Alcance', 'textarea', 'A18:H20', True, None, None,
+             'Desde dónde inicia hasta dónde termina el proceso.'),
+            (secciones['descripcion'], 'proceso',
+             'Proceso', 'tabla', 'A22', True, None, FOR_017_PROCESO,
+             'Una fila por paso: fuentes, entradas, secuencia, '
+             'responsables y salidas (máximo 27).'),
+            # Celda simple (sin ':'): conserva el merge vertical H24:H47 y
+            # el estilo 49 con wrapText de la plantilla.
+            (secciones['descripcion'], 'receptores_proceso',
+             'Receptores del proceso', 'textarea', 'H24', True, None, None,
+             'Proceso o cliente final que recibirá las salidas.'),
+            (secciones['descripcion'], 'recursos',
+             'Recursos necesarios para el proceso', 'textarea',
+             'A51:H51', False, None, None, ''),
+            (secciones['descripcion'], 'informacion_documentada',
+             'Información documentada', 'textarea', 'A53:H53', False, None,
+             None,
+             'Documentos externos (leyes) o internos (procedimientos, '
+             'formularios, instrucciones de trabajo, etc.).'),
+            (secciones['descripcion'], 'interaccion_procesos',
+             'Interacción de estos procesos', 'textarea', 'A55:H55', False,
+             None, None, 'Qué procesos interactúan entre sí.'),
+            (secciones['indicadores'], 'indicadores',
+             'Indicadores de gestión', 'tabla', 'A58', False, None,
+             FOR_017_INDICADORES,
+             'Nombre, objetivo, fórmula, frecuencia y responsable '
+             '(máximo 2).'),
+        ]
+
+        firmas = [
+            ('elaborado', 'Elaborado por', 'Gerente o Jefe del Área'),
+            ('revisado', 'Revisado por', 'Dueño o Líder del Proceso'),
+            ('aprobado', 'Aprobado por', 'Jefe inmediato del dueño'),
+        ]
+        columnas_firma = [
+            ('nombre', 'Nombre y apellido', 'texto'),
+            ('cargo', 'Cargo', 'texto'),
+            ('fecha', 'Fecha', 'fecha'),
+        ]
+        celdas = {
+            'elaborado': {'nombre': 'A61', 'cargo': 'A63', 'fecha': 'A67'},
+            'revisado': {'nombre': 'C61', 'cargo': 'C63', 'fecha': 'C67'},
+            'aprobado': {'nombre': 'F61', 'cargo': 'F63', 'fecha': 'F67'},
+        }
+        orden = len(campos)
+        for rol, etiqueta_rol, ayuda_rol in firmas:
+            for sufijo, etiqueta_dato, tipo in columnas_firma:
+                orden += 1
+                campos.append((
+                    secciones['aprobacion'],
+                    f'{rol}_{sufijo}',
+                    f'{etiqueta_dato} ({etiqueta_rol.lower()})',
+                    tipo,
+                    celdas[rol][sufijo],
+                    False, None, None,
+                    f'{etiqueta_rol}: {ayuda_rol}.',
+                ))
+
         for i, (seccion, clave, etiqueta, tipo, celda, requerido, opciones,
                 config_tabla, ayuda) in enumerate(campos, start=1):
             defaults = {
