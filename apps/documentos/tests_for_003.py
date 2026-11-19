@@ -23,7 +23,9 @@ from documentos.models import (
     CambioDocumento, Documento, FirmaElectronica, Formato, PlanillaCambios,
 )
 from documentos.services import for_003 as svc
-from documentos.tests_sgc_utils import crear_plantilla_for_003
+from documentos.tests_sgc_utils import (
+    crear_plantilla_for_003, verificar_preparacion_pdf,
+)
 
 TEST_MEDIA = tempfile.mkdtemp(prefix='polidoc_media_for003_')
 PDF_BYTES = b'%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n'
@@ -234,6 +236,21 @@ class GenerarYGuardarTest(BaseFor003Test):
         resultado = svc.generar_y_guardar(planilla, forzar=True)
         self.assertFalse(resultado['success'])
         self.assertIn('no está integrado', resultado['error'])
+
+    def test_el_pdf_se_prepara_sin_instructivo(self):
+        planilla = self._planilla()
+        self._filas(planilla, n=2, autorizar=True)
+        planilla.estado = 'aprobado'
+        planilla.save(update_fields=['estado'])
+
+        with patch('documentos.services.for_003._xlsx_a_pdf',
+                   return_value=PDF_BYTES) as convertir:
+            svc.generar_y_guardar(planilla, forzar=True)
+
+        verificar_preparacion_pdf(
+            self, convertir.call_args[0][0], planilla.for_003_xlsx.path,
+            'SGC-FOR-003', 'SGC-IDL-009',
+        )
 
 
 class FormularioPlanillaTest(BaseFor003Test):

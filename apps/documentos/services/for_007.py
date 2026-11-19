@@ -697,9 +697,9 @@ def generar_xlsx(registro):
 
 
 def generar_pdf(registro):
-    from .xlsx_comun import xlsx_bytes_a_pdf
+    from .xlsx_comun import preparar_para_pdf, xlsx_bytes_a_pdf
 
-    return xlsx_bytes_a_pdf(generar_xlsx(registro))
+    return xlsx_bytes_a_pdf(preparar_para_pdf(generar_xlsx(registro)))
 
 
 def nombre_archivo(registro, extension='xlsx'):
@@ -711,7 +711,7 @@ def generar_y_guardar(registro, forzar=False):
     """Genera y guarda XLSX/PDF en el registro (idempotente)."""
     from django.core.files.base import ContentFile
 
-    from .xlsx_comun import xlsx_bytes_a_pdf
+    from .xlsx_comun import preparar_para_pdf, xlsx_bytes_a_pdf
 
     if not forzar and registro.archivo:
         return {
@@ -736,7 +736,7 @@ def generar_y_guardar(registro, forzar=False):
         nombre_archivo(registro, 'xlsx'), ContentFile(xlsx), save=False,
     )
     registro.archivo_pdf = ''
-    pdf = xlsx_bytes_a_pdf(xlsx)
+    pdf = xlsx_bytes_a_pdf(preparar_para_pdf(xlsx))
     if pdf:
         registro.archivo_pdf.save(
             nombre_archivo(registro, 'pdf'), ContentFile(pdf), save=False,

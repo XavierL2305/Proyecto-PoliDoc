@@ -3,7 +3,9 @@
 La captura usa el **motor dinámico** (``Formato`` + ``RegistroFormato``); este
 servicio concentra el alta/guardado, la validación del Nº de reunión, el
 prefijo de responsables y la **exportación XLSX/PDF** con la plantilla oficial
-(hoja ``SGC-FOR-009`` + instructivo ``SGC-IDL-015`` intacto).
+(hoja ``SGC-FOR-009`` + instructivo ``SGC-IDL-015``). El XLSX descargable
+conserva el instructivo y su escala original; el PDF se prepara aparte (una
+página de ancho y sin el instructivo).
 
 La minuta sirve para cualquier reunión del SGC: ``tipo_reunion='revision'``
 (Revisión por la Dirección, puede enlazarse al FOR-007) u ``'otra'`` (no
@@ -31,7 +33,7 @@ CELDAS = {
     'objetivo': 'C13',
     'lugar': 'B16',
     'fecha': 'B18',
-    'responsable': 'B20',
+    'responsable': 'A20',
     'duracion': 'B22',
     'tema': 'A33',
     'conclusiones': 'A38',
@@ -44,7 +46,6 @@ MERGES = {
     'objetivo': 'C13:J14',
     'lugar': 'B16:F16',
     'fecha': 'B18:C18',
-    'responsable': 'B20:H20',
     'duracion': 'B22:C22',
 }
 ETIQUETAS = {
@@ -411,6 +412,28 @@ def _escribir_campo(hoja, clave, valor):
     return _ajustar_altura_bloque(hoja, rango, valor or '')
 
 
+def _escribir_responsable(hoja, valor):
+    """Escribe etiqueta y valor juntos en la celda de la plantilla (A20).
+
+    La plantilla oficial trae la etiqueta en A20 **sin merge** (A20:B20) y la
+    columna A mide 12 caracteres: si la etiqueta y el valor vivieran en celdas
+    separadas, la etiqueta se cortaría al imprimir. Por eso van en una sola
+    celda sin ``wrap_text``: el texto desborda hacia las columnas vacías, tal
+    como en el diseño original.
+    """
+    from openpyxl.styles import Alignment
+
+    texto = f'{ETIQUETAS_CAMPO["responsable"]}: {str(valor or "").strip()}'
+    celda = _escribir_celda(hoja, CELDAS['responsable'], texto)
+    if celda is not None:
+        celda.alignment = Alignment(horizontal='left', vertical='center')
+    if _lineas_estimadas(texto, _ancho_rango(hoja, 'A20:J20')) > 1:
+        logger.warning(
+            'El responsable de la elaboración no cabe en A20:J20 y se verá '
+            'cortado al imprimir: %s', texto,
+        )
+
+
 def _escribir_asistentes(hoja, filas, config):
     columnas = {c.get('clave'): c.get('celda')
                 for c in (config.get('columnas') or [])}
@@ -499,11 +522,13 @@ def generar_xlsx(registro):
             for clave, valor in (
                 ('objetivo', respuestas.get('objetivo')),
                 ('lugar', respuestas.get('lugar')),
-                ('responsable', respuestas.get('responsable_elaboracion')),
                 ('duracion', respuestas.get('duracion')),
             ):
                 if not _escribir_campo(hoja, clave, valor):
                     desbordes.append((ETIQUETAS_CAMPO[clave], valor))
+            _escribir_responsable(
+                hoja, respuestas.get('responsable_elaboracion'),
+            )
             for clave, etiqueta in (
                 ('tema', ETIQUETAS['tema']),
                 ('conclusiones', ETIQUETAS['conclusiones']),
@@ -524,7 +549,7 @@ def generar_xlsx(registro):
             # Hoja de continuación: solo identificación + asistentes.
             for clave in ('objetivo', 'lugar', 'responsable', 'duracion'):
                 _escribir_celda(hoja, CELDAS[clave], '')
-            for ref in ('A13', 'A16', 'A20', 'A22'):
+            for ref in ('A13', 'A16', 'A22'):
                 _escribir_celda(hoja, ref, '')
             for clave in ('conclusiones', 'acuerdos_cerrados',
                           'acuerdos_pendientes', 'responsables'):
@@ -547,9 +572,9 @@ def generar_xlsx(registro):
 
 
 def generar_pdf(registro):
-    from .xlsx_comun import xlsx_bytes_a_pdf
+    from .xlsx_comun import preparar_para_pdf, xlsx_bytes_a_pdf
 
-    return xlsx_bytes_a_pdf(generar_xlsx(registro))
+    return xlsx_bytes_a_pdf(preparar_para_pdf(generar_xlsx(registro)))
 
 
 def nombre_archivo(registro, extension='xlsx'):
@@ -562,7 +587,7 @@ def generar_y_guardar(registro, forzar=False):
     """Genera y guarda XLSX/PDF en el registro (idempotente)."""
     from django.core.files.base import ContentFile
 
-    from .xlsx_comun import xlsx_bytes_a_pdf
+    from .xlsx_comun import preparar_para_pdf, xlsx_bytes_a_pdf
 
     if not forzar and registro.archivo:
         return {
@@ -586,7 +611,7 @@ def generar_y_guardar(registro, forzar=False):
         nombre_archivo(registro, 'xlsx'), ContentFile(xlsx), save=False,
     )
     registro.archivo_pdf = ''
-    pdf = xlsx_bytes_a_pdf(xlsx)
+    pdf = xlsx_bytes_a_pdf(preparar_para_pdf(xlsx))
     if pdf:
         registro.archivo_pdf.save(
             nombre_archivo(registro, 'pdf'), ContentFile(pdf), save=False,

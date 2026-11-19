@@ -40,6 +40,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from .xlsx_comun import copiar_hoja as _copiar_hoja
+from .xlsx_comun import preparar_para_pdf as _preparar_para_pdf
 from .xlsx_comun import xlsx_bytes_a_pdf as _xlsx_a_pdf
 
 logger = logging.getLogger(__name__)
@@ -704,7 +705,7 @@ def generar_xlsx(acta):
 
 def generar_pdf(acta):
     """Bytes del PDF del acta (o ``None`` si LibreOffice no está disponible)."""
-    return _xlsx_a_pdf(generar_xlsx(acta))
+    return _xlsx_a_pdf(_preparar_para_pdf(generar_xlsx(acta)))
 
 
 def nombre_archivo(acta, extension):
@@ -743,7 +744,7 @@ def generar_y_guardar(acta, forzar=False):
     acta.xlsx.save(nombre_archivo(acta, 'xlsx'), ContentFile(xlsx), save=False)
     acta.pdf = ''
     try:
-        pdf = _xlsx_a_pdf(xlsx)
+        pdf = _xlsx_a_pdf(_preparar_para_pdf(xlsx))
     except Exception as exc:  # noqa: BLE001
         logger.warning('No se pudo generar el PDF FOR-004: %s', exc)
         pdf = None

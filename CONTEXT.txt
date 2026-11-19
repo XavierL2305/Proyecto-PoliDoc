@@ -3597,6 +3597,37 @@ alternativas en docs/adr/0001-modelo-documento-formato-registro.md.
       probar que el export la crea); smoke con la plantilla oficial +
       LibreOffice → PDF de **2 páginas A4**. Suite completa: 1627 tests.
 
+  33.8 BLINDAJE DEL PDF DE REGISTROS SGC (FOR-003/004/006/007/009)
+    - Problema: las plantillas oficiales imprimen con `scale` fijo (65–80%)
+      y **sin** `pageSetUpPr fitToPage`, así que el PDF se partía en dos
+      anchos (la última columna —p. ej. la J de la Minuta— acababa en una
+      hoja aparte) y sumaba las páginas del instructivo `SGC-IDL-*`. La
+      Minuta FOR-009 del registro `505acb53…` salía en **4 páginas** (2 de
+      formulario + 2 de IDL-015) con la etiqueta de `A20` recortada
+      ("Responsable dJeason Bermudes").
+    - Solución: `xlsx_comun.preparar_para_pdf(xlsx_bytes)` trabaja sobre una
+      copia en memoria y pone `pageSetUpPr.fitToPage=1`, `fitToWidth=1`,
+      `fitToHeight=0` y `scale=None`, y oculta las hojas `SGC-IDL-*`
+      (LibreOffice no exporta hojas ocultas; nunca se oculta la primera
+      hoja). Nunca lanza: si algo falla devuelve los bytes originales.
+    - Alcance: solo los 10 puntos de PDF de los 5 servicios (`generar_pdf` y
+      `generar_y_guardar` de FOR-003/004/006/007/009). El XLSX
+      descargable/almacenado no se toca (instructivo visible y escala
+      original), y **no** cambian los documentos subidos, los previews, las
+      planillas FOR-002, el exportador dinámico (FOR-010/017) ni el
+      conversor `conversion_pdf`.
+    - FOR-009 fila 20: la plantilla trae la etiqueta en `A20` **sin merge**
+      y la columna A mide 12 caracteres, así que etiqueta y valor van juntos
+      en `A20` (`Responsable de la Elaboración: <valor>`) sin `wrap_text`
+      (el texto desborda hasta J20, como en el diseño oficial); se eliminó
+      el merge `B20:H20`, que dejaba la etiqueta cortada ("Responsable d…").
+    - Tests: `tests_sgc_utils.verificar_preparacion_pdf` (copia preparada +
+      descarga intacta) en los 5 módulos; `PrepararParaPdfTest` (3) y
+      `PrepararParaPdfRealLibreOfficeTest` (2, LibreOffice real: 3 → 1
+      páginas y sin el texto del instructivo). Smoke: FOR-009 = **1 página**
+      con la etiqueta completa, FOR-006/007 = 1 página sin IDL y FOR-017 =
+      2 páginas (sin cambios).
+
 
 34. CAMPAÑAS DE REVISIÓN MASIVA
 ===================================================================

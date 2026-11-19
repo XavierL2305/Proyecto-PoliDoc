@@ -34,7 +34,7 @@ from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, override_settings
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.drawing.image import Image as ImagenXlsx
 from openpyxl.worksheet.pagebreak import Break
 
@@ -46,6 +46,7 @@ from documentos.services.conversion_pdf import (
     resolver_margenes,
     resolver_papel,
 )
+from documentos.services.xlsx_comun import preparar_para_pdf
 from documentos.services.documentos_pdf import (
     adquirir_candado_conversion,
     archivo_existe,
@@ -209,6 +210,45 @@ def contar_paginas(ruta):
     with open(ruta, 'rb') as f:
         datos = f.read()
     return len(re.findall(rb'/Type\s*/Page(?!s)', datos))
+
+
+def xlsx_ancho_con_instructivo(ruta, columnas=12, escala=75, filas=20):
+    """XLSX ancho al ``escala``% con su hoja de instructivo (caso FOR-009).
+
+    Con más columnas de las que caben, la última acaba en una página
+    aparte y el instructivo ``SGC-IDL-*`` suma una más.
+    """
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'SGC-FOR-009'
+    ws.column_dimensions['A'].width = 12.285
+    for columna in range(2, columnas + 1):
+        ws.column_dimensions[get_column_letter(columna)].width = 10
+    ws['A1'] = 'MINUTA CABECERA'
+    ws.cell(row=10, column=columnas,
+            value='VALOR-ULTIMA-COLUMNA')
+    for fila in range(2, filas + 1):
+        ws.cell(row=fila, column=1, value='Fila %d' % fila)
+    ws.page_setup.paperSize = 9
+    ws.page_setup.orientation = 'portrait'
+    ws.page_setup.scale = escala
+
+    instructivo = wb.create_sheet('SGC-IDL-015')
+    instructivo['A1'] = 'INSTRUCTIVO-NO-IMPRIMIR'
+
+    wb.save(ruta)
+    return ruta
+
+
+def preparar_copia(origen, destino):
+    """Escribe en ``destino`` la copia preparada para PDF de ``origen``."""
+    with open(origen, 'rb') as fh:
+        datos = fh.read()
+    with open(destino, 'wb') as fh:
+        fh.write(preparar_para_pdf(datos))
+    return destino
 
 
 #: PNG de 16×16 px para los tests que necesitan una imagen real en el XLSX.
@@ -863,6 +903,58 @@ class ConvertirOfficePdfTest(BaseTemporalTest):
 
 
 # =============================================================================
+# COPIA PREPARADA PARA PDF (SGC-FOR-003/004/006/007/009)
+# =============================================================================
+
+class PrepararParaPdfTest(BaseTemporalTest):
+    """El XLSX descargable no cambia: solo cambia la copia que ve el PDF."""
+
+    def _preparar(self, columnas=12):
+        origen = xlsx_ancho_con_instructivo(
+            self.ruta('origen.xlsx'), columnas=columnas,
+        )
+        return origen, preparar_copia(origen, self.ruta('preparado.xlsx'))
+
+    def test_una_pagina_de_ancho_sin_escala(self):
+        _, preparado = self._preparar()
+        wb = load_workbook(preparado)
+
+        visibles = [w for w in wb.worksheets if w.sheet_state == 'visible']
+        self.assertEqual(len(visibles), 1, 'Queda alguna hoja oculta de más')
+        for hoja in visibles:
+            propiedades = hoja.sheet_properties.pageSetUpPr
+            self.assertIsNotNone(propiedades)
+            self.assertTrue(propiedades.fitToPage)
+            self.assertEqual(hoja.page_setup.fitToWidth, 1)
+            self.assertEqual(hoja.page_setup.fitToHeight, 0)
+            self.assertIsNone(hoja.page_setup.scale)
+
+    def test_oculta_el_instructivo_y_deja_el_formulario(self):
+        origen, preparado = self._preparar()
+
+        wb = load_workbook(preparado)
+        self.assertEqual(wb['SGC-FOR-009'].sheet_state, 'visible')
+        self.assertEqual(wb['SGC-IDL-015'].sheet_state, 'hidden')
+
+        original = load_workbook(origen)
+        self.assertEqual(original['SGC-IDL-015'].sheet_state, 'visible')
+        self.assertEqual(original['SGC-FOR-009'].page_setup.scale, 75)
+
+    def test_no_oculta_la_primera_hoja(self):
+        wb = Workbook()
+        wb.active.title = 'SGC-IDL-001'
+        wb.active['A1'] = 'FORMULARIO'
+        wb.save(self.ruta('primera.xlsx'))
+
+        preparado = preparar_copia(
+            self.ruta('primera.xlsx'), self.ruta('preparado.xlsx'),
+        )
+
+        self.assertEqual(load_workbook(preparado)['SGC-IDL-001'].sheet_state,
+                         'visible')
+
+
+# =============================================================================
 # CONVERSIÓN REAL (LibreOffice)
 # =============================================================================
 
@@ -972,6 +1064,48 @@ class SaneoRealLibreOfficeTest(BaseTemporalTest):
             segunda.startswith('TITULO DE PRUEBA'),
             'La segunda página no empieza por el título: %r' % segunda[:120],
         )
+
+
+@unittest.skipUnless(LIBREOFFICE, 'LibreOffice no instalado')
+class PrepararParaPdfRealLibreOfficeTest(BaseTemporalTest):
+    """El PDF real de la copia preparada: una página y sin instructivo."""
+
+    def test_la_ultima_columna_no_se_va_a_otra_pagina(self):
+        origen = xlsx_ancho_con_instructivo(self.ruta('ancho.xlsx'))
+        preparado = preparar_copia(origen, self.ruta('preparado.xlsx'))
+
+        sin = convertir_office_a_pdf(origen, outdir=self.ruta('sin'))
+        con = convertir_office_a_pdf(preparado, outdir=self.ruta('con'))
+
+        self.assertTrue(sin and con, 'LibreOffice no generó los PDF')
+        # Sin el ajuste: formulario partido + instructivo.
+        self.assertEqual(contar_paginas(sin), 3)
+        self.assertEqual(contar_paginas(con), 1)
+        self.assertIn('VALOR-ULTIMA-COLUMNA', ''.join(paginas_texto(sin)))
+        self.assertIn(
+            'VALOR-ULTIMA-COLUMNA', paginas_texto(con)[0],
+            'La última columna no quedó en la primera página',
+        )
+
+    def test_el_instructivo_no_se_imprime(self):
+        origen = xlsx_ancho_con_instructivo(
+            self.ruta('angosto.xlsx'), columnas=3,
+        )
+        preparado = preparar_copia(origen, self.ruta('preparado.xlsx'))
+
+        sin = convertir_office_a_pdf(origen, outdir=self.ruta('sin'))
+        con = convertir_office_a_pdf(preparado, outdir=self.ruta('con'))
+
+        self.assertTrue(sin and con, 'LibreOffice no generó los PDF')
+        self.assertEqual(contar_paginas(sin), 2)
+        self.assertEqual(contar_paginas(con), 1)
+        texto_sin = ''.join(paginas_texto(sin))
+        texto_con = ''.join(paginas_texto(con))
+        self.assertIn('INSTRUCTIVO-NO-IMPRIMIR', texto_sin)
+        self.assertNotIn('INSTRUCTIVO-NO-IMPRIMIR', texto_con)
+        # El XLSX de origen sigue imprimiendo su instructivo.
+        original = load_workbook(origen)
+        self.assertEqual(original['SGC-IDL-015'].sheet_state, 'visible')
 
 
 # =============================================================================

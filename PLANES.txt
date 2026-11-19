@@ -184,6 +184,17 @@ FOR-017 — DESCRIPCIÓN DE PROCESOS (registro)
     formatos.
 [x] Tests tests_for_017 (24) + smoke oficial (PDF 2 páginas A4) + CONTEXT §33.7.
 
+BLINDAJE DEL PDF DE REGISTROS SGC (FOR-003/004/006/007/009)
+[x] xlsx_comun.preparar_para_pdf: copia con una página de ancho (fitToWidth
+    sin escala) y con las hojas SGC-IDL-* ocultas, solo para el PDF.
+[x] Aplicado en generar_pdf y generar_y_guardar de los 5 servicios; el XLSX
+    descargable queda intacto (instructivo visible, escala original).
+[x] FOR-009: etiqueta + valor juntos en A20 (sin merge B20:H20) para no
+    recortar "Responsable de la Elaboración".
+[x] Tests: verificar_preparacion_pdf en los 5 módulos + PrepararParaPdfTest
+    (3) + PrepararParaPdfRealLibreOfficeTest (2) y smoke FOR-009 (1 página)/
+    FOR-006/007 (sin IDL)/FOR-017 (2 páginas). CONTEXT §33.8.
+
 BACKLOG
 [ ] FOR-007: restaurar versión.
 [x] FOR-009: versionado de minutas.

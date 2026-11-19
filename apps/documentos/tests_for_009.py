@@ -24,6 +24,7 @@ from documentos.services import registros as regsvc
 from documentos.services import versiones as versiones_svc
 from documentos.tests_sgc_utils import (
     crear_plantilla_for_007, crear_plantilla_for_009,
+    verificar_preparacion_pdf,
 )
 
 TEST_MEDIA = tempfile.mkdtemp(prefix='polidoc_media_for009_')
@@ -267,7 +268,11 @@ class ExportTest(BaseFor009Test):
         )
         self.assertEqual(hoja['B16'].value, 'Sala de reuniones')
         self.assertEqual(hoja['B18'].value, '15/03/2026')
-        self.assertEqual(hoja['B20'].value, 'Ana Altuve')
+        self.assertEqual(
+            hoja['A20'].value, 'Responsable de la Elaboración: Ana Altuve',
+        )
+        self.assertIsNone(hoja['B20'].value)
+        self.assertNotIn('B20:H20', {str(r) for r in hoja.merged_cells.ranges})
         self.assertEqual(hoja['B22'].value, '2 horas')
         self.assertEqual(hoja['A26'].value, 'Ana Altuve')
         self.assertEqual(hoja['D26'].value, 'Gerente General')
@@ -313,6 +318,19 @@ class ExportTest(BaseFor009Test):
         registro.refresh_from_db()
         self.assertTrue(registro.archivo.name)
         self.assertTrue(registro.archivo_pdf.name)
+
+    def test_el_pdf_se_prepara_sin_instructivo(self):
+        registro = self._crear()
+        with patch(
+            'documentos.services.xlsx_comun.xlsx_bytes_a_pdf',
+            return_value=PDF,
+        ) as convertir:
+            svc.generar_y_guardar(registro, forzar=True)
+
+        verificar_preparacion_pdf(
+            self, convertir.call_args[0][0], registro.archivo.path,
+            'SGC-FOR-009', 'SGC-IDL-015',
+        )
 
     def test_guardar_invalida_archivos(self):
         registro = self._crear()

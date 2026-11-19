@@ -21,7 +21,9 @@ from documentos.models import (
     CampoFormato, Documento, DocumentoSinCodigo, Formato,
 )
 from documentos.services import for_006 as svc
-from documentos.tests_sgc_utils import crear_plantilla_for_006
+from documentos.tests_sgc_utils import (
+    crear_plantilla_for_006, verificar_preparacion_pdf,
+)
 
 TEST_MEDIA = tempfile.mkdtemp(prefix='polidoc_media_for006_')
 
@@ -331,6 +333,19 @@ class GeneracionTest(BaseFor006Test):
         registro.refresh_from_db()
         self.assertTrue(registro.archivo)
         self.assertTrue(registro.archivo_pdf)
+
+    def test_el_pdf_se_prepara_sin_instructivo(self):
+        registro = self._registro_con([self._fila()])
+        with patch(
+            'documentos.services.for_006._xlsx_a_pdf',
+            return_value=b'%PDF-1.4\n%prueba\n',
+        ) as convertir:
+            svc.generar_y_guardar(registro, forzar=True)
+
+        verificar_preparacion_pdf(
+            self, convertir.call_args[0][0], registro.archivo.path,
+            'SGC-FOR-006', 'SGC-IDL-012',
+        )
 
 
 class AccesoTest(BaseFor006Test):

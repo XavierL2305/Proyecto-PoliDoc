@@ -897,9 +897,52 @@ def crear_plantilla_for_017(ruta):
     idl['A94'] = 'DPR: Descripciòn del Proceso'
     idl['A137'] = (
         '26. Fecha: Se escribe la fecha en que se elaboro, reviso y '
-        'aprobò la descripciòn del proceso.'
+        'aprobò la descripciòn del proceso'
     )
 
     os.makedirs(os.path.dirname(ruta), exist_ok=True)
     wb.save(ruta)
     return ruta
+
+
+# ---------------------------------------------------------------------------
+# Verificación de la copia preparada para PDF (compartida por FOR-003/004/006/
+# 007/009)
+# ---------------------------------------------------------------------------
+
+def verificar_preparacion_pdf(caso, xlsx_pdf, ruta_descarga, hoja,
+                              instructivo):
+    """Comprueba la separación entre lo que ve el PDF y lo que se descarga.
+
+    Args:
+        caso: ``TestCase`` que hace las aserciones.
+        xlsx_pdf: bytes entregados al convertidor a PDF.
+        ruta_descarga: ruta del XLSX almacenado (el que se descarga).
+        hoja: nombre de la hoja del formulario.
+        instructivo: nombre de la hoja del instructivo (``SGC-IDL-*``).
+    """
+    preparado = openpyxl.load_workbook(BytesIO(xlsx_pdf))
+    formulario = preparado[hoja]
+    propiedades = formulario.sheet_properties.pageSetUpPr
+    caso.assertIsNotNone(propiedades, 'Falta sheetPr/pageSetUpPr en el PDF')
+    caso.assertTrue(propiedades.fitToPage)
+    caso.assertEqual(formulario.page_setup.fitToWidth, 1)
+    caso.assertEqual(formulario.page_setup.fitToHeight, 0)
+    caso.assertIsNone(formulario.page_setup.scale, 'Queda una escala fija')
+    caso.assertEqual(formulario.sheet_state, 'visible')
+    caso.assertEqual(
+        preparado[instructivo].sheet_state, 'hidden',
+        'El instructivo no está oculto en la copia del PDF',
+    )
+
+    with open(ruta_descarga, 'rb') as fh:
+        descargable = openpyxl.load_workbook(fh)
+    caso.assertEqual(
+        descargable[instructivo].sheet_state, 'visible',
+        'El XLSX descargable perdió el instructivo',
+    )
+    ajustado = descargable[hoja].sheet_properties.pageSetUpPr
+    caso.assertFalse(
+        ajustado is not None and ajustado.fitToPage,
+        'El XLSX descargable quedó ajustado para PDF',
+    )

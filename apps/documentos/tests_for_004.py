@@ -30,7 +30,9 @@ from documentos.models import (
 )
 from documentos.services import for_004 as svc
 from documentos.services import firmas as svc_firmas
-from documentos.tests_sgc_utils import crear_plantilla_for_004
+from documentos.tests_sgc_utils import (
+    crear_plantilla_for_004, verificar_preparacion_pdf,
+)
 
 TEST_MEDIA = tempfile.mkdtemp(prefix='polidoc_media_for004_')
 PDF_BYTES = b'%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n'
@@ -388,6 +390,17 @@ class XlsxTest(BaseFor004Test):
         acta.refresh_from_db()
         self.assertTrue(acta.xlsx)
         self.assertTrue(acta.pdf)
+
+    def test_el_pdf_se_prepara_sin_instructivo(self):
+        acta, _ = self._acta(self.doc_activo)
+        with patch('documentos.services.for_004._xlsx_a_pdf',
+                   return_value=PDF_BYTES) as convertir:
+            svc.generar_y_guardar(acta)
+
+        verificar_preparacion_pdf(
+            self, convertir.call_args[0][0], acta.xlsx.path,
+            'SGC-FOR-004', 'SGC-IDL-010',
+        )
 
 
 class FirmaTest(BaseFor004Test):

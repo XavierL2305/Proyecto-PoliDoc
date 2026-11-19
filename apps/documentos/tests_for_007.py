@@ -14,7 +14,9 @@ from tests_base import BaseDocumentosTest, MONGO_PATCH_TARGET
 
 from documentos.models import Formato, RegistroFormato, VersionRegistroFormato
 from documentos.services import for_007 as svc
-from documentos.tests_sgc_utils import crear_plantilla_for_007
+from documentos.tests_sgc_utils import (
+    crear_plantilla_for_007, verificar_preparacion_pdf,
+)
 
 TEST_MEDIA = tempfile.mkdtemp(prefix='polidoc_media_for007_')
 PDF = b'%PDF-1.4\n%prueba\n'
@@ -294,6 +296,17 @@ class ExportTest(BaseFor007Test):
         registro.refresh_from_db()
         self.assertTrue(registro.archivo)
         self.assertTrue(registro.archivo_pdf)
+
+    def test_el_pdf_se_prepara_sin_instructivo(self):
+        registro = self._programa_con(2)
+        with patch('documentos.services.xlsx_comun.xlsx_bytes_a_pdf',
+                   return_value=PDF) as convertir:
+            svc.generar_y_guardar(registro, forzar=True)
+
+        verificar_preparacion_pdf(
+            self, convertir.call_args[0][0], registro.archivo.path,
+            'SGC-FOR-007', 'SGC-IDL-013',
+        )
 
 
 class VistaTest(BaseFor007Test):

@@ -24,6 +24,7 @@ import uuid
 
 from django.db import transaction
 from django.utils import timezone
+from .xlsx_comun import preparar_para_pdf as _preparar_para_pdf
 from .xlsx_comun import xlsx_bytes_a_pdf as _xlsx_a_pdf
 
 logger = logging.getLogger(__name__)
@@ -644,7 +645,7 @@ def generar_xlsx(registro=None):
 
 def generar_pdf(registro=None):
     """Bytes del PDF de la lista (o ``None`` si LibreOffice no está)."""
-    return _xlsx_a_pdf(generar_xlsx(registro))
+    return _xlsx_a_pdf(_preparar_para_pdf(generar_xlsx(registro)))
 
 
 def nombre_archivo(registro, extension='xlsx'):
@@ -684,7 +685,7 @@ def generar_y_guardar(registro, forzar=False):
     )
     registro.archivo_pdf = ''
     try:
-        pdf = _xlsx_a_pdf(xlsx)
+        pdf = _xlsx_a_pdf(_preparar_para_pdf(xlsx))
     except Exception as exc:  # noqa: BLE001
         logger.warning('No se pudo generar el PDF FOR-006: %s', exc)
         pdf = None

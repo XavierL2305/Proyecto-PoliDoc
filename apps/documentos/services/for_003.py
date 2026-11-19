@@ -17,6 +17,7 @@ import logging
 from django.db import transaction
 from django.utils import timezone
 from .xlsx_comun import copiar_hoja as _copiar_hoja
+from .xlsx_comun import preparar_para_pdf as _preparar_para_pdf
 from .xlsx_comun import xlsx_bytes_a_pdf as _xlsx_a_pdf
 
 logger = logging.getLogger(__name__)
@@ -338,7 +339,7 @@ def generar_xlsx(formato, filas):
 
 def generar_pdf(formato, filas):
     """Bytes del PDF FOR-003 (o ``None`` si LibreOffice no está disponible)."""
-    return _xlsx_a_pdf(generar_xlsx(formato, filas))
+    return _xlsx_a_pdf(_preparar_para_pdf(generar_xlsx(formato, filas)))
 
 
 def nombre_archivo(planilla, extension):
@@ -401,7 +402,7 @@ def generar_y_guardar(planilla, forzar=False):
     )
     planilla.for_003_pdf = ''
     try:
-        pdf = _xlsx_a_pdf(xlsx)
+        pdf = _xlsx_a_pdf(_preparar_para_pdf(xlsx))
     except Exception as exc:  # noqa: BLE001
         logger.warning('No se pudo generar el PDF FOR-003: %s', exc)
         pdf = None
