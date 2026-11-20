@@ -13,6 +13,7 @@ del formato de Control de Distribución sin romper la planilla:
 La plantilla se inyecta con ``--plantilla``: si ``documentacion/`` no está
 disponible (p. ej. CI) se genera un XLSX con el mismo layout.
 """
+import importlib
 import io
 import json
 import os
@@ -22,6 +23,7 @@ from unittest.mock import MagicMock, patch
 
 import openpyxl
 
+from django.apps import apps as django_apps
 from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
@@ -30,7 +32,11 @@ from django.urls import reverse
 
 from tests_base import BaseDocumentosTest, MONGO_PATCH_TARGET
 
-from documentos.models import CampoFormato, DistribucionDocumento, Formato
+from documentos import apartados
+from documentos.forms import FormatoForm
+from documentos.models import (
+    CampoFormato, Departamento, DistribucionDocumento, Formato,
+)
 from documentos.services import distribucion as svc_dist
 from documentos.tests_sgc_utils import crear_plantilla_for_002, leer_celda
 
@@ -418,3 +424,141 @@ class ComandoIntegrationTest(BaseFormato002Test):
                 plantilla='/ruta/que/no/existe.xlsx', stdout=io.StringIO(),
             )
         self.assertIn('--plantilla', str(ctx.exception))
+
+
+# =============================================================================
+# Fase 1 (§36.3 de CONTEXT): apartados por área en Formato
+# =============================================================================
+
+
+@override_settings(MEDIA_ROOT=TEST_MEDIA)
+class ApartadosFormatoTest(BaseFormato002Test):
+    """`departamento`, `visibilidad` y `requiere_contexto_documento`."""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.depto_sgc, _ = Departamento.objects.get_or_create(
+            codigo='SGC',
+            defaults={'nombre': 'Sistema de Gestión de la Calidad'},
+        )
+
+    def _ejecutar_comando(self, **kwargs):
+        with patch('documentos.tasks.convertir_formato_a_pdf.delay',
+                   return_value=None):
+            call_command(
+                'integrar_formatos_sgc', solo='002', apply=True,
+                plantilla=PLANTILLA_ORIGEN, stdout=io.StringIO(), **kwargs,
+            )
+
+    def test_defaults_apartados(self):
+        formato = Formato.objects.create(codigo='SGC-FOR-901', nombre='Alta')
+
+        self.assertEqual(formato.visibilidad, 'restringido')
+        self.assertTrue(formato.requiere_contexto_documento)
+        self.assertIsNone(formato.departamento_id)
+
+    def test_form_expone_apartados(self):
+        form = FormatoForm()
+        for campo in (
+            'departamento', 'visibilidad', 'requiere_contexto_documento',
+        ):
+            self.assertIn(campo, form.fields)
+
+        invalido = FormatoForm(data={
+            'codigo': 'SGC-FOR-902', 'nombre': 'Demo', 'visibilidad': 'x',
+        })
+        self.assertFalse(invalido.is_valid())
+        self.assertIn('visibilidad', invalido.errors)
+
+        depto_inactivo = Departamento.objects.create(
+            codigo='ZZZ', nombre='Cerrado', activo=False,
+        )
+        otro_inactivo = Departamento.objects.create(
+            codigo='YYY', nombre='Otro cerrado', activo=False,
+        )
+        formato = Formato.objects.create(
+            codigo='SGC-FOR-903', nombre='Con depto',
+            departamento=depto_inactivo,
+        )
+        queryset = FormatoForm(
+            instance=formato,
+        ).fields['departamento'].queryset
+        self.assertIn(depto_inactivo, queryset)
+        self.assertNotIn(otro_inactivo, queryset)
+        self.assertIn(self.depto_th, queryset)
+
+    def test_comando_normaliza_al_crear(self):
+        Formato.objects.filter(codigo='SGC-FOR-002').delete()
+
+        self._ejecutar_comando()
+
+        formato = Formato.objects.get(codigo='SGC-FOR-002')
+        self.assertEqual(formato.departamento_id, self.depto_sgc.pk)
+        self.assertEqual(formato.visibilidad, 'jefaturas')
+
+    def test_comando_no_pisa_apartados(self):
+        Formato.objects.filter(pk=self.formato_002.pk).update(
+            departamento=self.depto_th, visibilidad='todos',
+        )
+
+        self._ejecutar_comando()
+
+        self.formato_002.refresh_from_db()
+        self.assertEqual(self.formato_002.departamento_id, self.depto_th.pk)
+        self.assertEqual(self.formato_002.visibilidad, 'todos')
+
+        self._ejecutar_comando(forzar_estructura=True)
+
+        self.formato_002.refresh_from_db()
+        self.assertEqual(self.formato_002.departamento_id, self.depto_sgc.pk)
+        self.assertEqual(self.formato_002.visibilidad, 'jefaturas')
+
+    def test_backfill_migracion(self):
+        Departamento.objects.get_or_create(
+            codigo='SMr',
+            defaults={'nombre': 'Servicios Médicos Residentes'},
+        )
+        smr = Departamento.objects.get(codigo='SMr')
+        Formato.objects.create(codigo='SGC-FOR-900', nombre='Uno')
+        Formato.objects.create(codigo='TH-FOR-900', nombre='Dos')
+        Formato.objects.create(codigo=' smr-for-900 ', nombre='Tres')
+        Formato.objects.create(codigo='MANUAL', nombre='Cuatro')
+
+        migracion = importlib.import_module(
+            'documentos.migrations.0069_formato_apartados',
+        )
+        migracion.backfill(django_apps, None)
+
+        self.assertEqual(
+            Formato.objects.get(codigo='SGC-FOR-900').departamento_id,
+            self.depto_sgc.pk,
+        )
+        self.assertEqual(
+            Formato.objects.get(codigo='TH-FOR-900').departamento_id,
+            self.depto_th.pk,
+        )
+        self.assertEqual(
+            Formato.objects.get(codigo=' smr-for-900 ').departamento_id,
+            smr.pk,
+        )
+        self.assertIsNone(
+            Formato.objects.get(codigo='MANUAL').departamento_id,
+        )
+
+    def test_mapas_sincronizados(self):
+        migracion = importlib.import_module(
+            'documentos.migrations.0069_formato_apartados',
+        )
+
+        self.assertEqual(
+            apartados.VISIBILIDAD_POR_CODIGO, migracion.MAPA_CONGELADO,
+        )
+        self.assertEqual(apartados.VISIBILIDAD_POR_DEFECTO, 'restringido')
+
+    def test_prefijo_departamento(self):
+        self.assertEqual(apartados.prefijo_departamento('MANUAL'), '')
+        self.assertEqual(apartados.prefijo_departamento(''), '')
+        self.assertEqual(apartados.prefijo_departamento(None), '')
+        self.assertEqual(apartados.prefijo_departamento(' th-for-001 '), 'th')
+        self.assertEqual(apartados.prefijo_departamento('SMR-FOR-1'), 'SMR')

@@ -9,6 +9,7 @@ from django.db.models import Max
 from django.contrib.auth.models import User
 from django.utils import timezone
 
+from .apartados import VISIBILIDAD_CHOICES
 from .validators import validar_archivo_acuse, validar_archivo_documento
 
 logger = logging.getLogger(__name__)
@@ -2096,6 +2097,21 @@ class Formato(models.Model):
             'Si está activo, se pueden crear registros (formularios llenos) '
             'de este formato ligados a un documento/contexto.'
         ),
+    )
+    #: Área dueña del formato (apartado en el que se agrupa; SGC-PRG-001).
+    departamento = models.ForeignKey(
+        'Departamento', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='formatos', verbose_name='Departamento',
+        help_text='Área dueña del formato (apartado en el que se agrupa).',
+    )
+    #: Quién puede ver/usar el formato (fail-closed por defecto).
+    visibilidad = models.CharField(
+        max_length=15, choices=VISIBILIDAD_CHOICES,
+        default='restringido', verbose_name='Visibilidad',
+    )
+    #: Si los registros de este formato exigen un documento de contexto.
+    requiere_contexto_documento = models.BooleanField(
+        default=True, verbose_name='Requiere documento de contexto',
     )
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_modificacion = models.DateTimeField(auto_now=True)

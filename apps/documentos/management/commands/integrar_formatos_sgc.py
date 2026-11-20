@@ -652,6 +652,7 @@ class Command(BaseCommand):
             'SGC-FOR-010': self._integrar_for_010,
             'SGC-FOR-017': self._integrar_for_017,
         }
+        self._creados = set()
         for codigo in codigos:
             if codigo not in implementados:
                 self.stdout.write(self.style.WARNING(
@@ -664,7 +665,50 @@ class Command(BaseCommand):
                 plantilla=plantilla,
             )
 
+        self._normalizar_apartados(codigos, aplicar, forzar_estructura)
         self.stdout.write(self.style.SUCCESS('Proceso finalizado.'))
+
+    def _normalizar_apartados(self, codigos, aplicar, forzar_estructura):
+        """Asigna `departamento`/`visibilidad` sin pisar la configuración.
+
+        Reglas (SGC-PRG-001, §36.3 de CONTEXT):
+        * `departamento`: solo si está vacío o con `--forzar-estructura`.
+        * `visibilidad`: solo si el formato se creó en esta corrida o con
+          `--forzar-estructura` (los formatos ya existentes conservan lo que
+          haya configurado el admin).
+        * dry-run: solo informa; no escribe.
+        """
+        from documentos.apartados import prefijo_departamento, visibilidad_para
+        from documentos.models import Departamento
+
+        if not aplicar:
+            self.stdout.write(self.style.WARNING(
+                '  [dry-run] Apartados: sin cambios (repite con --apply).'
+            ))
+            return
+
+        deptos = {d.codigo.upper(): d for d in Departamento.objects.all()}
+        formatos = Formato.objects.filter(
+            codigo__in=codigos,
+        ).order_by('codigo')
+        for formato in formatos:
+            cambios = {}
+            if formato.departamento_id is None or forzar_estructura:
+                prefijo = prefijo_departamento(formato.codigo).upper()
+                depto = deptos.get(prefijo)
+                if depto is not None:
+                    cambios['departamento_id'] = depto.pk
+            if formato.codigo in self._creados or forzar_estructura:
+                cambios['visibilidad'] = visibilidad_para(formato.codigo)
+            if not cambios:
+                continue
+            Formato.objects.filter(pk=formato.pk).update(**cambios)
+            detalle = ', '.join(
+                f'{clave}={valor}' for clave, valor in cambios.items()
+            )
+            self.stdout.write(
+                f'  Apartados de {formato.codigo}: {detalle}'
+            )
 
     # ------------------------------------------------------------------
     # Utilidades
@@ -750,6 +794,8 @@ class Command(BaseCommand):
                 'instructivo_html': '',
             },
         )
+        if _creado:
+            self._creados.add(formato.codigo)
 
         if forzar or not formato.plantilla_xlsx:
             destino = self._destino_media('SGC-FOR-002')
@@ -920,6 +966,8 @@ class Command(BaseCommand):
                 'instructivo_html': '',
             },
         )
+        if _creado:
+            self._creados.add(formato.codigo)
 
         if forzar or not formato.plantilla_xlsx:
             destino = self._destino_media('SGC-FOR-003')
@@ -1028,6 +1076,8 @@ class Command(BaseCommand):
                 'instructivo_html': '',
             },
         )
+        if _creado:
+            self._creados.add(formato.codigo)
 
         if forzar or not formato.plantilla_xlsx:
             destino = self._destino_media('SGC-FOR-004')
@@ -1164,6 +1214,8 @@ class Command(BaseCommand):
                 'instructivo_html': '',
             },
         )
+        if _creado:
+            self._creados.add(formato.codigo)
 
         if forzar or not formato.plantilla_xlsx:
             destino = self._destino_media('SGC-FOR-006')
@@ -1268,6 +1320,8 @@ class Command(BaseCommand):
                 'instructivo_html': '',
             },
         )
+        if _creado:
+            self._creados.add(formato.codigo)
 
         if forzar or not formato.plantilla_xlsx:
             destino = self._destino_media('SGC-FOR-007')
@@ -1367,6 +1421,8 @@ class Command(BaseCommand):
                 'instructivo_html': '',
             },
         )
+        if _creado:
+            self._creados.add(formato.codigo)
 
         if forzar or not formato.plantilla_xlsx:
             destino = self._destino_media('SGC-FOR-009')
@@ -1524,6 +1580,8 @@ class Command(BaseCommand):
                 'instructivo_html': FOR_010_INSTRUCTIVO,
             },
         )
+        if _creado:
+            self._creados.add(formato.codigo)
 
         if forzar or not formato.plantilla_xlsx:
             destino = self._destino_media('SGC-FOR-010')
@@ -1702,6 +1760,8 @@ class Command(BaseCommand):
                 'instructivo_html': FOR_017_INSTRUCTIVO,
             },
         )
+        if _creado:
+            self._creados.add(formato.codigo)
 
         if forzar or not formato.plantilla_xlsx:
             destino = self._destino_media('SGC-FOR-017')

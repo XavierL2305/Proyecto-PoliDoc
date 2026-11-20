@@ -195,6 +195,18 @@ BLINDAJE DEL PDF DE REGISTROS SGC (FOR-003/004/006/007/009)
     (3) + PrepararParaPdfRealLibreOfficeTest (2) y smoke FOR-009 (1 página)/
     FOR-006/007 (sin IDL)/FOR-017 (2 páginas). CONTEXT §33.8.
 
+APARTADOS POR ÁREA — FORMATO (FASE 1)
+[x] Formato.departamento / visibilidad / requiere_contexto_documento
+    (migración 0069 + backfill por prefijo del código, case-insensitive).
+[x] apartados.py con VISIBILIDAD_POR_CODIGO (001/002/003/004/005/010/017 ->
+    jefaturas; 006/007/009 -> restringido; resto -> restringido).
+[x] FormatoForm + FormatoAdmin + Constructor/listado; visibilidad no
+    requerida en el form (default fail-closed si el POST la omite).
+[x] integrar_formatos_sgc normaliza apartados sin pisar la UI
+    (--forzar-estructura restablece).
+[x] Tests: 7 en tests_configuracion_formatos (defaults, form, comando crea/no
+    pisa, backfill, mapas sincronizados, prefijo) + docs CONTEXT §36.3.
+
 BACKLOG
 [ ] FOR-007: restaurar versión.
 [x] FOR-009: versionado de minutas.

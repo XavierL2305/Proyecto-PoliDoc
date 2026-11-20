@@ -144,9 +144,9 @@ class ReferenciaDocumentoAdmin(admin.ModelAdmin):
 class FormatoAdmin(admin.ModelAdmin):
     list_display = [
         'codigo', 'nombre', 'version', 'edicion', 'fecha_vigencia',
-        'activo', 'permite_registros',
+        'departamento', 'visibilidad', 'activo', 'permite_registros',
     ]
-    list_filter = ['activo', 'permite_registros']
+    list_filter = ['activo', 'permite_registros', 'visibilidad', 'departamento']
     search_fields = ['codigo', 'nombre']
 
 

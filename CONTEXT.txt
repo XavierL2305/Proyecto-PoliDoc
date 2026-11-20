@@ -3768,9 +3768,10 @@ referencias `§5.1.x` de esta sección corresponden a ese PDF.
       formatos de uso general (todos los trabajadores), uso departamental
       (solo un área), solo jefaturas, o restringidos por persona.
     - `RegistroFormato.contexto_tipo` es un `CharField` libre (máx. 30) que
-      **ya** se usa con `documento`, `minuta`, `programa_revision` y
-      `sistema` (`registros.py:27` `CONTEXTOS_VISTA_EXCLUSIVA`): no asume por
-      diseño un DPR. La brecha real de los formularios operativos/autoservicio
+      **ya** se usa con `documento` (`registros.py:48`), `minuta`,
+      `programa_revision` y `sistema` (`CONTEXTOS_VISTA_EXCLUSIVA` en
+      `registros.py:27` cubre los tres últimos): no asume por diseño un DPR.
+      La brecha real de los formularios operativos/autoservicio
       (p. ej. solicitud de permiso en TH, que no cuelga de un DPR sino del
       trabajador/departamento y requiere aprobación de su jefe directo y/o
       del departamento dueño del formato) está en el **enrutado de
@@ -3778,7 +3779,7 @@ referencias `§5.1.x` de esta sección corresponden a ese PDF.
       `documento.departamento.jefe` (`registros.py:113-117`) y `_auditar`
       (`registros.py:80`) depende de `documento_de_contexto(registro)`.
     - `Formato.procedimiento` es un `CharField` de texto libre
-      (`models.py:2077`), **no** una FK a `Documento`: impide aplicar
+      (`models.py:2078`), **no** una FK a `Documento`: impide aplicar
       automáticamente la Matriz de Elaboración / Revisión / Aprobación
       (Tabla N° 1), que se rige por el `TipoDocumento` del documento
       asociado.
@@ -3788,19 +3789,30 @@ referencias `§5.1.x` de esta sección corresponden a ese PDF.
       confirmar con SGC la duplicidad de `SMr`.
 
   36.3 ARQUITECTURA PROPUESTA: APARTADOS POR ÁREA Y VISIBILIDAD (PLAN)
-    - Fase 1 — Modelo en `Formato` (1 migración retrocompatible):
-      * `departamento` (FK a `Departamento`, null/blank; backfill por prefijo
-        del código: `SGC-FOR-*` → SGC, `TH-FOR-*` → TH, `TI-FOR-*` → TI…).
-      * `visibilidad`: `todos` (autoservicio para todo trabajador, p. ej.
-        permisos TH), `departamento` (miembros del depto dueño + admin),
-        `jefaturas` (jefes/delegados/admin, p. ej. FOR-010/017 — *propuesto*)
-        y `restringido` (lista blanca `AccesoFormato`, p. ej. FOR-006/007/009).
+    - Fase 1 — Modelo en `Formato` — **HECHO** (migración 0069):
+      * `departamento` (FK a `Departamento`, null/blank): backfill por
+        prefijo del código (`SGC-FOR-*` → SGC, `TH-FOR-*` → TH, `TI-FOR-*`
+        → TI…); si no existe el departamento del prefijo queda `NULL`.
+      * `visibilidad` (`todos|departamento|jefaturas|restringido`):
+        - `todos`: autoservicio para todo trabajador (p. ej. permisos TH).
+        - `departamento`: miembros del depto dueño + admin.
+        - `jefaturas`: jefes/delegados/admin (p. ej. FOR-010/017 —
+          *propuesto*).
+        - `restringido`: lista blanca `AccesoFormato` (p. ej. FOR-006/007/009).
+        - Mapa por código (`apartados.VISIBILIDAD_POR_CODIGO`):
+          001/002/003/004/005/010/017 → `jefaturas`;
+          006/007/009 → `restringido`;
+          cualquier otro código → `restringido` (default fail-closed).
       * `requiere_contexto_documento` (bool): `True` para registros ligados a
         un DPR/documento; `False` para formularios operativos/autoservicio.
       * Defaults **fail-closed**: `visibilidad='restringido'` y
         `requiere_contexto_documento=True` (formatos nuevos sin clasificar
         quedan restringidos hasta que un admin los configure).
-      * Exponer en `FormatoForm` / Constructor de Formatos.
+      * Expuesto en `FormatoForm`, `FormatoAdmin` y el Constructor de
+        Formatos; el comando `integrar_formatos_sgc` normaliza apartados
+        **sin pisar** lo configurado por el admin (solo asigna `departamento`
+        si está vacío y `visibilidad` al crear; `--forzar-estructura`
+        restablece ambos).
     - Fase 2 — Permisos centralizados (`acceso_formato.py` + `registros.py`):
       * `formatos_visibles(usuario)` y `puede_usar_formato(usuario, formato)`.
       * Visibilidad de `RegistroFormato` operativos (`contexto_tipo='operativo'`):

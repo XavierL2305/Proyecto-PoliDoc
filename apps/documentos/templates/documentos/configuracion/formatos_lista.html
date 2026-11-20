@@ -38,6 +38,7 @@
         <th>Vigencia</th>
         <th>Operaciones</th>
         <th>Estado</th>
+        <th>Visibilidad</th>
         {% if user.perfil.es_administrador %}
         <th>Acciones</th>
         {% endif %}
@@ -66,6 +67,7 @@
           <span class="badge badge--danger">Inactivo</span>
           {% endif %}
         </td>
+        <td>{{ formato.get_visibilidad_display }}</td>
         {% if user.perfil.es_administrador %}
         <td>
           <div class="actions">
@@ -99,7 +101,7 @@
       </tr>
       {% empty %}
       <tr>
-        <td colspan="8" style="text-align: center; padding: 2rem; color: var(--color-muted);">
+        <td colspan="9" style="text-align: center; padding: 2rem; color: var(--color-muted);">
           No hay formatos registrados.
         </td>
       </tr>

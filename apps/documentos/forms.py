@@ -2,6 +2,8 @@ import logging
 
 from django import forms
 from django.contrib.auth.models import User
+from django.db.models import Q
+from .apartados import VISIBILIDAD_POR_DEFECTO
 from .models import (
     Documento, SolicitudDescarga, SolicitudAccesoDocumento,
     PlanillaCambios, AsignacionDocumento, Departamento, TipoDocumento, Periodo,
@@ -577,7 +579,8 @@ class FormatoForm(forms.ModelForm):
             'codigo', 'nombre', 'version', 'edicion', 'fecha_vigencia',
             'procedimiento', 'instructivo_html', 'plantilla_xlsx',
             'aplica_creacion', 'aplica_modificacion', 'aplica_eliminacion',
-            'permite_registros', 'activo',
+            'permite_registros', 'activo', 'departamento', 'visibilidad',
+            'requiere_contexto_documento',
         ]
         widgets = {
             'codigo': forms.TextInput(attrs={'class': 'form-input'}),
@@ -588,7 +591,31 @@ class FormatoForm(forms.ModelForm):
             'procedimiento': forms.TextInput(attrs={'class': 'form-input'}),
             'instructivo_html': forms.Textarea(attrs={'class': 'form-input', 'rows': 10}),
             'plantilla_xlsx': forms.FileInput(attrs={'class': 'form-input'}),
+            'departamento': forms.Select(attrs={'class': 'form-input'}),
+            'visibilidad': forms.Select(attrs={'class': 'form-input'}),
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Solo departamentos activos; si el actual quedó inactivo se conserva
+        # en el queryset para no perderlo en silencio al editar.
+        departamentos = Departamento.objects.filter(activo=True)
+        actual = getattr(self.instance, 'departamento_id', None)
+        if actual:
+            departamentos = Departamento.objects.filter(
+                Q(activo=True) | Q(pk=actual),
+            )
+        self.fields['departamento'].queryset = departamentos.order_by('codigo')
+        self.fields['departamento'].empty_label = '— Sin departamento —'
+        # `visibilidad` tiene default en el modelo: un POST que no lo traiga
+        # (p. ej. integraciones viejas del Constructor) no debe invalidar el
+        # formulario; `clean_visibilidad` aplica el default.
+        self.fields['visibilidad'].required = False
+
+    def clean_visibilidad(self):
+        return (
+            self.cleaned_data.get('visibilidad') or VISIBILIDAD_POR_DEFECTO
+        )
 
     def clean_instructivo_html(self):
         from .sanitizers import sanitizar_html
