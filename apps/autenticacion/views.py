@@ -289,30 +289,252 @@ def documento_lista_view(request):
 
 
 
+def _nombres_distintos(user, datos):
+    """True si RRHH trae un nombre/apellido distinto al de la cuenta."""
+    def _norm(valor):
+        return (valor or '').strip().lower()
+
+    nombre = _norm(datos.get('nombre'))
+    apellido = _norm(datos.get('apellido'))
+    return bool(
+        (_norm(user.first_name) and _norm(user.first_name) != nombre)
+        or (_norm(user.last_name) and _norm(user.last_name) != apellido)
+    )
+
+
+def _auditar_cedula(request, perfil, anterior, nuevo, origen, mensaje=''):
+    """Audita el cambio de cédula sin guardar PII completa (ISO 15489)."""
+    try:
+        from auditoria.services import registrar_log_iso
+
+        from .services.rrhh_sync import enmascarar_cedula
+
+        registrar_log_iso(
+            usuario=request.user,
+            accion_tipo='edicion',
+            accion_categoria='usuario',
+            recurso_tipo='usuario',
+            recurso_id=perfil.pk,
+            recurso_nombre=perfil.usuario.username,
+            estado_anterior=enmascarar_cedula(anterior),
+            estado_posterior=enmascarar_cedula(nuevo),
+            detalles={
+                'campo': 'cedula_identidad',
+                'origen': origen,
+                'cargo': perfil.cargo,
+                'departamento_rrhh': perfil.departamento_rrhh,
+                'cedula_verificada': perfil.cedula_verificada_rrhh,
+            },
+            resultado_mensaje=mensaje or 'Cédula actualizada',
+        )
+    except Exception:  # noqa: BLE001 - la auditoría no rompe el flujo
+        logger.warning('No se pudo auditar el cambio de cédula', exc_info=True)
+
+
+def _auditar_consulta_cedula(request, cedula, encontrado):
+    """Registra el acceso a datos de RRHH por cédula (trazabilidad de PII)."""
+    try:
+        from auditoria.services import registrar_log_iso
+
+        from .services.rrhh_sync import enmascarar_cedula
+
+        registrar_log_iso(
+            usuario=request.user,
+            accion_tipo='consulta',
+            accion_categoria='usuario',
+            recurso_tipo='usuario',
+            recurso_nombre=request.user.username,
+            detalles={
+                'consulta': 'cedula_rrhh',
+                'cedula_ultimos4': enmascarar_cedula(cedula)[-4:],
+                'encontrado': encontrado,
+            },
+            resultado_mensaje=(
+                'Consulta de cédula en RRHH: encontrada' if encontrado
+                else 'Consulta de cédula en RRHH: no encontrada'
+            ),
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning('No se pudo auditar la consulta de cédula', exc_info=True)
+
+
+def _guardar_cedula(request, perfil, cedula, datos, verificado):
+    """Guarda la cédula y, si hay datos, cargo/departamento/nombres."""
+    anterior = perfil.cedula_identidad
+    perfil.cedula_identidad = cedula
+    perfil.cedula_verificada_rrhh = bool(verificado)
+    if datos:
+        perfil.cargo = datos.get('cargo', '')
+        perfil.departamento_rrhh = datos.get('departamento', '')
+        perfil.ultimo_sync_rrhh = timezone.now()
+        cambios = []
+        if datos.get('nombre'):
+            request.user.first_name = datos['nombre']
+            cambios.append('first_name')
+        if datos.get('apellido'):
+            request.user.last_name = datos['apellido']
+            cambios.append('last_name')
+        if cambios:
+            request.user.save(update_fields=cambios)
+    perfil.save(update_fields=[
+        'cedula_identidad', 'cedula_verificada_rrhh', 'cargo',
+        'departamento_rrhh', 'ultimo_sync_rrhh',
+    ])
+    _auditar_cedula(request, perfil, anterior, cedula, 'autoservicio')
+
+
+def _confirmar_cedula(request, perfil):
+    """Paso 2: confirma la cédula pendiente guardada en sesión."""
+    from django.contrib import messages
+
+    from .services.rrhh_sync import validar_y_limpiar_cedula
+
+    pendiente = request.session.pop('cedula_pendiente_rrhh', None)
+    if not pendiente:
+        messages.error(
+            request,
+            'La verificación expiró. Vuelve a ingresar tu cédula.',
+        )
+        return redirect('autenticacion:perfil')
+
+    try:
+        cedula = validar_y_limpiar_cedula(pendiente.get('cedula', ''))
+    except ValueError:
+        messages.error(request, 'La cédula de la verificación no es válida.')
+        return redirect('autenticacion:perfil')
+
+    if (
+        PerfilUsuario.objects
+        .filter(cedula_identidad=cedula)
+        .exclude(pk=perfil.pk)
+        .exists()
+    ):
+        messages.error(
+            request, 'Esa cédula ya está registrada por otro usuario.',
+        )
+        return redirect('autenticacion:perfil')
+
+    _guardar_cedula(
+        request, perfil, cedula,
+        {
+            'nombre': pendiente.get('nombre', ''),
+            'apellido': pendiente.get('apellido', ''),
+            'cargo': pendiente.get('cargo', ''),
+            'departamento': pendiente.get('departamento', ''),
+        },
+        verificado=True,
+    )
+    messages.success(
+        request, 'Cédula verificada y guardada correctamente.',
+    )
+    return redirect('autenticacion:perfil')
+
+
 @login_required(login_url='/login/')
 def perfil_usuario(request):
-    """Ver y editar perfil del usuario"""
+    """Ver y editar perfil del usuario, incluida la cédula verificada en RRHH."""
     from django.contrib import messages
-    from .forms import EditarPerfilForm
+
+    from .forms import CedulaForm, EditarPerfilForm
+    from .services.rrhh_sync import (
+        RRHHConexionError, consultar_empleado_por_cedula, rrhh_habilitado,
+    )
 
     perfil = request.user.perfil
+    form = EditarPerfilForm(instance=perfil)
+    cedula_form = CedulaForm(instance=perfil)
+    cedula_pendiente = request.session.get('cedula_pendiente_rrhh')
 
     if request.method == 'POST':
-        form = EditarPerfilForm(request.POST, request.FILES, instance=perfil)
-        if form.is_valid():
-            # Eliminar foto anterior si se sube una nueva
-            if 'foto_perfil' in request.FILES:
-                foto_anterior = perfil.foto_perfil
-                if foto_anterior and foto_anterior.storage.exists(foto_anterior.name):
-                    foto_anterior.delete(save=False)
+        accion = request.POST.get('accion', '')
 
-            form.save()
-            request.user.email = form.cleaned_data.get('email') or ''
-            request.user.save(update_fields=['email'])
-            messages.success(request, 'Perfil actualizado correctamente.')
+        if accion == 'cancelar_cedula':
+            request.session.pop('cedula_pendiente_rrhh', None)
+            messages.info(request, 'Verificación de cédula cancelada.')
             return redirect('autenticacion:perfil')
-    else:
-        form = EditarPerfilForm(instance=perfil)
+
+        if accion == 'confirmar_cedula':
+            return _confirmar_cedula(request, perfil)
+
+        if accion == 'buscar_cedula':
+            cedula_form = CedulaForm(request.POST, instance=perfil)
+            if cedula_form.fields['cedula_identidad'].disabled:
+                messages.info(
+                    request,
+                    'Tu cédula ya está verificada; solo un administrador '
+                    'puede modificarla.',
+                )
+                return redirect('autenticacion:perfil')
+            request.session.pop('cedula_pendiente_rrhh', None)
+            cedula_pendiente = None
+            if cedula_form.is_valid():
+                cedula = cedula_form.cleaned_data['cedula_identidad']
+                if not rrhh_habilitado():
+                    _guardar_cedula(
+                        request, perfil, cedula, {}, verificado=False,
+                    )
+                    messages.success(
+                        request,
+                        'Cédula registrada (RRHH no configurado).',
+                    )
+                    return redirect('autenticacion:perfil')
+                try:
+                    datos = consultar_empleado_por_cedula(cedula)
+                except RRHHConexionError:
+                    _guardar_cedula(
+                        request, perfil, cedula, {}, verificado=False,
+                    )
+                    messages.warning(
+                        request,
+                        'Cédula guardada. No se pudo validar contra RRHH en '
+                        'este momento; se verificará automáticamente luego.',
+                    )
+                    return redirect('autenticacion:perfil')
+
+                if datos is None:
+                    _auditar_consulta_cedula(
+                        request, cedula, encontrado=False,
+                    )
+                    cedula_form.add_error(
+                        'cedula_identidad',
+                        'No encontramos esa cédula en RRHH. '
+                        'Verifica los dígitos.',
+                    )
+                else:
+                    _auditar_consulta_cedula(
+                        request, cedula, encontrado=True,
+                    )
+                    cedula_pendiente = {
+                        'cedula': cedula,
+                        'nombre': datos['nombre'],
+                        'apellido': datos['apellido'],
+                        'cargo': datos['cargo'],
+                        'departamento': datos['departamento'],
+                        'alerta': _nombres_distintos(request.user, datos),
+                    }
+                    request.session['cedula_pendiente_rrhh'] = (
+                        cedula_pendiente
+                    )
+        else:
+            form = EditarPerfilForm(
+                request.POST, request.FILES, instance=perfil,
+            )
+            if form.is_valid():
+                if 'foto_perfil' in request.FILES:
+                    foto_anterior = perfil.foto_perfil
+                    if (
+                        foto_anterior
+                        and foto_anterior.storage.exists(foto_anterior.name)
+                    ):
+                        foto_anterior.delete(save=False)
+
+                form.save()
+                request.user.email = form.cleaned_data.get('email') or ''
+                request.user.save(update_fields=['email'])
+                messages.success(
+                    request, 'Perfil actualizado correctamente.',
+                )
+                return redirect('autenticacion:perfil')
 
     total_docs = Documento.objects.filter(propietario=request.user).count()
 
@@ -336,6 +558,9 @@ def perfil_usuario(request):
 
     return render(request, 'autenticacion/perfil.html', {
         'form': form,
+        'cedula_form': cedula_form,
+        'cedula_pendiente': cedula_pendiente,
+        'cedula_bloqueada': cedula_form.fields['cedula_identidad'].disabled,
         'perfil': perfil,
         'credencial': obtener_credencial(request.user),
         'total_documentos': total_docs,

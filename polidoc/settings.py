@@ -91,6 +91,9 @@ MIDDLEWARE = [
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
+    # Cédula obligatoria (solo si EXIGIR_CEDULA_PERFIL=True). Va tras
+    # Authentication+Messages para poder usar request.user y messages.
+    'autenticacion.middleware.CedulaObligatoriaMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'documentos.middleware.CachePeticionMiddleware',
     'auditoria.middleware.AuditIPMiddleware',

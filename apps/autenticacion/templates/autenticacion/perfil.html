@@ -13,6 +13,17 @@
     <h1>Mi Perfil</h1>
   </div>
 
+  {% if not perfil.cedula_identidad %}
+  <div class="profile-card" style="margin-bottom: 1.25rem; border-left: 4px solid var(--color-warning);">
+    <div style="padding: 1rem 1.25rem;">
+      <strong><i class="fa-solid fa-id-card"></i> Falta tu cédula de identidad.</strong>
+      <p style="margin: .35rem 0 0; font-size: .875rem; color: var(--color-muted);">
+        Regístrala para vincular tu cargo y nombres reales desde RRHH.
+      </p>
+    </div>
+  </div>
+  {% endif %}
+
   <div class="profile-grid">
     <div class="profile-main">
       <div class="profile-card profile-card--info">
@@ -44,10 +55,25 @@
             <span class="profile-info-label">Email</span>
             <span class="profile-info-value">{{ user.email|default:"-" }}</span>
           </div>
-          {% if perfil.cedula_identidad %}
           <div class="profile-info-row">
             <span class="profile-info-label">Cédula</span>
-            <span class="profile-info-value">{{ perfil.cedula_identidad }}</span>
+            <span class="profile-info-value">
+              {{ perfil.cedula_identidad|default:"—" }}
+              {% if perfil.cedula_verificada_rrhh %}
+              <span class="badge badge--success" style="font-size:.65rem;margin-left:.35rem;">Verificada</span>
+              {% endif %}
+            </span>
+          </div>
+          {% if perfil.cargo %}
+          <div class="profile-info-row">
+            <span class="profile-info-label">Cargo</span>
+            <span class="profile-info-value">{{ perfil.cargo }}</span>
+          </div>
+          {% endif %}
+          {% if perfil.departamento_rrhh %}
+          <div class="profile-info-row">
+            <span class="profile-info-label">Departamento (RRHH)</span>
+            <span class="profile-info-value">{{ perfil.departamento_rrhh }}</span>
           </div>
           {% endif %}
           {% if perfil.numero_empleado %}
@@ -77,6 +103,80 @@
           <span class="profile-info-label">Biografía</span>
           <p>{{ perfil.biografia }}</p>
         </div>
+        {% endif %}
+      </div>
+
+      <div class="profile-card profile-card--edit">
+        <div class="profile-card-header">
+          <h3><i class="fa-solid fa-id-card"></i> Cédula de identidad</h3>
+          <p class="profile-card-subtitle">
+            Se valida contra RRHH para traer tu cargo y nombres reales.
+          </p>
+        </div>
+
+        {% if cedula_pendiente %}
+        <div class="profile-form">
+          {% if cedula_pendiente.alerta %}
+          <p class="profile-foto-hint" style="color: var(--color-warning);">
+            <i class="fa-solid fa-triangle-exclamation"></i>
+            Los nombres en RRHH no coinciden con tu cuenta. Verifica antes de confirmar.
+          </p>
+          {% endif %}
+          <div class="profile-info-rows">
+            <div class="profile-info-row">
+              <span class="profile-info-label">Cédula</span>
+              <span class="profile-info-value">{{ cedula_pendiente.cedula }}</span>
+            </div>
+            <div class="profile-info-row">
+              <span class="profile-info-label">Nombre</span>
+              <span class="profile-info-value">{{ cedula_pendiente.nombre }} {{ cedula_pendiente.apellido }}</span>
+            </div>
+            <div class="profile-info-row">
+              <span class="profile-info-label">Cargo</span>
+              <span class="profile-info-value">{{ cedula_pendiente.cargo|default:"—" }}</span>
+            </div>
+            <div class="profile-info-row">
+              <span class="profile-info-label">Departamento</span>
+              <span class="profile-info-value">{{ cedula_pendiente.departamento|default:"—" }}</span>
+            </div>
+          </div>
+          <div class="profile-form-actions" style="gap:.75rem;">
+            <form method="post" style="display:inline;">
+              {% csrf_token %}
+              <input type="hidden" name="accion" value="confirmar_cedula">
+              <button type="submit" class="btn btn--primary">
+                <i class="fa-solid fa-check"></i> Confirmar y guardar
+              </button>
+            </form>
+            <form method="post" style="display:inline;">
+              {% csrf_token %}
+              <input type="hidden" name="accion" value="cancelar_cedula">
+              <button type="submit" class="btn btn--ghost">Corregir</button>
+            </form>
+          </div>
+        </div>
+        {% else %}
+        <form method="post" class="profile-form">
+          {% csrf_token %}
+          <input type="hidden" name="accion" value="buscar_cedula">
+          <div class="profile-form-group">
+            <label class="form-label">Cédula de identidad</label>
+            {{ cedula_form.cedula_identidad }}
+            {% if cedula_form.cedula_identidad.help_text %}
+            <p class="profile-foto-hint">{{ cedula_form.cedula_identidad.help_text }}</p>
+            {% endif %}
+            {% if cedula_form.cedula_identidad.errors %}
+            <p class="profile-foto-error" style="display:block;">{{ cedula_form.cedula_identidad.errors.0 }}</p>
+            {% endif %}
+          </div>
+          {% if not cedula_bloqueada %}
+          <div class="profile-form-actions">
+            <button type="submit" class="btn btn--primary">
+              <i class="fa-solid fa-magnifying-glass"></i> Validar cédula
+            </button>
+          </div>
+          {% endif %}
+        </form>
         {% endif %}
       </div>
 
