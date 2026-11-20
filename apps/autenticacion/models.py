@@ -72,6 +72,27 @@ class PerfilUsuario(models.Model):
         default='',
         verbose_name='Número de Empleado'
     )
+    cargo = models.CharField(
+        max_length=150,
+        blank=True,
+        default='',
+        verbose_name='Cargo'
+    )
+    departamento_rrhh = models.CharField(
+        max_length=150,
+        blank=True,
+        default='',
+        verbose_name='Departamento RRHH'
+    )
+    cedula_verificada_rrhh = models.BooleanField(
+        default=False,
+        verbose_name='Cédula verificada en RRHH'
+    )
+    ultimo_sync_rrhh = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name='Última sincronización RRHH'
+    )
     ultimo_sync = models.DateTimeField(
         auto_now=True,
         verbose_name='Última sincronización'

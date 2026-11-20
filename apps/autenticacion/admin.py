@@ -4,8 +4,14 @@ from .models import PerfilUsuario, Notificacion
 
 @admin.register(PerfilUsuario)
 class PerfilUsuarioAdmin(admin.ModelAdmin):
-    list_display = ['usuario', 'rol', 'departamento', 'grupo_ldap', 'cedula_identidad', 'numero_empleado']
-    list_filter = ['rol', 'grupo_ldap', 'departamento']
+    list_display = [
+        'usuario', 'rol', 'departamento', 'grupo_ldap',
+        'cedula_identidad', 'numero_empleado', 'cargo',
+        'departamento_rrhh', 'cedula_verificada_rrhh', 'ultimo_sync_rrhh',
+    ]
+    list_filter = [
+        'rol', 'grupo_ldap', 'departamento', 'cedula_verificada_rrhh',
+    ]
     search_fields = ['usuario__username', 'usuario__first_name', 'usuario__last_name', 'cedula_identidad']
     raw_id_fields = ['usuario', 'departamento']
 
