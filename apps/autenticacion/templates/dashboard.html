@@ -184,6 +184,21 @@
   <p>Vista general del sistema de gestión documental</p>
 </div>
 
+{% if sin_cedula %}
+<div class="stat-card" style="border-left: 4px solid var(--color-warning); margin-bottom: 1.5rem; align-items: center;">
+  <div class="stat-icon stat-icon--warning"><i class="fa-solid fa-id-card"></i></div>
+  <div class="stat-info">
+    <strong>Falta tu cédula de identidad.</strong>
+    <p style="margin: .25rem 0 .5rem; font-size: .875rem; color: var(--color-muted);">
+      Regístrala para vincular tu cargo y nombres reales desde RRHH.
+    </p>
+    <a href="{% url 'autenticacion:perfil' %}" class="btn btn--primary btn--sm">
+      <i class="fa-solid fa-id-card"></i> Completar mi perfil
+    </a>
+  </div>
+</div>
+{% endif %}
+
 <div class="stats-grid">
   <div class="stat-card">
     <div class="stat-icon stat-icon--primary"><i class="fa-solid fa-file-lines"></i></div>

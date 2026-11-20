@@ -277,6 +277,7 @@ def dashboard_view(request):
         'ultimos_documentos': ultimos_documentos,
         'ultimas_versiones': ultimas_versiones,
         'logs_recientes': logs_recientes,
+        'sin_cedula': not (perfil.cedula_identidad or '').strip(),
     }
 
     return render(request, 'dashboard.html', context)
@@ -555,6 +556,10 @@ def perfil_usuario(request):
     ).count()
 
     from documentos.services.firmas import obtener_credencial
+    from documentos.models import _cargo_usuario
+
+    cargo_rrhh = (perfil.cargo or '').strip()
+    cargo_mostrado = cargo_rrhh or _cargo_usuario(request.user)
 
     return render(request, 'autenticacion/perfil.html', {
         'form': form,
@@ -562,6 +567,8 @@ def perfil_usuario(request):
         'cedula_pendiente': cedula_pendiente,
         'cedula_bloqueada': cedula_form.fields['cedula_identidad'].disabled,
         'perfil': perfil,
+        'cargo_mostrado': cargo_mostrado,
+        'cargo_es_rrhh': bool(cargo_rrhh),
         'credencial': obtener_credencial(request.user),
         'total_documentos': total_docs,
         'solicitudes_descarga': solicitudes_descarga,

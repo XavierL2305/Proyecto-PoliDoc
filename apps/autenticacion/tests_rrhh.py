@@ -468,3 +468,40 @@ class ComandoRRHHCedulaTest(BaseDocumentosTest):
             call_command('sincronizar_cargos_rrhh', stdout=salida)
         self.assertIn('no configurado', salida.getvalue().lower())
         conectar.assert_not_called()
+
+
+class AvisosCedulaYCargoTest(BaseDocumentosTest):
+    """Aviso de cédula en el dashboard y cargo visible en el perfil."""
+
+    def setUp(self):
+        super().setUp()
+        self.client = Client()
+        self.client.login(username='trab01', password='testpass123')
+
+    def test_dashboard_avisa_sin_cedula(self):
+        resp = self.client.get(reverse('autenticacion:dashboard'))
+        self.assertContains(resp, 'Falta tu cédula de identidad')
+
+    def test_dashboard_no_avisa_con_cedula(self):
+        perfil = PerfilUsuario.objects.get(usuario__username='trab01')
+        PerfilUsuario.objects.filter(pk=perfil.pk).update(
+            cedula_identidad='31097865',
+        )
+        resp = self.client.get(reverse('autenticacion:dashboard'))
+        self.assertNotContains(resp, 'Falta tu cédula de identidad')
+
+    def test_perfil_muestra_cargo_fallback(self):
+        resp = self.client.get(reverse('autenticacion:perfil'))
+        self.assertContains(
+            resp, 'Trabajador — TI - Tecnología de la Información',
+        )
+
+    def test_perfil_muestra_cargo_rrhh(self):
+        perfil = PerfilUsuario.objects.get(usuario__username='trab01')
+        PerfilUsuario.objects.filter(pk=perfil.pk).update(
+            cargo='Analista de Soporte',
+            departamento_rrhh='Talento Humano',
+        )
+        resp = self.client.get(reverse('autenticacion:perfil'))
+        self.assertContains(resp, 'Analista de Soporte')
+        self.assertContains(resp, 'Talento Humano')

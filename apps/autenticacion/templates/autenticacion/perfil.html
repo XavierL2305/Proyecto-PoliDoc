@@ -64,12 +64,15 @@
               {% endif %}
             </span>
           </div>
-          {% if perfil.cargo %}
           <div class="profile-info-row">
             <span class="profile-info-label">Cargo</span>
-            <span class="profile-info-value">{{ perfil.cargo }}</span>
+            <span class="profile-info-value">
+              {{ cargo_mostrado|default:"—" }}
+              {% if cargo_es_rrhh %}
+              <span class="badge" style="font-size:.65rem;margin-left:.35rem;background:var(--color-info-light);color:var(--color-info);">RRHH</span>
+              {% endif %}
+            </span>
           </div>
-          {% endif %}
           {% if perfil.departamento_rrhh %}
           <div class="profile-info-row">
             <span class="profile-info-label">Departamento (RRHH)</span>
