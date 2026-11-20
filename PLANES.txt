@@ -207,6 +207,21 @@ APARTADOS POR ÁREA — FORMATO (FASE 1)
 [x] Tests: 7 en tests_configuracion_formatos (defaults, form, comando crea/no
     pisa, backfill, mapas sincronizados, prefijo) + docs CONTEXT §36.3.
 
+INTEGRACIÓN RRHH — CÉDULA/CARGO/NOMBRES (FASE 1)
+[x] pymssql + vars RRHH_* por .env; EXIGIR_CEDULA_PERFIL=False (opt-in).
+[x] PerfilUsuario: cargo, departamento_rrhh, cedula_verificada_rrhh,
+    ultimo_sync_rrhh (migración 0013).
+[x] Servicio rrhh_sync: lookup por cédula (varchar, a.activo=1), sync
+    masivo con bulk_update, nombres reales y resumen de conteos.
+[x] Mi Perfil: verificación en 2 pasos (sesión, revalidación, tarjeta),
+    bloqueo de cédula verificada y corrección solo por admin.
+[x] Middleware de cédula (default off; exime APIs/OPTIONS/admin/superuser).
+[x] Comando (dry-run por defecto) + tarea Celery diaria 23:59 VET.
+[x] LDAPBackend respeta los nombres verificados por RRHH.
+[x] _cargo_usuario usa el cargo de RRHH.
+[x] Auditoría ISO (cambio de cédula y consultas, con PII enmascarada).
+[x] tests_rrhh.py (30) + CONTEXT §37. Nunca conecta a RRHH/AD reales.
+
 BACKLOG
 [ ] FOR-007: restaurar versión.
 [x] FOR-009: versionado de minutas.

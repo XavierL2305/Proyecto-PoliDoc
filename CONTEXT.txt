@@ -3840,3 +3840,85 @@ referencias `§5.1.x` de esta sección corresponden a ese PDF.
         "OBSOLETO" / "COPIA NO CONTROLADA" (§5.1.16.4) en PDFs.
       * Sincronizar `SM` en `Departamento.CODIGOS_DEPTO` y confirmar `SMr`.
       * (Opcional) Matriz de aprobadores Tabla N° 1 por `TipoDocumento`.
+
+
+37. INTEGRACIÓN RRHH (CÉDULA, CARGO Y NOMBRES REALES)
+===================================================================
+
+  37.1 FUENTE Y ALCANCE
+    - Origen: SQL Server de RRHH (base `InterfazRRHH`, vía `pymssql`):
+      `tbl_emp_temporal` (empleados) + `cargos` + `departamentos`.
+    - Se sincroniza por **cédula** (varchar, solo dígitos) contra
+      `PerfilUsuario.cedula_identidad`; nunca por nombre.
+    - Solo empleados activos: `WHERE a.activo = 1` (lookup y sync masivo).
+    - La cédula se guarda en forma canónica (dígitos, sin ceros iniciales);
+      la comparación SQL es `a.cedula = %s` (parámetro string, sin REPLACE,
+      para aprovechar el índice).
+    - Configuración por `.env` (sin credenciales en el repo):
+      `RRHH_SQLSERVER_HOST/PORT/DB/USER/PASSWORD/TIMEOUT`.
+      Si `HOST` o `USER` están vacíos, la integración queda **desactivada** y
+      no se abre ninguna conexión.
+
+  37.2 MODELO (migración 0013 de autenticacion)
+    - `PerfilUsuario.cargo` (150), `departamento_rrhh` (150),
+      `cedula_verificada_rrhh` (bool, False) y `ultimo_sync_rrhh` (null).
+    - No se toca `rol`, `grupo_ldap` ni la FK `departamento` (los permisos de
+      POLIDOC siguen dependiendo de ellos). `CargoRRHH` queda para Fase 2.
+
+  37.3 FLUJO DE AUTOSERVICIO (Mi Perfil)
+    - Paso 1 (`accion=buscar_cedula`): `CedulaForm` valida/normaliza y busca
+      en RRHH. Si existe, guarda el resultado en
+      `request.session['cedula_pendiente_rrhh']` y muestra una tarjeta de
+      confirmación (cédula, nombre, cargo, departamento) con aviso si los
+      nombres no coinciden con la cuenta.
+    - Paso 2 (`accion=confirmar_cedula`): re-lee la sesión (no confía en
+      inputs ocultos), re-valida unicidad y guarda cédula/cargo/departamento,
+      `cedula_verificada_rrhh=True`, `ultimo_sync_rrhh` y los nombres de RRHH
+      en `User.first_name/last_name`.
+    - Si RRHH no está configurado: guarda la cédula directo (sin verificar).
+      Si RRHH está caído (`RRHHConexionError`): guarda la cédula con
+      `cedula_verificada_rrhh=False` y avisa; el sync nocturno la verifica.
+    - Con la cédula verificada el campo queda **solo lectura**; solo un
+      administrador puede corregirla/limpiarla (Django Admin). Al cambiarla se
+      resetean `cedula_verificada_rrhh`, `cargo`, `departamento_rrhh` y
+      `ultimo_sync_rrhh`.
+
+  37.4 NOMBRES Y CARGOS
+    - El sync nocturno y la confirmación actualizan `first_name/last_name`
+      desde RRHH.
+    - `LDAPBackend` **no** pisa los nombres si `cedula_verificada_rrhh=True`
+      (AD los sigue poblando hasta que RRHH verifique).
+    - `_cargo_usuario` usa `perfil.cargo`; si está vacío mantiene el fallback
+      `'Rol — Departamento'` (FOR-004/006, firmables, etc.).
+
+  37.5 SINCRONIZACIÓN DIARIA
+    - `CedulaObligatoriaMiddleware` + `EXIGIR_CEDULA_PERFIL` (default
+      `False`; activar por `.env`). Exime `/perfil/`, `/logout/`, `/login/`,
+      `/admin/`, `/static/`, `/media/`, cualquier ruta con `/api/`
+      (incluye `/documentos/api/...`), `OPTIONS`, superusuarios y
+      administradores de POLIDOC.
+    - Tarea Celery `autenticacion.tasks.sincronizar_cargos_rrhh` (beat
+      03:59 UTC = 23:59 VET; `TIME_ZONE` es UTC), no-op si RRHH no está
+      configurado.
+    - Comando `manage.py sincronizar_cargos_rrhh` (**dry-run por defecto**;
+      `--apply` escribe). Un solo SELECT masivo, diccionario por cédula y
+      `bulk_update` (sin señales) de perfiles y usuarios.
+    - Resumen: `total_rrhh`, `perfiles_actualizados`, `nombres_actualizados`,
+      `sin_match`, `sin_cedula`, `errores`.
+
+  37.6 AUDITORÍA (ISO 15489)
+    - Alta/confirmación por el usuario y corrección por el admin registran
+      `registrar_log_iso` (`accion_categoria='usuario'`, `recurso_tipo=
+      'usuario'`) con `estado_anterior/estado_posterior` **enmascarados**
+      (`***7865`) y `detalles.origen` = `autoservicio` | `admin`.
+    - Cada consulta de cédula en RRHH se audita como `accion_tipo='consulta'`
+      (trazabilidad del acceso a PII), con `encontrado` sí/no.
+
+  37.7 TESTS
+    - `apps/autenticacion/tests_rrhh.py` (30): normalización/rango,
+      parámetro string y `activo = 1`, lookup (encontrado/no/en error),
+      sync (dry-run, sin match, sin cédula, flags y nombres), flujo 2 pasos
+      (confirmar, duplicada, caída, sesión expirada, bloqueo tras verificar),
+      middleware (redirige, APIs/OPTIONS/admin/superuser exentos), auditoría
+      admin, guard de nombres en LDAP y `_cargo_usuario`.
+    - Nunca se conecta a SQL Server ni a AD reales (todo mockeado).

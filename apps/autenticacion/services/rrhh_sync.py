@@ -204,7 +204,6 @@ def sincronizar_todo_rrhh(dry_run=False):
     ahora = timezone.now()
     perfiles = list(
         PerfilUsuario.objects
-        .exclude(cedula_identidad='')
         .select_related('usuario')
     )
     cambios_perfil = []
@@ -219,9 +218,10 @@ def sincronizar_todo_rrhh(dry_run=False):
             resumen['sin_match'] += 1
             continue
 
-        canonica = normalizar_cedula(perfil.cedula_identidad)
-        if perfil.cedula_identidad != canonica:
-            perfil.cedula_identidad = canonica
+        if perfil.cedula_identidad != clave:
+            # Se guarda la forma canónica (dígitos, sin ceros iniciales) para
+            # que coincida con RRHH en futuras consultas.
+            perfil.cedula_identidad = clave
         perfil.cargo = datos['cargo']
         perfil.departamento_rrhh = datos['departamento']
         perfil.cedula_verificada_rrhh = True
