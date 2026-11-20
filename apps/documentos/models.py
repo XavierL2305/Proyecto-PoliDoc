@@ -1800,10 +1800,13 @@ class SolicitudAprobacionDocumento(models.Model):
             invalidar_planillas_documento(doc)
 
 def _cargo_usuario(usuario):
-    """Genera texto de cargo: 'Rol — Departamento'."""
+    """Cargo del usuario: el de RRHH si existe; si no, 'Rol — Departamento'."""
     perfil = getattr(usuario, 'perfil', None)
     if not perfil:
         return ''
+    cargo = (perfil.cargo or '').strip()
+    if cargo:
+        return cargo
     rol = perfil.get_rol_display() or perfil.rol
     depto = str(perfil.departamento) if perfil.departamento else ''
     return f"{rol} — {depto}" if depto else rol

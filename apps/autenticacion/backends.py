@@ -119,19 +119,30 @@ class LDAPBackend:
                 }
             )
 
-            if not created:
-                user.first_name = first_name
-                user.last_name = last_name
-                if email:
-                    user.email = email
-                user.save()
-
-            # 7. Crear o actualizar perfil
+            # 7. Crear o actualizar perfil (antes de decidir los nombres)
             # Buscar departamento con matching normalizado (tildes + case)
             dept_instance = self._match_departamento(departamento)
 
             perfil, perfil_created = PerfilUsuario.objects.get_or_create(usuario=user)
 
+            if not created:
+                # Si la cédula ya se verificó contra RRHH, AD no debe pisar el
+                # nombre real completo (solo se actualiza hasta la verificación).
+                campos = []
+                if not perfil.cedula_verificada_rrhh:
+                    if user.first_name != first_name:
+                        user.first_name = first_name
+                        campos.append('first_name')
+                    if user.last_name != last_name:
+                        user.last_name = last_name
+                        campos.append('last_name')
+                if email and user.email != email:
+                    user.email = email
+                    campos.append('email')
+                if campos:
+                    user.save(update_fields=campos)
+
+            # 8. Actualizar perfil con los datos de AD
             # Solo sobrescribir departamento si es nuevo O si AD trae uno válido
             if perfil_created or dept_instance:
                 perfil.departamento = dept_instance
