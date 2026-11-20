@@ -3688,3 +3688,143 @@ alternativas en docs/adr/0001-modelo-documento-formato-registro.md.
     - Relajar Documento.codigo.
     - Regenerar registros al cambiar un formato.
     - Pedir PIN en aprobaciones de plantilla.
+
+36. PROCEDIMIENTO OFICIAL SGC-PRG-001 Y APARTADOS POR ÁREA (BRECHAS Y PLAN)
+===================================================================
+
+Fuente normativa: documento oficial **SGC-PRG-001** ("Procedimiento para el
+Control de la Información Documentada", ISO 9001:2015 §7.5.2 / §7.5.3,
+Edición 1, Versión 1, vigencia 11/08/2026; elaborado por Anna Altuve,
+revisado y aprobado por Sheyla Cárdenas — Gerencia General).
+Nota: el PDF del procedimiento **no** está versionado en el repo; las
+referencias `§5.1.x` de esta sección corresponden a ese PDF.
+
+  36.1 REGLAS CLAVE DEL SGC-PRG-001
+    - Codificación (§5.1.9.1–§5.1.9.2): `WWW-YYY-ZZZ` (Departamento/Área +
+      Tipo de documento + correlativo desde `001`) + título único.
+      * Departamentos/áreas: el PDF lista **39 filas** pero **38 códigos
+        distintos** (SMr aparece dos veces: Servicios Médicos Residentes y
+        Unidad de Recién Nacidos); en el código,
+        `Departamento.CODIGOS_DEPTO` tiene **38** entradas, **sin** `SM`
+        genérico y **sin** código propio para Recién Nacidos (SMr está como
+        Servicios Médicos Residentes).
+        La lista del PDF: SGC, GG, AI, CJ, AF, CYT, ACC, AD, CO, FAC, TH, SG,
+        LA, CA, AL, COM, TI, CM, SM, SMr [nota: duplicado en el PDF entre
+        Servicios Médicos Residentes y Unidad de Recién Nacidos; confirmar
+        con SGC], SMe, SMh, SMg, SMq, SMu, SMt, LAB, SIM, SFR, SOD, SFh,
+        SNd, MIR, SSS, CHS, PT, PTH, FP, FS.
+      * 15 tipos de información documentada: MSC, POL, OBJ, MAP, PSS, DPR,
+        PRG, PRE, IT, FOR, PLC, DDC, ORG, NOR, IDL (coinciden con los 15 de
+        `maps.TIPOS_INFO`). `PRB` ("Tipo De Prueba", `key='prueba'`) **no**
+        es tipo documental del procedimiento: no está en `TIPOS_INFO` ni en
+        la lista §5.1.9; es un tipo auxiliar (la migración 0023 es la que
+        consolida `key='prueba'`, renombrando `key=''`).
+      * Excepciones controladas:
+        - Internos sin código (§5.1.9.3): título único + referencia en
+          SGC-FOR-006 (cubierto por `DocumentoSinCodigo` ámbito `sgc`).
+        - Externos (§5.1.9.4, §5.1.5): respetan código del ente emisor + pie
+          de página `Ver X / mes-año` + referencia en SGC-FOR-006.
+        - Registros (§5.1.9.5): identificación general = código del formulario
+          que lo generó (p. ej. `PTH-FOR-001`, `TH-FOR-XXX`); identificación
+          única = fecha / correlativo / contexto (cubierto por `RegistroFormato`).
+        - Descripciones de cargo por empresa (§5.1.8.3 Nota 1): `TH-DDC-001`
+          (PTCA), `TH-DDC-002` (PTH), `TH-DDC-003` (Farmacia), `TH-DDC-004`
+          (Fuente de Soda).
+    - Edición y Versión (§5.1.3.1, §5.1.9.7.4, §5.1.15):
+      * Edición cambia cada 5 años o ante cambio en la norma ISO.
+      * Versión cambia ante cualquier modificación de contenido o fondo.
+      * En SGC-FOR-003 (Tabla de Cambios) se anota la versión ANTERIOR que se
+        modifica y se señala la sección modificada con estrella (★, §5.1.15.3).
+    - Matriz de Elaboración / Revisión / Aprobación (Tabla N° 1, pp. 17–18):
+      * MSC / MAP: Persona asignada / GG → Revisado GG → Aprobado Presidente JD.
+      * POL / OBJ: GG → Revisado y Aprobado Presidente JD.
+      * DPR / PRG / NOR: Líder/Persona asignada → Revisado y Aprobado GG.
+      * PRE / IT / PLC: Persona asignada → Revisado Responsable Depto → Aprobado GG.
+      * DDC: Gerente TH → Revisado Responsable Depto → Aprobado GG.
+      * ORG: Gerente TH → Revisado GG → Aprobado Presidente JD.
+      * FOR / IDL / Registros: siguen la autoridad del procedimiento/documento
+        asociado.
+    - Distribución, Marcas y Obsolescencia (§5.1.10–§5.1.16, Tabla N° 2):
+      * Pie de página obligatorio en medios digitales (§5.1.13.2):
+        "TODA VERSIÓN IMPRESA O FUERA DEL SITIO ESTABLECIDO PARA SU
+        ALMACENAMIENTO SE CONSIDERA COPIA NO CONTROLADA".
+      * Físico interno: sello rojo "COPIA CONTROLADA"; terceras partes (físico
+        o digital): sello negro "COPIA NO CONTROLADA".
+      * Acceso por defecto (§5.1.13.3): solo lectura para el personal, salvo
+        la persona asignada para modificar.
+      * Obsoletos conservados (§5.1.16.4): leyenda "OBSOLETO" / "NO VALIDO" y
+        segregación en carpeta "OBSOLETO".
+      * Registros del SGC-PRG-001 (§6): SGC-FOR-001 (permanente), SGC-FOR-002
+        (permanente), SGC-FOR-003 (hasta cambio de edición), SGC-FOR-006
+        (permanente); retención inactiva = 0.
+
+  36.2 BRECHAS RESPECTO AL ESTADO ACTUAL DE POLIDOC
+    - `Formato` hoy es una lista plana global sin `departamento` ni política
+      de visibilidad general: todo lo automatizado es `SGC-FOR-*`, pero la
+      clínica también maneja formularios `TH-FOR-*` (p. ej. permisos de
+      trabajadores), `TI-FOR-*`, `CYT-FOR-*`, `CA/COM-FOR-*`, etc.
+    - Permisos de `Formato`: hoy solo hay `AccesoFormato` (por persona, para
+      vistas exclusivas 006/007/009) o `permite_registros=True` sin distinguir
+      formatos de uso general (todos los trabajadores), uso departamental
+      (solo un área), solo jefaturas, o restringidos por persona.
+    - `RegistroFormato.contexto_tipo` es un `CharField` libre (máx. 30) que
+      **ya** se usa con `documento`, `minuta`, `programa_revision` y
+      `sistema` (`registros.py:27` `CONTEXTOS_VISTA_EXCLUSIVA`): no asume por
+      diseño un DPR. La brecha real de los formularios operativos/autoservicio
+      (p. ej. solicitud de permiso en TH, que no cuelga de un DPR sino del
+      trabajador/departamento y requiere aprobación de su jefe directo y/o
+      del departamento dueño del formato) está en el **enrutado de
+      aprobación**: `enviar_a_revision` asigna el aprobador con
+      `documento.departamento.jefe` (`registros.py:113-117`) y `_auditar`
+      (`registros.py:80`) depende de `documento_de_contexto(registro)`.
+    - `Formato.procedimiento` es un `CharField` de texto libre
+      (`models.py:2077`), **no** una FK a `Documento`: impide aplicar
+      automáticamente la Matriz de Elaboración / Revisión / Aprobación
+      (Tabla N° 1), que se rige por el `TipoDocumento` del documento
+      asociado.
+    - Falta estampar en PDFs la leyenda de copia no controlada (§5.1.13.2) y
+      marca de agua "OBSOLETO" / "COPIA NO CONTROLADA" (§5.1.16.4).
+    - `Departamento.CODIGOS_DEPTO` tiene 38 códigos; falta `SM` genérico y
+      confirmar con SGC la duplicidad de `SMr`.
+
+  36.3 ARQUITECTURA PROPUESTA: APARTADOS POR ÁREA Y VISIBILIDAD (PLAN)
+    - Fase 1 — Modelo en `Formato` (1 migración retrocompatible):
+      * `departamento` (FK a `Departamento`, null/blank; backfill por prefijo
+        del código: `SGC-FOR-*` → SGC, `TH-FOR-*` → TH, `TI-FOR-*` → TI…).
+      * `visibilidad`: `todos` (autoservicio para todo trabajador, p. ej.
+        permisos TH), `departamento` (miembros del depto dueño + admin),
+        `jefaturas` (jefes/delegados/admin, p. ej. FOR-010/017 — *propuesto*)
+        y `restringido` (lista blanca `AccesoFormato`, p. ej. FOR-006/007/009).
+      * `requiere_contexto_documento` (bool): `True` para registros ligados a
+        un DPR/documento; `False` para formularios operativos/autoservicio.
+      * Defaults **fail-closed**: `visibilidad='restringido'` y
+        `requiere_contexto_documento=True` (formatos nuevos sin clasificar
+        quedan restringidos hasta que un admin los configure).
+      * Exponer en `FormatoForm` / Constructor de Formatos.
+    - Fase 2 — Permisos centralizados (`acceso_formato.py` + `registros.py`):
+      * `formatos_visibles(usuario)` y `puede_usar_formato(usuario, formato)`.
+      * Visibilidad de `RegistroFormato` operativos (`contexto_tipo='operativo'`):
+        - Trabajador: solo sus propios registros (`responsable=user`).
+        - Jefe del solicitante: los suyos + los de su personal a cargo.
+        - Jefe del departamento dueño del formato (ej. TH): todos los del
+          formato de su departamento.
+        - `AccesoFormato` / Admin: según concesión o acceso total.
+        - Nota: `contexto_tipo` es un `CharField` libre (máx. 30), así que
+          `operativo` **no requiere migración**; falta decidir si entra o no
+          en `CONTEXTOS_VISTA_EXCLUSIVA` (`registros.py:27`).
+    - Fase 3 — UI por Apartados y Sidebar limpio:
+      * Sidebar en 3 bloques: Documentación ISO / SGC (oculto si sin acceso) /
+        Formularios por Área (un solo acceso al hub de apartados).
+      * Hub agrupado por `Departamento` (tarjetas/pestañas solo de apartados
+        con >= 1 formato visible para el usuario), con "Mis solicitudes" y
+        bandeja "Recibidos / Por gestionar" para el jefe del área dueña.
+      * Alta de `RegistroFormato` sin `documento_contexto` cuando
+        `requiere_contexto_documento=False`, enrutando aprobación al jefe
+        **efectivo** del departamento del perfil del solicitante (natural o
+        delegado vigente: `jefatura.py:101/118`) y/o al jefe del departamento
+        dueño del formato.
+    - Fase 4 — Adecuaciones SGC-PRG-001 (siguiente ciclo):
+      * Leyenda de pie de página digital (§5.1.13.2) y marcas de agua
+        "OBSOLETO" / "COPIA NO CONTROLADA" (§5.1.16.4) en PDFs.
+      * Sincronizar `SM` en `Departamento.CODIGOS_DEPTO` y confirmar `SMr`.
+      * (Opcional) Matriz de aprobadores Tabla N° 1 por `TipoDocumento`.
