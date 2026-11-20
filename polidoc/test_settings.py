@@ -27,6 +27,13 @@ PDF_QA_ADAPTATIVO = False
 # conexión a RabbitMQ.
 CELERY_TASK_ALWAYS_EAGER = True
 
+# Integración RRHH desactivada en tests: nunca se abre una conexión a SQL
+# Server real. Los tests que la necesitan la activan con override_settings y
+# mockean `pymssql.connect`.
+RRHH_SQLSERVER_HOST = ''
+# Sin enforcement de cédula por defecto (los tests lo activan si lo prueban).
+EXIGIR_CEDULA_PERFIL = False
+
 # Buffer de auditoría a un directorio temporal, no dentro del repo.
 import tempfile as _tempfile  # noqa: E402
 AUDIT_BUFFER_DIR = _tempfile.mkdtemp(prefix='polidoc_audit_buffer_')

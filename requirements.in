@@ -25,3 +25,4 @@ csscompressor
 whitenoise>=6.6
 brotli
 Pillow==13.0.0
+pymssql

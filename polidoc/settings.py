@@ -289,6 +289,24 @@ WHATSAPP_API_URL = os.getenv('WHATSAPP_API_URL', '')
 WHATSAPP_TOKEN = os.getenv('WHATSAPP_TOKEN', '')
 WHATSAPP_REMITENTE = os.getenv('WHATSAPP_REMITENTE', '')
 
+# =============================================================================
+# INTEGRACIÓN RRHH (SQL Server): cédula, cargo y nombres reales
+# =============================================================================
+# Vacío en HOST o USER = integración desactivada: no se abre ninguna conexión.
+# Nunca incrustar IPs ni credenciales aquí: todo por .env.
+RRHH_SQLSERVER_HOST = os.getenv('RRHH_SQLSERVER_HOST', '').strip()
+RRHH_SQLSERVER_PORT = int(os.getenv('RRHH_SQLSERVER_PORT', '1433'))
+RRHH_SQLSERVER_DB = os.getenv('RRHH_SQLSERVER_DB', 'InterfazRRHH')
+RRHH_SQLSERVER_USER = os.getenv('RRHH_SQLSERVER_USER', '')
+RRHH_SQLSERVER_PASSWORD = os.getenv('RRHH_SQLSERVER_PASSWORD', '')
+RRHH_SQLSERVER_TIMEOUT = int(os.getenv('RRHH_SQLSERVER_TIMEOUT', '5'))
+
+# Exigir cédula en el perfil para navegar. Default OFF: activar por .env una
+# vez validado el sync de RRHH en producción (EXIGIR_CEDULA_PERFIL=True).
+EXIGIR_CEDULA_PERFIL = os.getenv(
+    'EXIGIR_CEDULA_PERFIL', 'False'
+).lower() in ('true', '1', 't')
+
 MONGO_URI = os.getenv('MONGO_URI', '')
 
 MONGO_SETTINGS = {
@@ -485,6 +503,11 @@ CELERY_BEAT_SCHEDULE = {
     'purgar-documentos-personales': {
         'task': 'documentos.tasks.purgar_documentos_personales',
         'schedule': crontab(hour=3, minute=0),  # 3:00 AM diario
+    },
+    'sincronizar-cargos-rrhh-diario': {
+        # TIME_ZONE es UTC: 03:59 UTC = 23:59 en Venezuela (UTC-4).
+        'task': 'autenticacion.tasks.sincronizar_cargos_rrhh',
+        'schedule': crontab(hour=3, minute=59),
     },
 }
 
