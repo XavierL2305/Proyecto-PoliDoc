@@ -3618,9 +3618,11 @@ alternativas en docs/adr/0001-modelo-documento-formato-registro.md.
       conversor `conversion_pdf`.
     - FOR-009 fila 20: la plantilla trae la etiqueta en `A20` **sin merge**
       y la columna A mide 12 caracteres, así que etiqueta y valor van juntos
-      en `A20` (`Responsable de la Elaboración: <valor>`) sin `wrap_text`
-      (el texto desborda hasta J20, como en el diseño oficial); se eliminó
-      el merge `B20:H20`, que dejaba la etiqueta cortada ("Responsable d…").
+      en `A20` (`Responsable de la Elaboración: <valor>`) con merge
+      `A20:H20` y `wrap_text=True`, más `_ajustar_altura_bloque` para que la
+      fila crezca; si el texto supera el tope de Excel (409 pt) va al anexo
+      `SGC-FOR-009 (Anexo)`, igual que el resto de campos. Se eliminó el
+      merge `B20:H20`, que dejaba la etiqueta cortada ("Responsable d…").
     - Tests: `tests_sgc_utils.verificar_preparacion_pdf` (copia preparada +
       descarga intacta) en los 5 módulos; `PrepararParaPdfTest` (3) y
       `PrepararParaPdfRealLibreOfficeTest` (2, LibreOffice real: 3 → 1

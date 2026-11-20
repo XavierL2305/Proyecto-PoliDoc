@@ -2,12 +2,15 @@
 import io
 import json
 import os
+import shutil
 import tempfile
+import unittest
 import uuid
 from datetime import date
 from unittest.mock import MagicMock, patch
 
 import openpyxl
+from pypdf import PdfReader
 
 from django.core.management import call_command
 from django.test import Client, override_settings
@@ -29,6 +32,7 @@ from documentos.tests_sgc_utils import (
 
 TEST_MEDIA = tempfile.mkdtemp(prefix='polidoc_media_for009_')
 PDF = b'%PDF-1.4\n%prueba\n'
+LIBREOFFICE = shutil.which('libreoffice')
 
 
 def datos_minuta(**overrides):
@@ -273,6 +277,8 @@ class ExportTest(BaseFor009Test):
         )
         self.assertIsNone(hoja['B20'].value)
         self.assertNotIn('B20:H20', {str(r) for r in hoja.merged_cells.ranges})
+        self.assertIn('A20:H20', {str(r) for r in hoja.merged_cells.ranges})
+        self.assertTrue(hoja['A20'].alignment.wrap_text)
         self.assertEqual(hoja['B22'].value, '2 horas')
         self.assertEqual(hoja['A26'].value, 'Ana Altuve')
         self.assertEqual(hoja['D26'].value, 'Gerente General')
@@ -286,6 +292,25 @@ class ExportTest(BaseFor009Test):
         self.assertIn('C13:J14', {str(r) for r in hoja.merged_cells.ranges})
         self.assertIn('B16:F16', {str(r) for r in hoja.merged_cells.ranges})
         self.assertIn('SGC-IDL-015', wb.sheetnames)
+
+    def test_responsable_muy_largo_va_a_anexo(self):
+        registro = self._crear(responsable_elaboracion='cargo ' * 2000)
+        wb = openpyxl.load_workbook(io.BytesIO(svc.generar_xlsx(registro)))
+        self.assertIn('SGC-FOR-009 (Anexo)', wb.sheetnames)
+        anexo = wb['SGC-FOR-009 (Anexo)']
+        texto = ' '.join(
+            str(celda.value or '')
+            for fila in anexo.iter_rows() for celda in fila
+        )
+        self.assertIn('Responsable de la Elaboración', texto)
+
+    @unittest.skipUnless(LIBREOFFICE, 'LibreOffice no instalado')
+    def test_pdf_de_la_minuta_cabe_en_una_pagina(self):
+        lector = PdfReader(io.BytesIO(svc.generar_pdf(self._crear())))
+        self.assertEqual(len(lector.pages), 1)
+        texto = lector.pages[0].extract_text() or ''
+        self.assertIn('Responsable de la', texto)
+        self.assertIn('Ana Altuve', texto)
 
     def test_continuacion_asistentes(self):
         asistentes = [

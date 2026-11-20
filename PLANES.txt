@@ -189,8 +189,8 @@ BLINDAJE DEL PDF DE REGISTROS SGC (FOR-003/004/006/007/009)
     sin escala) y con las hojas SGC-IDL-* ocultas, solo para el PDF.
 [x] Aplicado en generar_pdf y generar_y_guardar de los 5 servicios; el XLSX
     descargable queda intacto (instructivo visible, escala original).
-[x] FOR-009: etiqueta + valor juntos en A20 (sin merge B20:H20) para no
-    recortar "Responsable de la Elaboración".
+[x] FOR-009: etiqueta + valor juntos en A20:H20 con wrap; anexo si excede
+    (sin merge B20:H20, que recortaba "Responsable de la Elaboración").
 [x] Tests: verificar_preparacion_pdf en los 5 módulos + PrepararParaPdfTest
     (3) + PrepararParaPdfRealLibreOfficeTest (2) y smoke FOR-009 (1 página)/
     FOR-006/007 (sin IDL)/FOR-017 (2 páginas). CONTEXT §33.8.

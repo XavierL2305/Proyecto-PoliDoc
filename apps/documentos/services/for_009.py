@@ -413,25 +413,27 @@ def _escribir_campo(hoja, clave, valor):
 
 
 def _escribir_responsable(hoja, valor):
-    """Escribe etiqueta y valor juntos en la celda de la plantilla (A20).
+    """Escribe etiqueta y valor juntos en A20:H20 con ajuste de altura.
 
     La plantilla oficial trae la etiqueta en A20 **sin merge** (A20:B20) y la
     columna A mide 12 caracteres: si la etiqueta y el valor vivieran en celdas
-    separadas, la etiqueta se cortaría al imprimir. Por eso van en una sola
-    celda sin ``wrap_text``: el texto desborda hacia las columnas vacías, tal
-    como en el diseño original.
+    separadas, la etiqueta se cortaría al imprimir. Mergear ``A20:H20`` con
+    ``wrap_text`` evita además cortes si el cargo/nombre es largo o si alguna
+    celda intermedia trae espacios.
+
+    Returns:
+        bool: ``True`` si cupo en ``A20:H20``; ``False`` si debe ir al anexo.
     """
     from openpyxl.styles import Alignment
 
     texto = f'{ETIQUETAS_CAMPO["responsable"]}: {str(valor or "").strip()}'
     celda = _escribir_celda(hoja, CELDAS['responsable'], texto)
+    _merge_si_falta(hoja, 'A20:H20')
     if celda is not None:
-        celda.alignment = Alignment(horizontal='left', vertical='center')
-    if _lineas_estimadas(texto, _ancho_rango(hoja, 'A20:J20')) > 1:
-        logger.warning(
-            'El responsable de la elaboración no cabe en A20:J20 y se verá '
-            'cortado al imprimir: %s', texto,
+        celda.alignment = Alignment(
+            horizontal='left', vertical='center', wrap_text=True,
         )
+    return _ajustar_altura_bloque(hoja, 'A20:H20', texto)
 
 
 def _escribir_asistentes(hoja, filas, config):
@@ -526,9 +528,13 @@ def generar_xlsx(registro):
             ):
                 if not _escribir_campo(hoja, clave, valor):
                     desbordes.append((ETIQUETAS_CAMPO[clave], valor))
-            _escribir_responsable(
+            if not _escribir_responsable(
                 hoja, respuestas.get('responsable_elaboracion'),
-            )
+            ):
+                desbordes.append((
+                    ETIQUETAS_CAMPO['responsable'],
+                    respuestas.get('responsable_elaboracion'),
+                ))
             for clave, etiqueta in (
                 ('tema', ETIQUETAS['tema']),
                 ('conclusiones', ETIQUETAS['conclusiones']),

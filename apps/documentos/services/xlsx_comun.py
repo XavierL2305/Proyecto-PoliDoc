@@ -58,6 +58,11 @@ def preparar_para_pdf(xlsx_bytes):
     * oculta las hojas del instructivo ``SGC-IDL-*`` (LibreOffice no exporta
       hojas ocultas).
 
+    Solo debe usarse sobre libros generados con ``openpyxl`` (FOR-003/004/006/
+    007/009); **no** sobre los parcheados por XML en ``exportacion.py``
+    (FOR-005/010/017), porque ``openpyxl.load_workbook`` descarta formas
+    (``sp``) y gráficos ``chartEx``.
+
     Nunca lanza: si algo falla devuelve los bytes originales.
     """
     import openpyxl
@@ -69,7 +74,7 @@ def preparar_para_pdf(xlsx_bytes):
         for hoja in hojas:
             es_instructivo = (
                 hoja is not primera
-                and hoja.title.startswith(HOJAS_INSTRUCTIVO)
+                and hoja.title.strip().upper().startswith(HOJAS_INSTRUCTIVO)
             )
             if es_instructivo:
                 hoja.sheet_state = 'hidden'
