@@ -18,7 +18,7 @@ django-auth-ldap
 reportlab
 svglib
 lxml
-google-genai>=2.20.0
+google-genai>=3.6.1
 django-compressor>=4.4
 rjsmin
 csscompressor
