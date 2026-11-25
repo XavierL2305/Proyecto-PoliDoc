@@ -19,7 +19,7 @@ reportlab
 svglib
 lxml
 google-genai>=2.20.0
-django-compressor>=4.4
+django-compressor>=4.7.0
 rjsmin
 csscompressor
 whitenoise>=6.6
