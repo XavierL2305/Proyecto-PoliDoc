@@ -189,6 +189,20 @@ class PerfilUsuario(models.Model):
             )
         return self._delegacion_vigente
 
+    @property
+    def cargo_rrhh(self) -> str:
+        """Cargo sincronizado desde RRHH sin espacios residuales."""
+        return (self.cargo or '').strip()
+
+    @property
+    def cargo_efectivo(self) -> str:
+        """Cargo efectivo del usuario: el de RRHH si existe; si no, 'Rol — Departamento'."""
+        if self.cargo_rrhh:
+            return self.cargo_rrhh
+        rol = self.get_rol_display() or self.rol
+        depto = str(self.departamento) if self.departamento else ''
+        return f"{rol} — {depto}" if depto else rol
+
 
 class Notificacion(models.Model):
     TIPO_CHOICES = [

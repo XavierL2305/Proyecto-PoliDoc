@@ -1,0 +1,88 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Constructor de {{ diagrama_label|default:'Organigrama' }}{% if diagrama_empresa %} ({{ diagrama_empresa }}){% endif %} ({{ documento.codigo }}) - POLIDOC{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/organigrama.css' %}?v=4">
+<style>
+  .org-page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.75rem;
+  }
+  .org-page-header h1 {
+    font-size: 1.375rem;
+    font-weight: 700;
+    color: var(--color-text);
+    margin: 0;
+  }
+  .org-page-meta {
+    font-size: 0.85rem;
+    color: var(--color-muted);
+    margin: 0.2rem 0 0;
+  }
+  .org-page-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .org-empresa-tabs {
+    display: flex;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.85rem;
+  }
+</style>
+{% endblock %}
+
+{% block app_content %}
+<div class="org-page-header">
+  <div>
+    <h1>
+      <i class="fa-solid {{ diagrama_icon|default:'fa-sitemap' }}" style="color: var(--color-primary);"></i>
+      Constructor de {{ diagrama_label|default:'Organigrama' }}{% if diagrama_empresa %} · {{ diagrama_empresa }}{% endif %}
+    </h1>
+    <p class="org-page-meta">
+      <strong id="org-header-codigo">{{ documento.codigo }}</strong> ·
+      <span id="org-header-nombre">{{ documento.nombre }}</span> ·
+      Versión <strong id="org-header-version">{{ documento.version_actual }}</strong>
+    </p>
+  </div>
+  <div class="org-page-actions">
+    <a href="{% if diagrama_visor_url %}{{ diagrama_visor_url }}{% else %}{% url 'documentos:organigrama_visor' documento_id=documento.uuid %}{% endif %}" class="btn btn--ghost btn--sm">
+      <i class="fa-solid fa-eye"></i> Ver modo lectura
+    </a>
+    <a href="{% url 'documentos:detalle' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost btn--sm">
+      <i class="fa-solid fa-circle-info"></i> Ficha SGC
+    </a>
+  </div>
+</div>
+
+{% if empresa_tabs %}
+<nav class="org-empresa-tabs" aria-label="Cambiar empresa">
+  {% for tab in empresa_tabs %}
+    {% if tab.url %}
+    <a href="{{ tab.url }}" class="btn btn--sm {% if tab.activo %}btn--primary{% else %}btn--ghost{% endif %}" title="{{ tab.nombre }}">
+      {{ tab.codigo }}
+    </a>
+    {% endif %}
+  {% endfor %}
+</nav>
+{% endif %}
+
+{% include 'documentos/_organigrama_workspace.html' %}
+{% endblock %}
+
+{% block extra_js %}
+<script defer src="{% static 'js/organigrama/state.js' %}?v=4"></script>
+<script defer src="{% static 'js/organigrama/viewport.js' %}?v=4"></script>
+<script defer src="{% static 'js/organigrama/router.js' %}?v=4"></script>
+<script defer src="{% static 'js/organigrama/renderer.js' %}?v=4"></script>
+<script defer src="{% static 'js/organigrama/minimap.js' %}?v=4"></script>
+<script defer src="{% static 'js/organigrama/editor.js' %}?v=4"></script>
+<script defer src="{% static 'js/organigrama/app.js' %}?v=4"></script>
+{% endblock %}

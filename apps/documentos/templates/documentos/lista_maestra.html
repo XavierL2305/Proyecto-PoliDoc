@@ -17,6 +17,26 @@
     color: var(--color-text);
   }
   table.lm textarea { min-height: 2.2rem; resize: vertical; }
+  /* Texto largo: la celda crece en vertical al enfocarla (o al expandir la fila). */
+  table.lm textarea.lm-auto {
+    height: 2rem; min-height: 2rem; max-height: 14rem; resize: none;
+    overflow: hidden; line-height: 1.25; white-space: pre-wrap;
+  }
+  table.lm tr.lm-row--expandida { background: var(--color-bg-alt); }
+  .lm-sugerencias {
+    position: fixed; z-index: 1000; display: none; max-height: 12rem;
+    overflow-y: auto; background: var(--color-surface);
+    border: 1px solid var(--color-border); border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,.15);
+  }
+  .lm-sugerencias button {
+    display: block; width: 100%; text-align: left; border: 0;
+    background: transparent; color: var(--color-text); cursor: pointer;
+    padding: .35rem .5rem; font-size: .78rem; white-space: normal;
+  }
+  .lm-sugerencias button:hover, .lm-sugerencias button.activa {
+    background: var(--color-bg-alt);
+  }
   .lm-row-status { font-size: .68rem; color: var(--color-success); min-height: .9rem; }
   .lm-toolbar { display: flex; gap: .5rem; justify-content: space-between; flex-wrap: wrap; margin-bottom: 1rem; }
 </style>
@@ -127,15 +147,24 @@
                 {% endfor %}
               </select>
               {% elif tipo == 'combo' %}
-              <input type="text" data-col="{{ col.clave }}" list="dl-{{ col.clave }}"
-                     value="{{ valor|default:'' }}" {% if not puede_editar %}readonly{% endif %}>
-              {% else %}
+              <textarea class="lm-auto lm-combo" rows="1" data-col="{{ col.clave }}"
+                        data-lista="dl-{{ col.clave }}" autocomplete="off"
+                        title="{{ valor|default:'' }}"
+                        {% if not puede_editar %}readonly{% endif %}>{{ valor|default:'' }}</textarea>
+              {% elif col.clave == 'codigo' or col.clave == 'edicion' or col.clave == 'version' %}
               <input type="text" data-col="{{ col.clave }}" value="{{ valor|default:'' }}" {% if not puede_editar %}readonly{% endif %}>
+              {% else %}
+              <textarea class="lm-auto" rows="1" data-col="{{ col.clave }}" title="{{ valor|default:'' }}" {% if not puede_editar %}readonly{% endif %}>{{ valor|default:'' }}</textarea>
               {% endif %}
             </td>
             {% endwith %}
             {% endfor %}
             <td style="white-space:nowrap;">
+              <button type="button" class="btn btn--ghost btn--sm lm-expandir"
+                      onclick="alternarFila(this)" aria-expanded="false"
+                      title="Ver el texto completo de esta fila">
+                <i class="fa-solid fa-up-right-and-down-left-from-center" aria-hidden="true"></i>
+              </button>
               {% if puede_editar %}
               <button type="button" class="btn btn--primary btn--sm"
                       onclick="guardarFila(this)">Guardar</button>
@@ -199,6 +228,138 @@ function _csrf() {
   var el = document.querySelector('#lm-csrf input[name="csrfmiddlewaretoken"]');
   return el ? el.value : '';
 }
+
+// --- Celdas de texto largo: auto-crecimiento (B) y expandir fila (A) ---
+function _ajustarAltura(el) {
+  el.style.height = 'auto';
+  var alto = Math.min(el.scrollHeight + 2, 224);  // = max-height 14rem
+  el.style.height = alto + 'px';
+  el.style.overflowY = el.scrollHeight + 2 > 224 ? 'auto' : 'hidden';
+}
+
+function _contraer(el) {
+  var fila = el.closest('tr');
+  if (fila && fila.classList.contains('lm-row--expandida')) return;
+  el.style.height = '';
+  el.style.overflowY = 'hidden';
+  el.scrollTop = 0;
+}
+
+function alternarFila(btn) {
+  var fila = btn.closest('tr');
+  var abierta = fila.classList.toggle('lm-row--expandida');
+  btn.setAttribute('aria-expanded', abierta ? 'true' : 'false');
+  fila.querySelectorAll('textarea.lm-auto').forEach(function (el) {
+    if (abierta) { _ajustarAltura(el); } else { _contraer(el); }
+  });
+}
+
+document.querySelectorAll('textarea.lm-auto').forEach(function (el) {
+  el.addEventListener('focus', function () { _ajustarAltura(el); });
+  el.addEventListener('input', function () {
+    el.title = el.value;
+    _ajustarAltura(el);
+  });
+  el.addEventListener('blur', function () { _contraer(el); });
+  // Una sola línea lógica: Enter no inserta saltos (Shift+Enter sí).
+  el.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter' && !ev.shiftKey) ev.preventDefault();
+  });
+});
+
+// --- Sugerencias ("respuestas recientes") para las celdas combo ---
+// Sustituyen al <datalist> (que solo funciona en <input> de una línea) y
+// reutilizan sus <option>, así que no cambia el origen de los datos.
+var _panel = document.createElement('div');
+_panel.className = 'lm-sugerencias';
+_panel.setAttribute('role', 'listbox');
+document.body.appendChild(_panel);
+var _comboActivo = null;
+var _indice = -1;
+
+function _ocultarSugerencias() {
+  _panel.style.display = 'none';
+  _panel.innerHTML = '';
+  _comboActivo = null;
+  _indice = -1;
+}
+
+function _elegirSugerencia(valor) {
+  var el = _comboActivo;
+  if (!el) return;
+  el.value = valor;
+  el.dispatchEvent(new Event('input', {bubbles: true}));
+  _ocultarSugerencias();
+  el.focus();
+}
+
+function _mostrarSugerencias(el) {
+  if (el.readOnly) return;
+  var lista = document.getElementById(el.dataset.lista);
+  if (!lista) return;
+  var texto = el.value.trim().toLowerCase();
+  var opciones = Array.prototype.map.call(lista.options, function (o) {
+    return o.value;
+  });
+  // Texto vacío o ya igual a una opción: se ofrecen todas.
+  var exacto = opciones.some(function (o) { return o.toLowerCase() === texto; });
+  var visibles = (!texto || exacto) ? opciones : opciones.filter(function (o) {
+    return o.toLowerCase().indexOf(texto) !== -1;
+  });
+  if (!visibles.length) { _ocultarSugerencias(); return; }
+  _comboActivo = el;
+  _indice = -1;
+  _panel.innerHTML = '';
+  visibles.forEach(function (valor) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.setAttribute('role', 'option');
+    b.textContent = valor;
+    b.addEventListener('click', function () { _elegirSugerencia(valor); });
+    _panel.appendChild(b);
+  });
+  var r = el.getBoundingClientRect();
+  _panel.style.minWidth = Math.max(r.width, 220) + 'px';
+  _panel.style.maxWidth = Math.max(window.innerWidth - 16, 220) + 'px';
+  _panel.style.left = Math.min(r.left, Math.max(8, window.innerWidth - 236)) + 'px';
+  _panel.style.display = 'block';
+  var altoPanel = _panel.offsetHeight || 192;
+  var cabeAbajo = r.bottom + 2 + altoPanel <= window.innerHeight - 8;
+  _panel.style.top = (cabeAbajo ? (r.bottom + 2) : Math.max(8, r.top - altoPanel - 2)) + 'px';
+}
+
+function _moverIndice(delta) {
+  var items = _panel.querySelectorAll('button');
+  if (!items.length) return;
+  if (_indice >= 0) items[_indice].classList.remove('activa');
+  _indice = (_indice + delta + items.length) % items.length;
+  items[_indice].classList.add('activa');
+  items[_indice].scrollIntoView({block: 'nearest'});
+}
+
+// El panel no debe quitar el foco al textarea al pulsar una sugerencia.
+_panel.addEventListener('mousedown', function (ev) { ev.preventDefault(); });
+
+document.querySelectorAll('textarea.lm-combo').forEach(function (el) {
+  el.addEventListener('focus', function () { _mostrarSugerencias(el); });
+  el.addEventListener('input', function () { _mostrarSugerencias(el); });
+  el.addEventListener('blur', _ocultarSugerencias);
+  el.addEventListener('keydown', function (ev) {
+    if (_comboActivo !== el) return;
+    if (ev.key === 'ArrowDown') { ev.preventDefault(); _moverIndice(1); }
+    else if (ev.key === 'ArrowUp') { ev.preventDefault(); _moverIndice(-1); }
+    else if (ev.key === 'Escape') { _ocultarSugerencias(); }
+    else if (ev.key === 'Enter' && _indice >= 0) {
+      ev.preventDefault();
+      _elegirSugerencia(_panel.querySelectorAll('button')[_indice].textContent);
+    }
+  });
+});
+window.addEventListener('scroll', function (ev) {
+  if (ev.target === _panel) return;
+  _ocultarSugerencias();
+}, true);
+window.addEventListener('resize', _ocultarSugerencias);
 
 async function guardarFila(btn) {
   var tr = btn.closest('tr');

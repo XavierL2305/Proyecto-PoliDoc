@@ -1,5 +1,6 @@
 import logging
 import os
+import random
 import time
 import uuid
 from datetime import datetime
@@ -13,6 +14,16 @@ from .apartados import VISIBILIDAD_CHOICES
 from .validators import validar_archivo_acuse, validar_archivo_documento
 
 logger = logging.getLogger(__name__)
+
+
+TIPOS_UNICOS_POR_EMPRESA = (
+    'mapa_procesos',
+    'plan_calidad',
+    'objetivos',
+    'manual_calidad',
+    'programa_seguridad',
+    'politica_calidad',
+)
 
 
 #: Extensión permitida → valor de `Documento.tipo_archivo`.
@@ -294,11 +305,32 @@ class TipoDocumento(models.Model):
         default=False, verbose_name='Sin prefijo de departamento',
         help_text='El código no lleva prefijo de departamento y numera de forma global (ej. DPR-001).'
     )
+    usa_prefijo_empresa = models.BooleanField(
+        default=False, verbose_name='Usa prefijo de empresa',
+        help_text='El código lleva prefijo de empresa (PTCA, PTH, FP, FS) con secuencia independiente por empresa (ej. PTCA-DPR-001).'
+    )
+    unico_por_empresa = models.BooleanField(
+        default=False, verbose_name='Único documento vigente por empresa',
+        help_text='Solo permite un documento no obsoleto por cada empresa (PTCA, PTH, FP, FS). Requiere prefijo de empresa.',
+    )
 
     class Meta:
         verbose_name = 'Tipo de Documento'
         verbose_name_plural = 'Tipos de Documento'
         ordering = ['nombre']
+
+    def clean(self):
+        super().clean()
+        if self.usa_prefijo_empresa and self.sin_prefijo_depto:
+            raise ValidationError(
+                'No puedes activar simultáneamente "Usa prefijo de empresa" '
+                'y "Sin prefijo de departamento".'
+            )
+        if self.unico_por_empresa and not self.usa_prefijo_empresa:
+            raise ValidationError(
+                'Para activar "Único documento vigente por empresa" debes activar '
+                'también "Usa prefijo de empresa".'
+            )
 
     def __str__(self):
         return f"{self.codigo} - {self.nombre}"
@@ -346,6 +378,14 @@ class Documento(models.Model):
         ('activo', 'Activo'),
         ('obsoleto', 'Obsoleto'),
     ]
+
+    EMPRESA_CHOICES = [
+        ('PTCA', 'Policlínica Táchira, C.A.'),
+        ('PTH', 'Policlínica Táchira Hospitalización, C.A.'),
+        ('FP', 'Farmacia Policlínica, C.A.'),
+        ('FS', 'Fuente de Soda Policlínica Táchira, C.A.'),
+    ]
+    EMPRESAS_VALIDAS = {codigo for codigo, _ in EMPRESA_CHOICES}
 
     # Identificación
     tipo = models.ForeignKey(
@@ -424,6 +464,15 @@ class Documento(models.Model):
     departamento = models.ForeignKey(
         Departamento, on_delete=models.PROTECT, related_name='documentos',
         null=True, blank=True
+    )
+    empresa = models.CharField(
+        max_length=10,
+        choices=EMPRESA_CHOICES,
+        blank=True,
+        default='',
+        db_index=True,
+        verbose_name='Empresa',
+        help_text='Empresa del grupo a la que pertenece el documento (cuando el tipo usa prefijo de empresa).',
     )
 
     # Relación jerárquica flexible: cualquier documento puede apuntar a cualquier otro
@@ -507,6 +556,15 @@ class Documento(models.Model):
         help_text='Cuándo se encoló la generación; permite detectar resúmenes colgados.',
     )
 
+    # Organigrama interactivo (el JSON vive en VersionDocumento; aquí solo digest + versión de edición)
+    revision_edicion = models.PositiveIntegerField(
+        default=0, verbose_name='Revisión de edición',
+    )
+    organigrama_sha256 = models.CharField(
+        max_length=64, blank=True, default='',
+        verbose_name='SHA-256 del organigrama',
+    )
+
     # Timestamps
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_modificacion = models.DateTimeField(auto_now=True)
@@ -522,6 +580,22 @@ class Documento(models.Model):
             models.Index(fields=['departamento', 'estado'], name='doc_depto_estado_idx'),
             models.Index(fields=['estado', '-fecha_modificacion'], name='doc_estado_fmod_idx'),
         ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tipo'],
+                condition=models.Q(tipo='organigrama', es_plantilla=False) & ~models.Q(estado='obsoleto'),
+                name='uniq_organigrama_corporativo_vigente',
+            ),
+            models.UniqueConstraint(
+                fields=['tipo', 'empresa'],
+                condition=(
+                    models.Q(es_plantilla=False, tipo__in=TIPOS_UNICOS_POR_EMPRESA)
+                    & ~models.Q(estado='obsoleto')
+                    & ~models.Q(empresa='')
+                ),
+                name='uniq_documento_unico_por_empresa_vigente',
+            ),
+        ]
 
     def __str__(self):
         return f"{self.codigo} - {self.nombre}"
@@ -536,6 +610,8 @@ class Documento(models.Model):
             'version': self.version_actual,
             'estado': self.estado,
         }
+        if self.organigrama_sha256:
+            datos['organigrama_sha256'] = self.organigrama_sha256
         datos_str = json.dumps(datos, sort_keys=True, default=str)
         return hashlib.sha256(datos_str.encode()).hexdigest()
 
@@ -553,23 +629,73 @@ class Documento(models.Model):
         ).exists()
 
     @classmethod
-    def construir_codigo(cls, departamento, tipo, secuencia, es_plantilla=False):
+    def usa_prefijo_empresa(cls, tipo):
+        """True si el tipo usa prefijo de empresa (PTCA, PTH, FP, FS)."""
+        return TipoDocumento.objects.filter(
+            key=tipo, usa_prefijo_empresa=True
+        ).exists()
+
+    @classmethod
+    def es_unico_por_empresa(cls, tipo):
+        """True si el tipo admite un único documento vigente por empresa."""
+        return TipoDocumento.objects.filter(
+            key=tipo, unico_por_empresa=True
+        ).exists()
+
+    @classmethod
+    def _normalizar_empresa(cls, empresa, default=''):
+        """Normaliza y valida el código de empresa contra `EMPRESAS_VALIDAS`."""
+        emp = (empresa or default).strip().upper()
+        if emp not in cls.EMPRESAS_VALIDAS:
+            raise ValueError(
+                f"Empresa inválida: {empresa!r}. Opciones válidas: {sorted(cls.EMPRESAS_VALIDAS)}."
+            )
+        return emp
+
+    @classmethod
+    def _tipo_config(cls, tipo):
+        """Obtiene metadata de numeración de `TipoDocumento` en una sola query."""
+        return (
+            TipoDocumento.objects.filter(key=tipo)
+            .values('codigo', 'sin_prefijo_depto', 'usa_prefijo_empresa')
+            .first()
+        )
+
+    @classmethod
+    def _queryset_secuencia(cls, departamento, tipo, es_plantilla, empresa='', cfg=None):
+        """Queryset acotado a la serie y código de empresa normalizado (si aplica)."""
+        cfg = cfg if cfg is not None else cls._tipo_config(tipo)
+        qs = cls.objects.filter(tipo__key=tipo, es_plantilla=es_plantilla)
+        if cfg and cfg['usa_prefijo_empresa']:
+            emp = cls._normalizar_empresa(empresa, default='PTCA')
+            return qs.filter(codigo__startswith=f"{emp}-"), emp
+        if not (cfg and cfg['sin_prefijo_depto']) and departamento is not None:
+            qs = qs.filter(departamento=departamento)
+        return qs, ''
+
+    @classmethod
+    def construir_codigo(cls, departamento, tipo, secuencia, es_plantilla=False, empresa='', cfg=None):
         """Construye el código según el tipo.
 
         - Normal:      {DEPTO}-{TIPO}-{SEC}  (ej. TI-PRG-001)
         - Plantilla:   {DEPTO}-{TIPO}-PLT-{SEC} (ej. TI-DPR-PLT-001)
+        - Empresa:     {EMPRESA}-{TIPO}-{SEC} (ej. PTCA-DPR-001)
+        - Plantilla empresa: {EMPRESA}-{TIPO}-PLT-{SEC} (ej. PTCA-DPR-PLT-001)
         - Sin prefijo: {TIPO}-{SEC}          (ej. DPR-001)
         - Plantilla sin prefijo: {TIPO}-PLT-{SEC} (ej. DPR-PLT-001)
         """
-        tipo_obj = TipoDocumento.objects.filter(key=tipo).first()
-        tipo_codigo = tipo_obj.codigo if tipo_obj else tipo
+        cfg = cfg if cfg is not None else cls._tipo_config(tipo)
+        tipo_codigo = cfg['codigo'] if cfg else tipo
         marca = '-PLT' if es_plantilla else ''
-        if cls.es_sin_prefijo_depto(tipo):
+        if cfg and cfg['usa_prefijo_empresa']:
+            emp = cls._normalizar_empresa(empresa)
+            return f"{emp}-{tipo_codigo}{marca}-{secuencia}"
+        if cfg and cfg['sin_prefijo_depto']:
             return f"{tipo_codigo}{marca}-{secuencia}"
         return f"{departamento.codigo}-{tipo_codigo}{marca}-{secuencia}"
 
     @classmethod
-    def generar_codigo_secuencial(cls, departamento, tipo, es_plantilla=False):
+    def generar_codigo_secuencial(cls, departamento, tipo, es_plantilla=False, empresa=''):
         """Genera el siguiente código secuencial.
 
         Args:
@@ -577,15 +703,17 @@ class Documento(models.Model):
             tipo: Key del tipo de documento (ej: 'formulario', 'descripcion_procesos')
             es_plantilla: True si se genera código de plantilla; la serie es
                 separada de la de documentos normales.
+            empresa: Código de empresa (`PTCA`, `PTH`, `FP`, `FS`) cuando el tipo
+                tiene `usa_prefijo_empresa=True`.
 
-        Los tipos con `sin_prefijo_depto` numeran de forma GLOBAL (todos los
-        departamentos comparten la secuencia): DPR-001, DPR-002, ...
+        Los tipos con `usa_prefijo_empresa` numeran de forma independiente por
+        empresa (`PTCA-DPR-001`, `PTH-DPR-001`, ...). Los tipos con
+        `sin_prefijo_depto` numeran de forma GLOBAL (`DPR-001`, `DPR-002`, ...).
         """
-        sin_prefijo = cls.es_sin_prefijo_depto(tipo)
-
-        qs = cls.objects.filter(tipo__key=tipo, es_plantilla=es_plantilla)
-        if not sin_prefijo and departamento is not None:
-            qs = qs.filter(departamento=departamento)
+        cfg = cls._tipo_config(tipo)
+        qs, emp = cls._queryset_secuencia(
+            departamento, tipo, es_plantilla, empresa=empresa, cfg=cfg,
+        )
         max_codigo = qs.order_by('-codigo').values_list('codigo', flat=True).first()
 
         num = 1
@@ -596,19 +724,25 @@ class Documento(models.Model):
             except (ValueError, IndexError):
                 num = 1
 
-        return cls.construir_codigo(departamento, tipo, f"{num:03d}",
-                                    es_plantilla=es_plantilla)
+        return cls.construir_codigo(
+            departamento, tipo, f"{num:03d}",
+            es_plantilla=es_plantilla, empresa=emp, cfg=cfg,
+        )
 
     @classmethod
-    def _clave_secuencia(cls, departamento, tipo, es_plantilla):
-        depto = 'GLOBAL' if departamento is None or cls.es_sin_prefijo_depto(tipo) else departamento.pk
+    def _clave_secuencia(cls, departamento, tipo, es_plantilla, empresa='', cfg=None):
+        cfg = cfg if cfg is not None else cls._tipo_config(tipo)
+        if cfg and cfg['usa_prefijo_empresa']:
+            emp = cls._normalizar_empresa(empresa, default='PTCA')
+            return f"EMP:{emp}:{tipo}:{1 if es_plantilla else 0}"
+        depto = 'GLOBAL' if departamento is None or (cfg and cfg['sin_prefijo_depto']) else departamento.pk
         return f"{depto}:{tipo}:{1 if es_plantilla else 0}"
 
     @classmethod
-    def _max_secuencia(cls, departamento, tipo, es_plantilla):
-        qs = cls.objects.filter(tipo__key=tipo, es_plantilla=es_plantilla)
-        if not cls.es_sin_prefijo_depto(tipo) and departamento is not None:
-            qs = qs.filter(departamento=departamento)
+    def _max_secuencia(cls, departamento, tipo, es_plantilla, empresa='', cfg=None):
+        qs, _ = cls._queryset_secuencia(
+            departamento, tipo, es_plantilla, empresa=empresa, cfg=cfg,
+        )
         max_codigo = qs.order_by('-codigo').values_list('codigo', flat=True).first()
         if not max_codigo:
             return 0
@@ -618,20 +752,22 @@ class Documento(models.Model):
             return 0
 
     @classmethod
-    def reservar_codigo_secuencial(cls, departamento, tipo, es_plantilla=False):
+    def reservar_codigo_secuencial(cls, departamento, tipo, es_plantilla=False, empresa=''):
         """Reserva el siguiente código de forma atómica.
 
         La fila de ``SecuenciaCodigo`` se bloquea con ``select_for_update`` y
         se incrementa dentro de la transacción del alta. Si la transacción se
         revierte, el incremento también se revierte (sin huecos por fallos).
         """
-        clave = None
-        for intento in range(8):
+        max_intentos = 15
+        for intento in range(max_intentos):
             try:
-                # La clave consulta TipoDocumento (es_sin_prefijo_depto) y
-                # también puede chocar con el lock de SQLite bajo concurrencia:
-                # se calcula dentro del reintento.
-                clave = cls._clave_secuencia(departamento, tipo, es_plantilla)
+                # La config consulta TipoDocumento y también puede chocar con el
+                # lock de SQLite bajo concurrencia: se calcula dentro del reintento.
+                cfg = cls._tipo_config(tipo)
+                clave = cls._clave_secuencia(
+                    departamento, tipo, es_plantilla, empresa=empresa, cfg=cfg,
+                )
                 with transaction.atomic():
                     secuencia = (
                         SecuenciaCodigo.objects.select_for_update()
@@ -640,6 +776,7 @@ class Documento(models.Model):
                     if secuencia is None:
                         inicial = cls._max_secuencia(
                             departamento, tipo, es_plantilla,
+                            empresa=empresa, cfg=cfg,
                         )
                         try:
                             with transaction.atomic():
@@ -651,14 +788,15 @@ class Documento(models.Model):
                     secuencia.ultimo += 1
                     secuencia.save(update_fields=['ultimo', 'actualizado_en'])
                     numero = secuencia.ultimo
+                emp_reservada = clave.split(':', 2)[1] if clave.startswith('EMP:') else ''
                 return cls.construir_codigo(
                     departamento, tipo, f'{numero:03d}',
-                    es_plantilla=es_plantilla,
+                    es_plantilla=es_plantilla, empresa=emp_reservada, cfg=cfg,
                 )
             except OperationalError as exc:
-                if 'locked' not in str(exc).lower() or intento >= 7:
+                if 'locked' not in str(exc).lower() or intento >= max_intentos - 1:
                     raise
-                time.sleep(0.05 * (intento + 1))
+                time.sleep(0.03 * (intento + 1) + random.uniform(0.005, 0.035))
         return None
 
     def clean(self):
@@ -673,6 +811,26 @@ class Documento(models.Model):
         Los documentos existentes sin plantilla_origen no se ven afectados.
         """
         super().clean()
+        if not self.es_plantilla and self.tipo_id and self.estado != 'obsoleto':
+            if TipoDocumento.objects.filter(key=self.tipo_id, unico_por_empresa=True).exists():
+                if self.empresa not in self.EMPRESAS_VALIDAS:
+                    raise ValidationError({
+                        'empresa': 'Este tipo requiere seleccionar una empresa válida (PTCA, PTH, FP o FS).',
+                    })
+                existente = (
+                    Documento.objects
+                    .filter(tipo_id=self.tipo_id, empresa=self.empresa, es_plantilla=False)
+                    .exclude(estado='obsoleto')
+                    .exclude(pk=self.pk)
+                    .values_list('codigo', flat=True)
+                    .first()
+                )
+                if existente:
+                    raise ValidationError(
+                        f'Ya existe un documento vigente de este tipo para {self.empresa} '
+                        f'({existente}). Actualiza ese documento o desincorpóralo antes de crear otro.'
+                    )
+
         # Solo al crear: un documento ya existente puede conservar su
         # plantilla_origen aunque luego la plantilla se inhabilite.
         if not self._state.adding or not self.tipo_id:
@@ -681,11 +839,7 @@ class Documento(models.Model):
         if self.es_plantilla:
             return
         if not self.plantilla_origen_id:
-            raise ValidationError({
-                'plantilla_origen': (
-                    'Todo documento nuevo debe partir de una plantilla activa.'
-                ),
-            })
+            return
         origen = self.plantilla_origen
         if not origen.es_plantilla:
             raise ValidationError({
@@ -713,6 +867,10 @@ class Documento(models.Model):
                     kwargs['update_fields'] = list(update_fields) + ['tipo_archivo']
         if self.codigo and self.nombre:
             self.hash_integridad = self.calcular_hash()
+            update_fields = kwargs.get('update_fields')
+            if (update_fields is not None
+                    and 'hash_integridad' not in update_fields):
+                kwargs['update_fields'] = list(update_fields) + ['hash_integridad']
         super().save(*args, **kwargs)
 
     def establecer_vigencia(self, periodo):
@@ -781,6 +939,10 @@ class VersionDocumento(models.Model):
     )
     numero_version = models.CharField(max_length=20)
     archivo = models.FileField(upload_to=generar_ruta_version, blank=True, null=True, validators=[validar_archivo_documento])
+    datos_organigrama = models.JSONField(
+        null=True, blank=True,
+        verbose_name='Datos del organigrama (JSON)',
+    )
     cambios = models.TextField(blank=True, default='', verbose_name='Descripción de cambios')
     creado_por = models.ForeignKey(
         User, on_delete=models.PROTECT, related_name='versiones_creadas'
@@ -1670,7 +1832,16 @@ class SolicitudAprobacionDocumento(models.Model):
                 doc.archivo = anterior.archivo
                 doc.version_actual = anterior.numero_version
                 doc.archivo_pdf = None
-                doc.save(update_fields=['archivo', 'version_actual', 'archivo_pdf'])
+                update_fields = ['archivo', 'version_actual', 'archivo_pdf']
+                if doc.tipo_id in ('organigrama', 'mapa_procesos'):
+                    from .services.organigrama import hash_organigrama
+                    doc.organigrama_sha256 = (
+                        hash_organigrama(anterior.datos_organigrama)
+                        if anterior.datos_organigrama else ''
+                    )
+                    doc.revision_edicion = (doc.revision_edicion or 0) + 1
+                    update_fields.extend(['organigrama_sha256', 'revision_edicion'])
+                doc.save(update_fields=update_fields)
             else:
                 doc.estado = 'obsoleto'
                 doc.save(update_fields=['estado'])
@@ -1802,14 +1973,7 @@ class SolicitudAprobacionDocumento(models.Model):
 def _cargo_usuario(usuario):
     """Cargo del usuario: el de RRHH si existe; si no, 'Rol — Departamento'."""
     perfil = getattr(usuario, 'perfil', None)
-    if not perfil:
-        return ''
-    cargo = (perfil.cargo or '').strip()
-    if cargo:
-        return cargo
-    rol = perfil.get_rol_display() or perfil.rol
-    depto = str(perfil.departamento) if perfil.departamento else ''
-    return f"{rol} — {depto}" if depto else rol
+    return perfil.cargo_efectivo if perfil else ''
 
 
 def _fecha_respuesta_iso(fecha):
@@ -3381,6 +3545,11 @@ class DocumentoSinCodigo(models.Model):
         ('sgc', 'Institucional / SGC'),
         ('personal', 'Personal'),
     ]
+    ESTADO_APROBACION_CHOICES = [
+        ('pendiente', 'Pendiente de aprobación'),
+        ('aprobado', 'Aprobado'),
+        ('rechazado', 'Rechazado'),
+    ]
 
     uuid = models.UUIDField(
         default=uuid.uuid4, editable=False, unique=True, verbose_name='UUID',
@@ -3446,6 +3615,21 @@ class DocumentoSinCodigo(models.Model):
     creado_por = models.ForeignKey(
         User, on_delete=models.SET_NULL, null=True, blank=True,
         related_name='documentos_sin_codigo_creados', verbose_name='Creado por',
+    )
+    estado_aprobacion = models.CharField(
+        max_length=20, choices=ESTADO_APROBACION_CHOICES, default='aprobado',
+        verbose_name='Estado de aprobación',
+    )
+    aprobado_por = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='documentos_sin_codigo_aprobados',
+        verbose_name='Revisado / aprobado por',
+    )
+    fecha_aprobacion = models.DateTimeField(
+        null=True, blank=True, verbose_name='Fecha de revisión / aprobación',
+    )
+    comentario_revision = models.TextField(
+        blank=True, default='', verbose_name='Comentario de revisión',
     )
     creado = models.DateTimeField(auto_now_add=True)
     actualizado = models.DateTimeField(auto_now=True)
@@ -3523,12 +3707,14 @@ class AvisoPurgaPersonal(models.Model):
 
 
 class AccesoFormato(models.Model):
-    """Concesión de acceso a la vista exclusiva de un formato (registro vivo).
+    """Concesión de acceso a la vista exclusiva de un formato o diagrama (ORG/MAP).
 
     Se administra desde la sesión del administrador (por PERSONA, no por rol).
-    El **nivel** decide si la persona solo puede ver o también editar
-    (agregar/quitar filas, marcas, sincronizar, regenerar). El administrador
-    siempre tiene acceso total.
+    Para un ``Formato`` vivo, ``nivel`` decide si puede ver o editar; para un
+    ``TipoDocumento`` de diagrama interactivo (``organigrama``,
+    ``mapa_procesos``), todos los usuarios autenticados ven por defecto y esta
+    concesión habilita quién puede editar. El administrador siempre tiene acceso
+    total.
     """
 
     NIVEL_CHOICES = [
@@ -3537,8 +3723,12 @@ class AccesoFormato(models.Model):
     ]
 
     formato = models.ForeignKey(
-        Formato, on_delete=models.PROTECT, related_name='accesos_formato',
-        verbose_name='Formato',
+        Formato, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='accesos_formato', verbose_name='Formato',
+    )
+    tipo_documento = models.ForeignKey(
+        TipoDocumento, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='accesos_tipo_documento', verbose_name='Tipo de Documento',
     )
     usuario = models.ForeignKey(
         User, on_delete=models.CASCADE, related_name='accesos_formato',
@@ -3556,18 +3746,43 @@ class AccesoFormato(models.Model):
     fecha_creacion = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        verbose_name = 'Acceso a Formato'
-        verbose_name_plural = 'Accesos a Formato'
+        verbose_name = 'Acceso a Formato / Diagrama'
+        verbose_name_plural = 'Accesos a Formato / Diagrama'
         ordering = ['usuario__first_name', 'usuario__last_name', 'usuario__username']
         constraints = [
             models.UniqueConstraint(
                 fields=['formato', 'usuario'],
+                condition=models.Q(formato__isnull=False),
                 name='acceso_formato_usuario_unico',
+            ),
+            models.UniqueConstraint(
+                fields=['tipo_documento', 'usuario'],
+                condition=models.Q(tipo_documento__isnull=False),
+                name='acceso_tipo_documento_usuario_unico',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(formato__isnull=False, tipo_documento__isnull=True)
+                    | models.Q(formato__isnull=True, tipo_documento__isnull=False)
+                ),
+                name='acceso_formato_exactamente_un_destino',
             ),
         ]
 
+    def clean(self):
+        super().clean()
+        tiene_formato = self.formato_id is not None
+        tiene_tipo = bool(self.tipo_documento_id)
+        if tiene_formato == tiene_tipo:
+            raise ValidationError(
+                'La concesión de acceso debe asociarse a un Formato o a un '
+                'Tipo de Documento (exactamente uno de los dos).'
+            )
+
     def __str__(self):
-        return (
-            f'{self.usuario.username} → {self.formato.codigo} '
-            f'({self.get_nivel_display()})'
+        destino = (
+            self.formato.codigo
+            if self.formato_id
+            else (self.tipo_documento.codigo if self.tipo_documento_id else '—')
         )
+        return f'{self.usuario.username} → {destino} ({self.get_nivel_display()})'

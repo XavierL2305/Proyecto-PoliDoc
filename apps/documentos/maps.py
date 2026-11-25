@@ -7,15 +7,15 @@ from .models import Documento
 
 
 TIPOS_INFO = {
-    'manual_calidad': {'nombre': 'Manual de la Calidad', 'codigo': 'MSC', 'icono': 'book', 'color': 'info'},
-    'politica_calidad': {'nombre': 'Política de la Calidad', 'codigo': 'POL', 'icono': 'scroll', 'color': 'primary'},
-    'objetivos': {'nombre': 'Objetivos', 'codigo': 'OBJ', 'icono': 'bullseye', 'color': 'success'},
-    'plan_calidad': {'nombre': 'Plan de la Calidad', 'codigo': 'PLC', 'icono': 'calendar-check', 'color': 'warning'},
-    'mapa_procesos': {'nombre': 'Mapa de Procesos', 'codigo': 'MAP', 'icono': 'diagram-project', 'color': 'info'},
+    'manual_calidad': {'nombre': 'Manual de la Calidad', 'codigo': 'MSC', 'icono': 'book', 'color': 'info', 'usa_prefijo_empresa': True, 'unico_por_empresa': True},
+    'politica_calidad': {'nombre': 'Política de la Calidad', 'codigo': 'POL', 'icono': 'scroll', 'color': 'primary', 'usa_prefijo_empresa': True, 'unico_por_empresa': True},
+    'objetivos': {'nombre': 'Objetivos', 'codigo': 'OBJ', 'icono': 'bullseye', 'color': 'success', 'usa_prefijo_empresa': True, 'unico_por_empresa': True},
+    'plan_calidad': {'nombre': 'Plan de la Calidad', 'codigo': 'PLC', 'icono': 'calendar-check', 'color': 'warning', 'usa_prefijo_empresa': True, 'unico_por_empresa': True},
+    'mapa_procesos': {'nombre': 'Mapa de Procesos', 'codigo': 'MAP', 'icono': 'diagram-project', 'color': 'info', 'usa_prefijo_empresa': True, 'unico_por_empresa': True, 'solo_jefes': True},
     'descripcion_cargos': {'nombre': 'Descripción de Cargos', 'codigo': 'DDC', 'icono': 'id-badge', 'color': 'primary'},
-    'programa_seguridad': {'nombre': 'Programa de Seguridad y Salud Laboral', 'codigo': 'PSS', 'icono': 'shield-halved', 'color': 'danger'},
-    'organigrama': {'nombre': 'Organigrama', 'codigo': 'ORG', 'icono': 'building', 'color': 'success'},
-    'descripcion_procesos': {'nombre': 'Descripción de Procesos', 'codigo': 'DPR', 'icono': 'file-lines', 'color': 'warning', 'sin_prefijo_depto': True, 'solo_jefes': True},
+    'programa_seguridad': {'nombre': 'Programa de Seguridad y Salud Laboral', 'codigo': 'PSS', 'icono': 'shield-halved', 'color': 'danger', 'usa_prefijo_empresa': True, 'unico_por_empresa': True},
+    'organigrama': {'nombre': 'Organigrama', 'codigo': 'ORG', 'icono': 'building', 'color': 'success', 'solo_jefes': True},
+    'descripcion_procesos': {'nombre': 'Descripción de Procesos', 'codigo': 'DPR', 'icono': 'file-lines', 'color': 'warning', 'usa_prefijo_empresa': True, 'solo_jefes': True},
     'normas': {'nombre': 'Normas', 'codigo': 'NOR', 'icono': 'gavel', 'color': 'info'},
     'procedimientos_generales': {'nombre': 'Procedimientos Generales', 'codigo': 'PRG', 'icono': 'list-ol', 'color': 'primary'},
     'instructivo_llenado': {'nombre': 'Instructivo de Llenado', 'codigo': 'IDL', 'icono': 'pencil', 'color': 'success'},

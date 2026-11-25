@@ -32,6 +32,17 @@
     <input type="text" name="q" value="{{ q }}" class="form-input"
            placeholder="Título o referencia">
   </div>
+  {% if es_sgc %}
+  <div class="form-group" style="margin:0;min-width:190px;">
+    <label class="form-label">Estado</label>
+    <select name="estado" class="form-input" onchange="this.form.submit()">
+      <option value="">Todos</option>
+      <option value="pendiente" {% if estado_filtro == 'pendiente' %}selected{% endif %}>Pendiente de aprobación</option>
+      <option value="aprobado" {% if estado_filtro == 'aprobado' %}selected{% endif %}>Aprobado</option>
+      <option value="rechazado" {% if estado_filtro == 'rechazado' %}selected{% endif %}>Rechazado</option>
+    </select>
+  </div>
+  {% endif %}
   <button type="submit" class="btn btn--primary">Filtrar</button>
 </form>
 
@@ -46,6 +57,8 @@
             {% if es_sgc %}
             <th>Referencia</th>
             <th>Empresa</th>
+            <th>Propietario</th>
+            <th>Estado</th>
             {% endif %}
             <th>Fecha</th>
             <th>Archivo</th>
@@ -59,6 +72,16 @@
             {% if es_sgc %}
             <td>{{ d.referencia|default:"—" }}</td>
             <td>{{ d.empresa|default:"—" }}</td>
+            <td>{{ d.propietario.get_full_name|default:d.propietario.username }}</td>
+            <td>
+              {% if d.estado_aprobacion == 'aprobado' %}
+              <span class="badge badge--success">Aprobado</span>
+              {% elif d.estado_aprobacion == 'rechazado' %}
+              <span class="badge badge--danger">Rechazado</span>
+              {% else %}
+              <span class="badge badge--warning">Pendiente</span>
+              {% endif %}
+            </td>
             {% endif %}
             <td>{{ d.fecha|date:"d/m/Y"|default:"—" }}</td>
             <td>
@@ -91,11 +114,11 @@
 {% if page_obj.has_other_pages %}
 <div style="display:flex;gap:.5rem;justify-content:center;margin-top:1rem;">
   {% if page_obj.has_previous %}
-  <a class="btn btn--ghost btn--sm" href="?page={{ page_obj.previous_page_number }}&q={{ q }}">Anterior</a>
+  <a class="btn btn--ghost btn--sm" href="?page={{ page_obj.previous_page_number }}&q={{ q }}{% if estado_filtro %}&estado={{ estado_filtro }}{% endif %}">Anterior</a>
   {% endif %}
   <span class="badge">Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</span>
   {% if page_obj.has_next %}
-  <a class="btn btn--ghost btn--sm" href="?page={{ page_obj.next_page_number }}&q={{ q }}">Siguiente</a>
+  <a class="btn btn--ghost btn--sm" href="?page={{ page_obj.next_page_number }}&q={{ q }}{% if estado_filtro %}&estado={{ estado_filtro }}{% endif %}">Siguiente</a>
   {% endif %}
 </div>
 {% endif %}

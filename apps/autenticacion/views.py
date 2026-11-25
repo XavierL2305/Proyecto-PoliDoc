@@ -236,11 +236,23 @@ def logout_view(request):
     return redirect('autenticacion:login')
 
 
+def _requiere_aviso_cedula(user, perfil) -> bool:
+    """True si debe mostrarse el recordatorio de cédula faltante al usuario.
+
+    Exime solo a cuentas técnicas sin perfil o superusuarios de Django.
+    Los administradores de POLIDOC no son bloqueados por el middleware,
+    pero sí ven el recordatorio no bloqueante hasta registrar su cédula.
+    """
+    if perfil is None or user.is_superuser:
+        return False
+    return not (perfil.cedula_identidad or '').strip()
+
+
 @login_required(login_url='/login/')
 def dashboard_view(request):
     """Vista para el panel principal con datos reales"""
     user = request.user
-    perfil = user.perfil
+    perfil = getattr(user, 'perfil', None)
 
     mis_documentos_qs = Documento.objects.filter(propietario=user)
     total_mis_documentos = mis_documentos_qs.count()
@@ -249,7 +261,7 @@ def dashboard_view(request):
 
     # Solicitudes de descarga pendientes (para jefes, delegados y admins)
     solicitudes_pendientes = 0
-    if (perfil.ejerce_jefatura or perfil.es_administrador) and perfil.departamento:
+    if perfil and (perfil.ejerce_jefatura or perfil.es_administrador) and perfil.departamento:
         solicitudes_pendientes = SolicitudDescarga.objects.filter(
             estado='pendiente',
             documento__departamento=perfil.departamento
@@ -260,7 +272,7 @@ def dashboard_view(request):
     # Panel de vigencia del departamento (jefes y delegados; el mismo cálculo
     # que la página de Documentos por Departamento, reutilizado desde services).
     conteos_vigencia = None
-    if perfil.ejerce_jefatura and perfil.departamento:
+    if perfil and perfil.ejerce_jefatura and perfil.departamento:
         conteos_vigencia = calcular_conteos_vigencia([perfil.departamento], '', user)
 
     ultimos_documentos = mis_documentos_qs.select_related('departamento').order_by('-fecha_modificacion')[:10]
@@ -277,7 +289,7 @@ def dashboard_view(request):
         'ultimos_documentos': ultimos_documentos,
         'ultimas_versiones': ultimas_versiones,
         'logs_recientes': logs_recientes,
-        'sin_cedula': not (perfil.cedula_identidad or '').strip(),
+        'sin_cedula': _requiere_aviso_cedula(user, perfil),
     }
 
     return render(request, 'dashboard.html', context)
@@ -441,7 +453,12 @@ def perfil_usuario(request):
         RRHHConexionError, consultar_empleado_por_cedula, rrhh_habilitado,
     )
 
-    perfil = request.user.perfil
+    perfil, _ = PerfilUsuario.objects.get_or_create(
+        usuario=request.user,
+        defaults={
+            'rol': 'administrador' if request.user.is_superuser else 'trabajador',
+        },
+    )
     form = EditarPerfilForm(instance=perfil)
     cedula_form = CedulaForm(instance=perfil)
     cedula_pendiente = request.session.get('cedula_pendiente_rrhh')
@@ -556,10 +573,6 @@ def perfil_usuario(request):
     ).count()
 
     from documentos.services.firmas import obtener_credencial
-    from documentos.models import _cargo_usuario
-
-    cargo_rrhh = (perfil.cargo or '').strip()
-    cargo_mostrado = cargo_rrhh or _cargo_usuario(request.user)
 
     return render(request, 'autenticacion/perfil.html', {
         'form': form,
@@ -567,8 +580,9 @@ def perfil_usuario(request):
         'cedula_pendiente': cedula_pendiente,
         'cedula_bloqueada': cedula_form.fields['cedula_identidad'].disabled,
         'perfil': perfil,
-        'cargo_mostrado': cargo_mostrado,
-        'cargo_es_rrhh': bool(cargo_rrhh),
+        'cargo_mostrado': perfil.cargo_efectivo,
+        'cargo_es_rrhh': bool(perfil.cargo_rrhh),
+        'sin_cedula': _requiere_aviso_cedula(request.user, perfil),
         'credencial': obtener_credencial(request.user),
         'total_documentos': total_docs,
         'solicitudes_descarga': solicitudes_descarga,
@@ -618,11 +632,18 @@ def eliminar_foto_perfil(request):
     return JsonResponse({'ok': True})
 
 
+def _es_admin_usuarios(user) -> bool:
+    """True si el usuario puede administrar usuarios (admin POLIDOC o superuser)."""
+    if user.is_superuser:
+        return True
+    perfil = getattr(user, 'perfil', None)
+    return bool(perfil and perfil.es_administrador)
+
+
 @login_required(login_url='/login/')
 def gestionar_usuarios(request):
     """Gestión de usuarios — solo Administradores"""
-    perfil = request.user.perfil
-    if not perfil.es_administrador:
+    if not _es_admin_usuarios(request.user):
         from django.contrib import messages
         messages.error(request, 'No tienes permisos para acceder a esta sección.')
         return redirect('autenticacion:dashboard')
@@ -638,13 +659,19 @@ def gestionar_usuarios(request):
             Q(username__icontains=buscar) |
             Q(first_name__icontains=buscar) |
             Q(last_name__icontains=buscar) |
-            Q(email__icontains=buscar)
+            Q(email__icontains=buscar) |
+            Q(perfil__cedula_identidad__icontains=buscar) |
+            Q(perfil__cargo__icontains=buscar)
         )
 
     if filtro_estado == 'sin_dept':
         usuarios = usuarios.filter(perfil__departamento__isnull=True)
     elif filtro_estado == 'con_dept':
         usuarios = usuarios.filter(perfil__departamento__isnull=False)
+    elif filtro_estado == 'sin_cedula':
+        usuarios = usuarios.filter(perfil__cedula_identidad='')
+    elif filtro_estado == 'verificada_rrhh':
+        usuarios = usuarios.filter(perfil__cedula_verificada_rrhh=True)
 
     if filtro_depto:
         usuarios = usuarios.filter(perfil__departamento__id=filtro_depto)
@@ -657,6 +684,7 @@ def gestionar_usuarios(request):
 
     total_usuarios = User.objects.count()
     sin_departamento = PerfilUsuario.objects.filter(departamento__isnull=True).count()
+    sin_cedula_count = PerfilUsuario.objects.filter(cedula_identidad='').count()
 
     return render(request, 'autenticacion/gestionar_usuarios.html', {
         'usuarios': usuarios_page,
@@ -666,41 +694,55 @@ def gestionar_usuarios(request):
         'filtro_depto': filtro_depto,
         'total_usuarios': total_usuarios,
         'sin_departamento': sin_departamento,
+        'sin_cedula_count': sin_cedula_count,
     })
+
+
+def _parse_json_usuario_admin(request, *, require_perfil: bool = True):
+    """Valida POST, permisos de administración, JSON y resuelve usuario/perfil."""
+    if request.method != 'POST':
+        return None, JsonResponse({'error': 'Método no permitido'}, status=405)
+
+    if not _es_admin_usuarios(request.user):
+        return None, JsonResponse({'error': 'Sin permisos'}, status=403)
+
+    try:
+        data = json.loads(request.body or b'{}')
+    except json.JSONDecodeError:
+        return None, JsonResponse({'error': 'JSON inválido'}, status=400)
+
+    if not isinstance(data, dict):
+        return None, JsonResponse({'error': 'JSON inválido'}, status=400)
+
+    raw_id = data.get('usuario_id')
+    if isinstance(raw_id, bool) or raw_id in (None, ''):
+        return None, JsonResponse({'error': 'Faltan campos requeridos'}, status=400)
+    try:
+        usuario_id = int(raw_id)
+    except (TypeError, ValueError):
+        return None, JsonResponse({'error': 'usuario_id inválido'}, status=400)
+
+    usuario = User.objects.select_related('perfil').filter(id=usuario_id).first()
+    perfil_obj = getattr(usuario, 'perfil', None) if usuario else None
+    if usuario is None or (require_perfil and perfil_obj is None):
+        return None, JsonResponse({'error': 'Usuario no encontrado'}, status=404)
+
+    return (data, usuario, perfil_obj), None
 
 
 @login_required(login_url='/login/')
 def asignar_departamento_usuario(request):
     """API: Asignar departamento a un usuario (solo Admin)"""
-    if request.method != 'POST':
-        return JsonResponse({'error': 'Método no permitido'}, status=405)
-
-    perfil = request.user.perfil
-    if not perfil.es_administrador:
-        return JsonResponse({'error': 'Sin permisos'}, status=403)
-
-    try:
-        data = json.loads(request.body)
-    except json.JSONDecodeError:
-        return JsonResponse({'error': 'JSON inválido'}, status=400)
-
-    usuario_id = data.get('usuario_id')
+    parsed, error_resp = _parse_json_usuario_admin(request)
+    if error_resp is not None:
+        return error_resp
+    data, usuario, perfil_usuario = parsed
     departamento_id = data.get('departamento_id')
-
-    if not usuario_id:
-        return JsonResponse({'error': 'Faltan campos requeridos'}, status=400)
-
-    try:
-        usuario = User.objects.get(id=usuario_id)
-    except User.DoesNotExist:
-        return JsonResponse({'error': 'Usuario no encontrado'}, status=404)
-
-    perfil_usuario = usuario.perfil
 
     if departamento_id:
         try:
             dept = Departamento.objects.get(id=departamento_id)
-        except Departamento.DoesNotExist:
+        except (Departamento.DoesNotExist, TypeError, ValueError):
             return JsonResponse({'error': 'Departamento no encontrado'}, status=404)
         perfil_usuario.departamento = dept
         perfil_usuario.departamento_texto = dept.nombre
@@ -720,22 +762,215 @@ def asignar_departamento_usuario(request):
 
 
 @login_required(login_url='/login/')
+def desvincular_rrhh_usuario(request):
+    """API: Limpia cédula, cargo y verificación RRHH de un usuario (solo Admin)."""
+    parsed, error_resp = _parse_json_usuario_admin(request)
+    if error_resp is not None:
+        return error_resp
+    data, usuario, perfil_obj = parsed
+    limpiar_nombres = bool(data.get('limpiar_nombres', False))
+
+    from .services.rrhh_sync import desvincular_datos_rrhh
+
+    res = desvincular_datos_rrhh(
+        perfil_obj,
+        actor=request.user,
+        origen='gestion_usuarios',
+        limpiar_nombres=limpiar_nombres,
+    )
+    if usuario.pk == request.user.pk:
+        request.session.pop('cedula_pendiente_rrhh', None)
+
+    if not res['modificado']:
+        return JsonResponse({
+            'success': True,
+            'sin_cambios': True,
+            'mensaje': 'El usuario no tenía datos de RRHH vinculados.',
+        })
+
+    return JsonResponse({
+        'success': True,
+        'sin_cambios': False,
+        'mensaje': f'Datos de RRHH desvinculados para {usuario.username}.',
+    })
+
+
+@login_required(login_url='/login/')
+def vincular_rrhh_usuario(request):
+    """API: Valida y vincula cédula/datos RRHH de un usuario desde detalle (solo Admin)."""
+    parsed, error_resp = _parse_json_usuario_admin(request)
+    if error_resp is not None:
+        return error_resp
+    data, usuario, perfil_obj = parsed
+
+    from .services.rrhh_sync import (
+        RRHHConexionError,
+        consultar_empleado_por_cedula,
+        rrhh_habilitado,
+        validar_y_limpiar_cedula,
+        vincular_datos_rrhh,
+    )
+
+    try:
+        cedula = validar_y_limpiar_cedula(data.get('cedula', ''))
+    except ValueError as exc:
+        return JsonResponse({'error': str(exc)}, status=400)
+
+    if (
+        PerfilUsuario.objects
+        .filter(cedula_identidad=cedula)
+        .exclude(pk=perfil_obj.pk)
+        .exists()
+    ):
+        return JsonResponse(
+            {'error': 'Esa cédula ya está registrada por otro usuario.'},
+            status=400,
+        )
+
+    confirmar = bool(data.get('confirmar', False))
+    if not rrhh_habilitado():
+        vincular_datos_rrhh(
+            perfil_obj,
+            cedula=cedula,
+            datos=None,
+            verificado=False,
+            actor=request.user,
+            origen='detalle_usuario',
+        )
+        return JsonResponse({
+            'success': True,
+            'guardado': True,
+            'mensaje': 'Cédula registrada (RRHH no configurado).',
+        })
+
+    try:
+        datos = consultar_empleado_por_cedula(cedula)
+    except RRHHConexionError:
+        return JsonResponse(
+            {'error': 'No se pudo conectar con RRHH en este momento. Intenta más tarde.'},
+            status=503,
+        )
+
+    if datos is None:
+        _auditar_consulta_cedula(request, cedula, encontrado=False)
+        return JsonResponse(
+            {'error': 'No encontramos esa cédula activa en RRHH.'},
+            status=404,
+        )
+
+    if not confirmar:
+        _auditar_consulta_cedula(request, cedula, encontrado=True)
+        return JsonResponse({
+            'success': True,
+            'guardado': False,
+            'preview': {
+                'cedula': cedula,
+                'nombre': datos['nombre'],
+                'apellido': datos['apellido'],
+                'cargo': datos['cargo'],
+                'departamento': datos['departamento'],
+            },
+        })
+
+    vincular_datos_rrhh(
+        perfil_obj,
+        cedula=cedula,
+        datos=datos,
+        verificado=True,
+        actor=request.user,
+        origen='detalle_usuario',
+    )
+    return JsonResponse({
+        'success': True,
+        'guardado': True,
+        'mensaje': f'Cédula y datos de RRHH vinculados para {usuario.username}.',
+    })
+
+
+@login_required(login_url='/login/')
+def toggle_activo_usuario(request):
+    """API: Activa o desactiva la cuenta de un usuario (solo Admin)."""
+    parsed, error_resp = _parse_json_usuario_admin(request, require_perfil=False)
+    if error_resp is not None:
+        return error_resp
+    _, usuario, _ = parsed
+
+    if usuario.pk == request.user.pk:
+        return JsonResponse(
+            {'error': 'No puedes cambiar el estado de tu propia cuenta.'},
+            status=400,
+        )
+    if usuario.is_superuser:
+        return JsonResponse(
+            {'error': 'No se puede cambiar el estado de un superusuario desde este panel.'},
+            status=403,
+        )
+
+    estado_anterior = bool(usuario.is_active)
+    nuevo_estado = not estado_anterior
+    User.objects.filter(pk=usuario.pk).update(is_active=nuevo_estado)
+
+    try:
+        from auditoria.services import registrar_log_iso
+
+        registrar_log_iso(
+            usuario=request.user,
+            accion_tipo='edicion',
+            accion_categoria='usuario',
+            recurso_tipo='usuario',
+            recurso_id=usuario.pk,
+            recurso_nombre=usuario.username,
+            estado_anterior='activo' if estado_anterior else 'inactivo',
+            estado_posterior='activo' if nuevo_estado else 'inactivo',
+            detalles={'campo': 'is_active', 'origen': 'detalle_usuario'},
+            resultado_mensaje=(
+                'Cuenta activada por administrador' if nuevo_estado
+                else 'Cuenta desactivada por administrador'
+            ),
+        )
+    except Exception:  # noqa: BLE001 - la auditoría no rompe la gestión admin
+        logger.warning(
+            'No se pudo auditar el cambio de estado de %s',
+            usuario.username,
+            exc_info=True,
+        )
+
+    return JsonResponse({
+        'success': True,
+        'is_active': nuevo_estado,
+        'mensaje': (
+            f'Cuenta de {usuario.username} activada.' if nuevo_estado
+            else f'Cuenta de {usuario.username} desactivada.'
+        ),
+    })
+
+
+@login_required(login_url='/login/')
 def ver_usuario(request, usuario_id):
-    """Vista de solo lectura para ver detalles de un usuario (solo Admin)"""
-    perfil = request.user.perfil
-    if not perfil.es_administrador:
+    """Vista de detalle de un usuario para administración (solo Admin)"""
+    if not _es_admin_usuarios(request.user):
         return render(request, '403.html', status=403)
 
+    from .services.rrhh_sync import rrhh_habilitado, tiene_datos_rrhh
+
     usuario = User.objects.select_related('perfil', 'perfil__departamento').get(id=usuario_id)
-    perfil_usuario = usuario.perfil
+    perfil_usuario = getattr(usuario, 'perfil', None)
 
     total_documentos = Documento.objects.filter(propietario=usuario).count()
     solicitudes_descarga = SolicitudDescarga.objects.filter(solicitado_por=usuario).count()
     asignaciones_activas = AsignacionDocumento.objects.filter(coordinador=usuario, activa=True).count()
+    departamentos = Departamento.objects.filter(activo=True).order_by('nombre')
 
     return render(request, 'autenticacion/ver_usuario.html', {
         'usuario': usuario,
         'perfil': perfil_usuario,
+        'tiene_datos_rrhh': tiene_datos_rrhh(perfil_usuario),
+        'cargo_mostrado': perfil_usuario.cargo_efectivo if perfil_usuario else '',
+        'cargo_es_rrhh': bool(perfil_usuario.cargo_rrhh) if perfil_usuario else False,
+        'departamentos': departamentos,
+        'puede_toggle_activo': usuario.pk != request.user.pk and not usuario.is_superuser,
+        'puede_transferir': total_documentos > 0 or asignaciones_activas > 0,
+        'rrhh_configurado': rrhh_habilitado(),
         'total_documentos': total_documentos,
         'solicitudes_descarga': solicitudes_descarga,
         'asignaciones_activas': asignaciones_activas,

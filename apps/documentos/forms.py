@@ -33,6 +33,7 @@ class PlantillaForm(forms.ModelForm):
         }
 
     def __init__(self, *args, **kwargs):
+        tipo_documento = kwargs.pop('tipo_documento', None)
         super().__init__(*args, **kwargs)
         self.fields['nombre'].label = 'Nombre de la plantilla'
         self.fields['nombre'].help_text = (
@@ -52,6 +53,22 @@ class PlantillaForm(forms.ModelForm):
         # El archivo en blanco es la razón de ser de la plantilla: sin él el
         # catálogo mostraría un "Descargar" que apunta a un FileField vacío.
         self.fields['archivo'].required = True
+
+        tipo_obj = None
+        if tipo_documento:
+            if isinstance(tipo_documento, str):
+                tipo_obj = TipoDocumento.objects.filter(key=tipo_documento).first()
+            else:
+                tipo_obj = tipo_documento
+        if tipo_obj and tipo_obj.usa_prefijo_empresa:
+            self.fields['empresa'] = forms.ChoiceField(
+                choices=Documento.EMPRESA_CHOICES,
+                required=True,
+                initial='PTCA',
+                label='Empresa',
+                help_text='Empresa del grupo cuyo prefijo llevará esta plantilla.',
+                widget=forms.Select(attrs={'class': 'form-input'}),
+            )
 
 
 class DocumentoForm(forms.ModelForm):
@@ -178,13 +195,13 @@ class DocumentoForm(forms.ModelForm):
                     plantillas = plantillas.filter(q_documentos_visibles(usuario))
             self.fields['plantilla_origen'] = forms.ModelChoiceField(
                 queryset=plantillas,
-                required=True,
-                label='Plantilla de origen',
-                empty_label='Selecciona la plantilla que usarás',
+                required=False,
+                label='Plantilla de origen (opcional)',
+                empty_label='Sin plantilla (opcional)',
                 to_field_name='uuid',
                 help_text=(
-                    'Documento en blanco del que parte este documento. '
-                    'Debe estar activo y ser del mismo tipo.'
+                    'Opcional. Si eliges una plantilla, debe estar activa y '
+                    'ser del mismo tipo.'
                 ),
                 widget=forms.Select(attrs={'class': 'form-input'}),
             )
@@ -402,6 +419,7 @@ class TipoDocumentoForm(forms.ModelForm):
             'usa_departamentos_afectados', 'usa_responsables',
             'usa_participantes', 'usa_documentos_relacionados',
             'icono', 'color', 'solo_jefes', 'sin_prefijo_depto',
+            'usa_prefijo_empresa', 'unico_por_empresa',
             'periodo_vigencia', 'periodo_retencion', 'requiere_vigencia',
         ]
         widgets = {
@@ -420,10 +438,28 @@ class TipoDocumentoForm(forms.ModelForm):
             }),
             'solo_jefes': forms.CheckboxInput(attrs={'class': 'form-checkbox'}),
             'sin_prefijo_depto': forms.CheckboxInput(attrs={'class': 'form-checkbox'}),
+            'usa_prefijo_empresa': forms.CheckboxInput(attrs={'class': 'form-checkbox'}),
+            'unico_por_empresa': forms.CheckboxInput(attrs={'class': 'form-checkbox'}),
             'periodo_vigencia': forms.Select(attrs={'class': 'form-input form-select'}),
             'periodo_retencion': forms.Select(attrs={'class': 'form-input form-select'}),
             'requiere_vigencia': forms.CheckboxInput(attrs={'class': 'form-checkbox'}),
         }
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned.get('usa_prefijo_empresa') and cleaned.get('sin_prefijo_depto'):
+            self.add_error(
+                'usa_prefijo_empresa',
+                'No puedes activar simultáneamente "Usa prefijo de empresa" '
+                'y "Sin prefijo de departamento".',
+            )
+        if cleaned.get('unico_por_empresa') and not cleaned.get('usa_prefijo_empresa'):
+            self.add_error(
+                'unico_por_empresa',
+                'Para activar "Único documento vigente por empresa" debes activar '
+                'también "Usa prefijo de empresa".',
+            )
+        return cleaned
 
     def clean_icono(self):
         icono = (self.cleaned_data.get('icono') or '').strip()
@@ -920,7 +956,7 @@ class DocumentoSinCodigoForm(forms.ModelForm):
         model = DocumentoSinCodigo
         fields = [
             'titulo', 'descripcion', 'archivo', 'referencia', 'clasificacion',
-            'empresa', 'departamento', 'responsable_texto', 'fecha',
+            'empresa', 'responsable_texto', 'fecha',
             'periodo_retencion', 'ubicacion',
         ]
         widgets = {
@@ -936,7 +972,6 @@ class DocumentoSinCodigoForm(forms.ModelForm):
             }),
             'clasificacion': forms.Select(attrs={'class': 'form-input'}),
             'empresa': forms.TextInput(attrs={'class': 'form-input'}),
-            'departamento': forms.Select(attrs={'class': 'form-input'}),
             'responsable_texto': forms.TextInput(attrs={
                 'class': 'form-input', 'placeholder': 'Ej. Junta Directiva',
             }),
@@ -950,7 +985,7 @@ class DocumentoSinCodigoForm(forms.ModelForm):
 
     #: Campos exclusivos del soporte institucional (SGC).
     CAMPOS_SGC = (
-        'referencia', 'clasificacion', 'empresa', 'departamento',
+        'referencia', 'clasificacion', 'empresa',
         'responsable_texto', 'periodo_retencion', 'ubicacion',
     )
 
@@ -964,9 +999,6 @@ class DocumentoSinCodigoForm(forms.ModelForm):
             for nombre in self.CAMPOS_SGC:
                 self.fields.pop(nombre, None)
         else:
-            self.fields['departamento'].queryset = Departamento.objects.filter(
-                activo=True,
-            )
             self.fields['periodo_retencion'].queryset = Periodo.objects.filter(
                 activo=True,
             )

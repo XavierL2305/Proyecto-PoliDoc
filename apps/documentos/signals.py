@@ -55,6 +55,8 @@ def capturar_estado_previo(sender, instance, **kwargs):
 
 
 def documento_creado_o_editado(sender, instance, created, **kwargs):
+    if getattr(instance, '_auditoria_explicita', False):
+        return
     try:
         if created:
             registrar_creacion_documento(
@@ -546,7 +548,8 @@ def lista_maestra_sin_codigo_guardado(sender, instance, **kwargs):
             documento = _Modelo.objects.filter(pk=pk).first()
             if documento is None:
                 return
-            if documento.ambito == 'sgc' and documento.activo:
+            if (documento.ambito == 'sgc' and documento.activo
+                    and documento.estado_aprobacion == 'aprobado'):
                 svc.upsert_sin_codigo(documento)
             else:
                 svc.quitar_sin_codigo(documento)

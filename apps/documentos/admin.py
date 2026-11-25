@@ -186,8 +186,11 @@ class RegistroFormatoAdmin(admin.ModelAdmin):
 
 @admin.register(DocumentoSinCodigo)
 class DocumentoSinCodigoAdmin(admin.ModelAdmin):
-    list_display = ['titulo', 'ambito', 'propietario', 'activo', 'creado']
-    list_filter = ['ambito', 'activo', 'clasificacion']
+    list_display = [
+        'titulo', 'ambito', 'estado_aprobacion', 'propietario',
+        'departamento', 'activo', 'creado',
+    ]
+    list_filter = ['ambito', 'estado_aprobacion', 'activo', 'clasificacion']
     search_fields = ['titulo', 'referencia']
     readonly_fields = ['uuid', 'creado', 'actualizado']
 
@@ -202,9 +205,15 @@ class ActaDesincorporacionAdmin(admin.ModelAdmin):
 
 @admin.register(AccesoFormato)
 class AccesoFormatoAdmin(admin.ModelAdmin):
-    list_display = ['usuario', 'formato', 'nivel', 'activo', 'fecha_creacion']
-    list_filter = ['nivel', 'activo', 'formato']
-    search_fields = ['usuario__username', 'formato__codigo']
+    list_display = [
+        'usuario', 'formato', 'tipo_documento', 'nivel', 'activo',
+        'creado_por', 'fecha_creacion',
+    ]
+    list_filter = ['nivel', 'activo', 'formato', 'tipo_documento']
+    search_fields = [
+        'usuario__username', 'formato__codigo',
+        'tipo_documento__codigo', 'tipo_documento__key',
+    ]
 
 
 @admin.register(VersionRegistroFormato)

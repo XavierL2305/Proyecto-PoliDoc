@@ -47,7 +47,7 @@
     flex-direction: column;
     gap: 0.25rem;
   }
-  .filter-group label {
+  .filter-group > label {
     font-size: 0.75rem;
     font-weight: 500;
     color: var(--color-muted);
@@ -118,8 +118,8 @@
   }
   .filter-group--full { flex-basis: 100%; }
   .filter-checks { display: flex; gap: .75rem 1.25rem; flex-wrap: wrap; margin-top: .35rem; }
-  .filter-check { display: inline-flex; align-items: center; gap: .35rem; font-size: .85rem; color: var(--color-text); cursor: pointer; }
-  .filter-check input { width: auto; }
+  .filter-check { display: inline-flex; align-items: center; gap: .45rem; font-size: .85rem; color: var(--color-text); cursor: pointer; }
+  .filter-check .form-checkbox { margin-top: 0; }
 </style>
 {% endblock %}
 
@@ -196,7 +196,7 @@
       <div class="filter-checks">
         {% for valor, etiqueta in acciones_disponibles %}
         <label class="filter-check">
-          <input type="checkbox" name="accion_tipo" value="{{ valor }}"
+          <input type="checkbox" class="form-checkbox" name="accion_tipo" value="{{ valor }}"
                  {% if valor in accion_tipo %}checked{% endif %}>
           {{ etiqueta }}
         </label>
@@ -208,7 +208,7 @@
       <div class="filter-checks">
         {% for valor, etiqueta in categorias_disponibles %}
         <label class="filter-check">
-          <input type="checkbox" name="accion_categoria" value="{{ valor }}"
+          <input type="checkbox" class="form-checkbox" name="accion_categoria" value="{{ valor }}"
                  {% if valor in accion_categoria %}checked{% endif %}>
           {{ etiqueta }}
         </label>

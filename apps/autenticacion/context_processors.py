@@ -33,6 +33,7 @@ URLS_DOCUMENTACION = frozenset({
     'programa_revision_acceso', 'programa_revision_revocar',
     'minutas_lista', 'minuta_crear', 'minuta_editar', 'minuta_detalle',
     'minuta_descargar', 'minuta_acceso', 'minuta_revocar',
+    'organigrama_index', 'organigrama_constructor', 'organigrama_visor',
 })
 
 #: ``url_name`` de páginas que pertenecen al grupo "Configuración".
@@ -108,4 +109,28 @@ def navegacion(request):
             )
         except Exception:  # noqa: BLE001
             contexto['nav_minutas'] = False
+        try:
+            from documentos.services import organigrama as org_svc
+            puede_editar_org = org_svc.puede_construir_organigrama(
+                usuario, tipo_id=org_svc.TIPO_ORGANIGRAMA,
+            )
+            puede_editar_map = org_svc.puede_construir_mapa_procesos(usuario)
+            if puede_editar_org:
+                contexto['nav_organigrama'] = True
+            else:
+                org_doc = org_svc.obtener_organigrama_vigente()
+                contexto['nav_organigrama'] = bool(
+                    org_doc and org_svc.puede_ver_organigrama(usuario, org_doc)
+                )
+            if puede_editar_map:
+                contexto['nav_mapa_procesos'] = True
+            else:
+                mapas = org_svc.listar_mapas_procesos_vigentes()
+                contexto['nav_mapa_procesos'] = any(
+                    d is not None and org_svc.puede_ver_organigrama(usuario, d)
+                    for d in mapas.values()
+                )
+        except Exception:  # noqa: BLE001
+            contexto['nav_organigrama'] = False
+            contexto['nav_mapa_procesos'] = False
     return contexto

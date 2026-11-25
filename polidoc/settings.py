@@ -63,6 +63,8 @@ INSTALLED_APPS = [
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
+    # Permite que WhiteNoise sirva /static/ con Cache-Control: max-age=0 y ETag en runserver
+    'whitenoise.runserver_nostatic',
     'django.contrib.staticfiles',
     'compressor',
     'corsheaders',
@@ -268,16 +270,40 @@ MEDIA_ROOT = BASE_DIR / 'polidoc' / 'media'
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
 
-MAILERS = {
-    'default': {
-        'BACKEND': 'polidoc.mail_backends.SmtpWithConsoleFallback',
-        'OPTIONS': {
-            'host': os.getenv('EMAIL_HOST', 'mailpit'),
-            'port': int(os.getenv('EMAIL_PORT', '1025')),
-            'use_tls': os.getenv('EMAIL_USE_TLS', 'False').lower() in ('true', '1', 't'),
+EMAIL_PROVIDER = os.getenv('EMAIL_PROVIDER', 'smtp').strip().lower()
+GMAIL_CLIENT_ID = os.getenv('GMAIL_CLIENT_ID', '')
+GMAIL_CLIENT_SECRET = os.getenv('GMAIL_CLIENT_SECRET', '')
+GMAIL_REFRESH_TOKEN = os.getenv('GMAIL_REFRESH_TOKEN', '')
+GMAIL_API_TIMEOUT = int(os.getenv('GMAIL_API_TIMEOUT', '15'))
+
+if EMAIL_PROVIDER == 'gmail_api':
+    MAILERS = {
+        'default': {
+            'BACKEND': 'polidoc.mail_backends.GmailApiBackend',
+            'OPTIONS': {
+                'client_id': GMAIL_CLIENT_ID,
+                'client_secret': GMAIL_CLIENT_SECRET,
+                'refresh_token': GMAIL_REFRESH_TOKEN,
+                'timeout': GMAIL_API_TIMEOUT,
+            },
         },
-    },
-}
+    }
+else:
+    _smtp_options = {
+        'host': os.getenv('EMAIL_HOST', 'mailpit'),
+        'port': int(os.getenv('EMAIL_PORT', '1025')),
+        'use_tls': os.getenv('EMAIL_USE_TLS', 'False').lower() in ('true', '1', 't'),
+    }
+    _email_host_user = os.getenv('EMAIL_HOST_USER', '')
+    if _email_host_user:
+        _smtp_options['username'] = _email_host_user
+        _smtp_options['password'] = os.getenv('EMAIL_HOST_PASSWORD', '')
+    MAILERS = {
+        'default': {
+            'BACKEND': 'polidoc.mail_backends.SmtpWithConsoleFallback',
+            'OPTIONS': _smtp_options,
+        },
+    }
 
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'no-reply@polidoc.local')
 

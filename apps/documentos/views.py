@@ -114,6 +114,9 @@ from .services.aprobacion_flujo import (
 
 
 def puede_editar_documento(user, documento):
+    if documento.tipo_id in ('organigrama', 'mapa_procesos'):
+        from .services.organigrama import puede_construir_organigrama
+        return puede_construir_organigrama(user, documento)
     if documento.estado == 'obsoleto':
         return False
     if documento.estado == 'en_revision':
@@ -840,9 +843,14 @@ def seleccionar_tipo(request):
     """Página/catálogo para seleccionar tipo de documento a crear"""
     es_plantilla = request.GET.get('plantilla', '') in ('1', 'true', 'True')
     es_jefe = _es_jefe(request.user)
+    puede_admin_o_jefe = es_jefe or getattr(getattr(request.user, 'perfil', None), 'es_administrador', False)
+    from .services.organigrama import puede_construir_organigrama
     tipos_disponibles = []
     for tipo in tipos_activos():
-        if tipo.solo_jefes and not es_jefe:
+        if tipo.key in ('organigrama', 'mapa_procesos'):
+            if es_plantilla or not puede_construir_organigrama(request.user, tipo_id=tipo.key):
+                continue
+        elif tipo.solo_jefes and not puede_admin_o_jefe:
             continue
         tipos_disponibles.append({
             'key': tipo.key,
@@ -963,6 +971,16 @@ def preview_plantilla(request, tipo, documento_id):
 @login_required(login_url='/login/')
 def crear_documento(request, tipo):
     """Vista genérica para crear cualquier tipo de documento"""
+    if tipo == 'organigrama':
+        return redirect('documentos:organigrama_constructor')
+    if tipo == 'mapa_procesos':
+        emp_q = (request.GET.get('empresa') or '').strip().upper()
+        if emp_q == 'PT':
+            emp_q = 'PTCA'
+        if emp_q in Documento.EMPRESAS_VALIDAS:
+            return redirect('documentos:mapa_procesos_constructor', empresa=emp_q)
+        return redirect('documentos:mapa_procesos_index')
+
     tipo_obj = TipoDocumento.objects.filter(key=tipo, activo=True).first()
     if not tipo_obj:
         messages.error(request, 'Tipo de documento no válido.')
@@ -981,6 +999,25 @@ def crear_documento(request, tipo):
         return redirect('documentos:seleccionar_tipo')
 
     sin_prefijo_depto = Documento.es_sin_prefijo_depto(tipo)
+    usa_prefijo_empresa = Documento.usa_prefijo_empresa(tipo)
+    unico_por_empresa = usa_prefijo_empresa and Documento.es_unico_por_empresa(tipo)
+    empresa_seleccionada = (
+        (request.POST.get('empresa') or 'PTCA').strip().upper()
+        if usa_prefijo_empresa else ''
+    )
+    empresas_ocupadas = {}
+    if unico_por_empresa:
+        for doc_emp in (
+            Documento.objects
+            .filter(tipo=tipo_obj, es_plantilla=False)
+            .exclude(estado='obsoleto')
+            .exclude(empresa='')
+            .only('empresa', 'codigo', 'uuid')
+        ):
+            empresas_ocupadas[doc_emp.empresa] = {
+                'codigo': doc_emp.codigo,
+                'uuid': str(doc_emp.uuid),
+            }
 
     from .permissions import documentos_descargables, q_documentos_visibles
 
@@ -1031,13 +1068,6 @@ def crear_documento(request, tipo):
 
     if request.method == 'POST':
         accion = request.POST.get('accion', 'enviar')
-        if not plantillas_list:
-            messages.error(
-                request,
-                f'No hay plantillas activas de {tipo_nombre} disponibles para tu '
-                f'perfil. Debes subir una plantilla antes de crear un documento '
-                f'de este tipo.',
-            )
         form = DocumentoForm(
             request.POST, request.FILES,
             departamento_id=perfil.departamento.id,
@@ -1047,99 +1077,117 @@ def crear_documento(request, tipo):
             plantillas_queryset=plantillas_disponibles,
         )
         if form.is_valid():
-            secuencia = request.POST.get('secuencia', '001')
-            codigo = Documento.construir_codigo(perfil.departamento, tipo, secuencia)
-
-            respuestas_formato, errores_formato = {}, []
-            if formato_dinamico:
-                respuestas_formato, errores_formato = validar_respuestas(
-                    formato_dinamico, request.POST, parcial=(accion == 'borrador')
+            if usa_prefijo_empresa and empresa_seleccionada not in Documento.EMPRESAS_VALIDAS:
+                messages.error(
+                    request,
+                    'Debes seleccionar una empresa válida (PTCA, PTH, FP o FS).',
                 )
-                respuestas_formato['descripcion'] = form.cleaned_data.get('descripcion') or ''
-                if errores_formato:
-                    for err in errores_formato:
-                        messages.error(request, err)
+            elif unico_por_empresa and empresa_seleccionada in empresas_ocupadas:
+                info_oc = empresas_ocupadas[empresa_seleccionada]
+                messages.error(
+                    request,
+                    f'Ya existe un {tipo_nombre} vigente para {empresa_seleccionada} '
+                    f'({info_oc["codigo"]}). Actualiza ese documento mediante Planilla de '
+                    f'Cambios o desincorpóralo antes de crear otro.',
+                )
+            else:
+                secuencia = request.POST.get('secuencia', '001')
+                codigo = Documento.construir_codigo(
+                    perfil.departamento, tipo, secuencia,
+                    empresa=empresa_seleccionada,
+                )
 
-            if Documento.objects.filter(codigo=codigo).exists():
-                messages.error(request, f'El código {codigo} ya existe. Usa otro número de secuencia.')
-            elif not errores_formato:
-                with transaction.atomic():
-                    doc = form.save(commit=False)
-                    doc.tipo = TipoDocumento.objects.get(key=tipo)
-                    doc.propietario = request.user
-                    doc.departamento = perfil.departamento
-                    doc.estado = 'borrador'
-                    doc.codigo = codigo
-                    doc.plantilla_origen = form.cleaned_data.get('plantilla_origen')
-                    try:
-                        doc.clean()
-                    except ValidationError as exc:
-                        messages.error(request, ' '.join(exc.messages))
-                        return redirect('documentos:crear_documento', tipo=tipo)
-                    doc.save()
-                    form.save_m2m()
-                    VersionDocumento.objects.create(
-                        documento=doc, numero_version='1',
-                        archivo=doc.archivo or None,
-                        cambios='Versión inicial', creado_por=request.user
+                respuestas_formato, errores_formato = {}, []
+                if formato_dinamico:
+                    respuestas_formato, errores_formato = validar_respuestas(
+                        formato_dinamico, request.POST, parcial=(accion == 'borrador')
                     )
+                    respuestas_formato['descripcion'] = form.cleaned_data.get('descripcion') or ''
+                    if errores_formato:
+                        for err in errores_formato:
+                            messages.error(request, err)
 
-                    sol_cambio = None
-                    if formato_dinamico:
-                        codigo_sol = f"SC-{timezone.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6].upper()}"
-                        sol_cambio = SolicitudCambio.objects.create(
-                            codigo=codigo_sol,
-                            formato=formato_dinamico,
-                            operacion='creacion',
-                            documento=doc,
-                            solicitante=request.user,
-                            departamento=perfil.departamento,
-                            respuestas=respuestas_formato if respuestas_formato else {},
-                            estado='borrador',
+                if Documento.objects.filter(codigo=codigo).exists():
+                    messages.error(request, f'El código {codigo} ya existe. Usa otro número de secuencia.')
+                elif not errores_formato:
+                    with transaction.atomic():
+                        doc = form.save(commit=False)
+                        doc.tipo = TipoDocumento.objects.get(key=tipo)
+                        doc.propietario = request.user
+                        doc.departamento = perfil.departamento
+                        doc.empresa = empresa_seleccionada
+                        doc.estado = 'borrador'
+                        doc.codigo = codigo
+                        doc.plantilla_origen = form.cleaned_data.get('plantilla_origen')
+                        try:
+                            doc.clean()
+                        except ValidationError as exc:
+                            messages.error(request, ' '.join(exc.messages))
+                            return redirect('documentos:crear_documento', tipo=tipo)
+                        doc.save()
+                        form.save_m2m()
+                        VersionDocumento.objects.create(
+                            documento=doc, numero_version='1',
+                            archivo=doc.archivo or None,
+                            cambios='Versión inicial', creado_por=request.user
                         )
 
-                    solicitud_aprob = None
-                    if accion != 'borrador':
-                        if sol_cambio:
-                            sol_cambio.estado = 'en_revision'
-                            sol_cambio.save(update_fields=['estado'])
-                            _autollenar_envio(sol_cambio, request.user)
-                        solicitud_aprob = crear_cadena_aprobacion_documento(
-                            documento=doc, usuario=request.user,
-                            departamento=perfil.departamento, accion='creacion',
-                        )
-                        doc.estado = 'en_revision'
-                        doc.save(update_fields=['estado'])
+                        sol_cambio = None
+                        if formato_dinamico:
+                            codigo_sol = f"SC-{timezone.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6].upper()}"
+                            sol_cambio = SolicitudCambio.objects.create(
+                                codigo=codigo_sol,
+                                formato=formato_dinamico,
+                                operacion='creacion',
+                                documento=doc,
+                                solicitante=request.user,
+                                departamento=perfil.departamento,
+                                respuestas=respuestas_formato if respuestas_formato else {},
+                                estado='borrador',
+                            )
 
-                    _procesar_referencias(doc, request, perfil)
+                        solicitud_aprob = None
+                        if accion != 'borrador':
+                            if sol_cambio:
+                                sol_cambio.estado = 'en_revision'
+                                sol_cambio.save(update_fields=['estado'])
+                                _autollenar_envio(sol_cambio, request.user)
+                            solicitud_aprob = crear_cadena_aprobacion_documento(
+                                documento=doc, usuario=request.user,
+                                departamento=perfil.departamento, accion='creacion',
+                            )
+                            doc.estado = 'en_revision'
+                            doc.save(update_fields=['estado'])
 
-                if not request.FILES.get('archivo'):
-                    messages.warning(request, 'El documento se guardó sin archivo adjunto.')
+                        _procesar_referencias(doc, request, perfil)
 
-                if accion == 'borrador':
-                    messages.success(request, f'{tipo_nombre} "{doc.nombre}" guardado como borrador.')
-                elif solicitud_aprob and solicitud_aprob.aprobador_id:
-                    messages.success(request, f'{tipo_nombre} "{doc.nombre}" creado y enviado para aprobación.')
-                else:
-                    if _es_jefe(request.user):
-                        messages.warning(
-                            request,
-                            f'{tipo_nombre} "{doc.nombre}" creado, pero no hay jefe '
-                            f'Gerencia General asignado. Quedará en espera de autorización.'
-                        )
-                        messages.info(request, 'Se activará cuando Gerencia General lo autorice.')
+                    if not request.FILES.get('archivo'):
+                        messages.warning(request, 'El documento se guardó sin archivo adjunto.')
+
+                    if accion == 'borrador':
+                        messages.success(request, f'{tipo_nombre} "{doc.nombre}" guardado como borrador.')
+                    elif solicitud_aprob and solicitud_aprob.aprobador_id:
+                        messages.success(request, f'{tipo_nombre} "{doc.nombre}" creado y enviado para aprobación.')
                     else:
-                        messages.warning(
-                            request,
-                            f'{tipo_nombre} "{doc.nombre}" creado, pero no hay jefe de '
-                            f'departamento asignado. Quedará en espera de evaluación.'
-                        )
-                        messages.info(
-                            request,
-                            'Se activará cuando un jefe lo evalúe y Gerencia General lo autorice.'
-                        )
+                        if _es_jefe(request.user):
+                            messages.warning(
+                                request,
+                                f'{tipo_nombre} "{doc.nombre}" creado, pero no hay jefe '
+                                f'Gerencia General asignado. Quedará en espera de autorización.'
+                            )
+                            messages.info(request, 'Se activará cuando Gerencia General lo autorice.')
+                        else:
+                            messages.warning(
+                                request,
+                                f'{tipo_nombre} "{doc.nombre}" creado, pero no hay jefe de '
+                                f'departamento asignado. Quedará en espera de evaluación.'
+                            )
+                            messages.info(
+                                request,
+                                'Se activará cuando un jefe lo evalúe y Gerencia General lo autorice.'
+                            )
 
-                return redirect('documentos:detalle', tipo=tipo, documento_id=doc.uuid)
+                    return redirect('documentos:detalle', tipo=tipo, documento_id=doc.uuid)
     else:
         form = DocumentoForm(
             departamento_id=perfil.departamento.id,
@@ -1149,7 +1197,29 @@ def crear_documento(request, tipo):
             plantillas_queryset=plantillas_disponibles,
         )
 
-    codigo_preview = Documento.generar_codigo_secuencial(perfil.departamento, tipo)
+    if usa_prefijo_empresa:
+        if request.method == 'POST' and empresa_seleccionada in Documento.EMPRESAS_VALIDAS:
+            emp_preview = empresa_seleccionada
+        elif unico_por_empresa:
+            emp_preview = next(
+                (cod for cod, _ in Documento.EMPRESA_CHOICES if cod not in empresas_ocupadas),
+                'PTCA',
+            )
+        else:
+            emp_preview = 'PTCA'
+    else:
+        emp_preview = ''
+    empresas_selector = [
+        {
+            'codigo': emp_cod,
+            'nombre': emp_nom,
+            'ocupado': empresas_ocupadas.get(emp_cod),
+        }
+        for emp_cod, emp_nom in Documento.EMPRESA_CHOICES
+    ]
+    codigo_preview = Documento.generar_codigo_secuencial(
+        perfil.departamento, tipo, empresa=emp_preview,
+    )
 
     return render(request, 'documentos/formulario.html', {
         'form': form,
@@ -1162,6 +1232,12 @@ def crear_documento(request, tipo):
         'tipo_documento_codigo': tipo_codigo,
         'codigo_preview': codigo_preview,
         'sin_prefijo_depto': sin_prefijo_depto,
+        'usa_prefijo_empresa': usa_prefijo_empresa,
+        'unico_por_empresa': unico_por_empresa,
+        'empresas_ocupadas': empresas_ocupadas,
+        'empresas_selector': empresas_selector,
+        'empresas_choices': Documento.EMPRESA_CHOICES,
+        'empresa_seleccionada': emp_preview,
         'es_dinamico': True,
         'selector_relacionados': _selector_relacionados(),
         'formato_dinamico': formato_dinamico,
@@ -1183,6 +1259,13 @@ def crear_plantilla(request, tipo):
         messages.error(request, 'Tipo de documento no válido.')
         return redirect('documentos:catalogo')
 
+    if tipo in ('organigrama', 'mapa_procesos'):
+        messages.info(
+            request,
+            f'El {tipo_obj.nombre.lower()} se construye directamente en el editor interactivo y no utiliza plantillas.',
+        )
+        return redirect('documentos:catalogo')
+
     perfil = request.user.perfil
     if not perfil.departamento:
         messages.error(
@@ -1198,13 +1281,23 @@ def crear_plantilla(request, tipo):
         return redirect('documentos:catalogo')
 
     sin_prefijo_depto = Documento.es_sin_prefijo_depto(tipo)
+    usa_prefijo_empresa = Documento.usa_prefijo_empresa(tipo)
+    empresa_seleccionada = (
+        (request.POST.get('empresa') or 'PTCA').strip().upper()
+        if usa_prefijo_empresa else ''
+    )
 
     if request.method == 'POST':
-        form = PlantillaForm(request.POST, request.FILES)
+        form = PlantillaForm(request.POST, request.FILES, tipo_documento=tipo_obj)
         if form.is_valid():
+            empresa_sel = (
+                form.cleaned_data.get('empresa', '')
+                if usa_prefijo_empresa else ''
+            )
             with transaction.atomic():
                 codigo = Documento.reservar_codigo_secuencial(
-                    perfil.departamento, tipo, es_plantilla=True,
+                    perfil.departamento, tipo,
+                    es_plantilla=True, empresa=empresa_sel,
                 )
                 if codigo is None:
                     messages.error(
@@ -1218,6 +1311,7 @@ def crear_plantilla(request, tipo):
                 doc.tipo = tipo_obj
                 doc.propietario = request.user
                 doc.departamento = perfil.departamento
+                doc.empresa = empresa_sel
                 doc.es_plantilla = True
                 doc.estado = 'borrador'
                 doc.codigo = codigo
@@ -1259,10 +1353,13 @@ def crear_plantilla(request, tipo):
                 )
             return redirect('documentos:detalle', tipo=tipo, documento_id=doc.uuid)
     else:
-        form = PlantillaForm()
+        form = PlantillaForm(tipo_documento=tipo_obj)
 
+    emp_preview = (
+        empresa_seleccionada if empresa_seleccionada in Documento.EMPRESAS_VALIDAS else 'PTCA'
+    ) if usa_prefijo_empresa else ''
     codigo_preview = Documento.generar_codigo_secuencial(
-        perfil.departamento, tipo, es_plantilla=True,
+        perfil.departamento, tipo, es_plantilla=True, empresa=emp_preview,
     )
     return render(request, 'documentos/crear_plantilla.html', {
         'form': form,
@@ -1272,6 +1369,8 @@ def crear_plantilla(request, tipo):
         'tipo_codigo': tipo_obj.codigo,
         'codigo_preview': codigo_preview,
         'sin_prefijo_depto': sin_prefijo_depto,
+        'usa_prefijo_empresa': usa_prefijo_empresa,
+        'auto_departamento_id': perfil.departamento.id,
         'auto_departamento_nombre': str(perfil.departamento),
     })
 
@@ -1364,6 +1463,10 @@ def editar_borrador(request, tipo, documento_id):
     if not puede_editar_documento(request.user, documento):
         messages.error(request, 'No tienes permisos para editar este documento.')
         return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
+    if documento.tipo_id == 'organigrama':
+        return redirect('documentos:organigrama_constructor')
+    if documento.tipo_id == 'mapa_procesos':
+        return redirect('documentos:mapa_procesos_constructor', empresa=documento.empresa or 'PTCA')
 
     perfil = request.user.perfil
     tipo_obj = TipoDocumento.objects.filter(key=tipo).first()
@@ -1483,6 +1586,7 @@ def obtener_siguiente_secuencia(request):
     departamento_id = request.GET.get('departamento_id')
     tipo_codigo = request.GET.get('tipo_codigo')
     es_plantilla = request.GET.get('plantilla', '') in ('1', 'true', 'True')
+    empresa = (request.GET.get('empresa') or '').strip().upper()
     
     if not departamento_id or not tipo_codigo:
         return JsonResponse({'error': 'Parámetros faltantes'}, status=400)
@@ -1498,13 +1602,19 @@ def obtener_siguiente_secuencia(request):
 
     if not tipo:
         return JsonResponse({'error': 'Tipo de documento no válido'}, status=400)
+
+    if tipo_obj.usa_prefijo_empresa:
+        if not empresa:
+            empresa = 'PTCA'
+        if empresa not in Documento.EMPRESAS_VALIDAS:
+            return JsonResponse({'error': 'Empresa no válida'}, status=400)
     
     consecutivo = Documento.generar_codigo_secuencial(
-        departamento, tipo, es_plantilla=es_plantilla,
+        departamento, tipo, es_plantilla=es_plantilla, empresa=empresa,
     )
     secuencia = consecutivo.split('-')[-1]
     
-    return JsonResponse({'secuencia': secuencia})
+    return JsonResponse({'secuencia': secuencia, 'codigo': consecutivo})
 
 
 def _normalizar_version(valor):
@@ -1538,7 +1648,11 @@ def detalle_documento(request, tipo, documento_id):
 
     _reconciliar_resumen_ia(documento)
 
-    versiones = list(VersionDocumento.objects.filter(documento=documento, activa=True))
+    es_organigrama = documento.tipo_id in ('organigrama', 'mapa_procesos')
+    versiones = list(
+        VersionDocumento.objects.filter(documento=documento, activa=True)
+        .defer('datos_organigrama')
+    )
     version_vigente = _version_vigente(versiones, documento)
     # La versión vigente siempre primero; el resto, de la más reciente a la
     # más antigua (orden estable: se ordena por fecha y luego por vigencia).
@@ -1567,24 +1681,26 @@ def detalle_documento(request, tipo, documento_id):
     )
 
     convirtiendo = False
-    from .services.documentos_pdf import (
-        FORMATOS_CONVERTIBLES, adquirir_candado_conversion, encolar_conversion,
-        liberar_candado_conversion, pdf_disponible,
-    )
-    pdf_listo = pdf_disponible(documento)
-    if (documento.archivo and documento.tipo_archivo in FORMATOS_CONVERTIBLES
-            and not pdf_listo):
-        # Conversión asíncrona: se encola y la plantilla muestra la barra de
-        # progreso haciendo polling de `estado_conversion`. Si el broker no
-        # responde, `encolar_conversion` degrada a la conversión en línea
-        # (mismo comportamiento que antes) y devuelve el resultado.
-        # El candado evita reencolar en cada apertura de la ficha mientras
-        # la conversión anterior sigue en curso.
-        if adquirir_candado_conversion(documento):
-            pdf_listo = encolar_conversion(documento)
-            if pdf_listo:
-                liberar_candado_conversion(documento)
-        convirtiendo = not pdf_listo
+    pdf_listo = False
+    if not es_organigrama:
+        from .services.documentos_pdf import (
+            FORMATOS_CONVERTIBLES, adquirir_candado_conversion, encolar_conversion,
+            liberar_candado_conversion, pdf_disponible,
+        )
+        pdf_listo = pdf_disponible(documento)
+        if (documento.archivo and documento.tipo_archivo in FORMATOS_CONVERTIBLES
+                and not pdf_listo):
+            # Conversión asíncrona: se encola y la plantilla muestra la barra de
+            # progreso haciendo polling de `estado_conversion`. Si el broker no
+            # responde, `encolar_conversion` degrada a la conversión en línea
+            # (mismo comportamiento que antes) y devuelve el resultado.
+            # El candado evita reencolar en cada apertura de la ficha mientras
+            # la conversión anterior sigue en curso.
+            if adquirir_candado_conversion(documento):
+                pdf_listo = encolar_conversion(documento)
+                if pdf_listo:
+                    liberar_candado_conversion(documento)
+            convirtiendo = not pdf_listo
 
     # Todas las aprobaciones del documento en una sola consulta (con sus
     # usuarios/versión precargados): de aquí se derivan la solicitud pendiente
@@ -1795,7 +1911,7 @@ def detalle_documento(request, tipo, documento_id):
         documento=documento, estado='borrador', responsable=request.user,
     ).first()
 
-    ia_habilitada = ai.esta_habilitado()
+    ia_habilitada = False if es_organigrama else ai.esta_habilitado()
 
     # Registros del documento de contexto: si puede ver el documento, puede
     # ver su evidencia. Evita una consulta extra de visibilidad por ficha.
@@ -1816,8 +1932,51 @@ def detalle_documento(request, tipo, documento_id):
         for f in svc_for_003.filas_historicas(documento)
     ]
 
+    from .services.organigrama import (
+        puede_construir_organigrama, puede_exportar_organigrama, puede_ver_organigrama,
+    )
+    from .views_organigrama import _catalogo_organigrama
+    version_visualizada = (
+        request.GET.get('version') or documento.version_actual
+    )
+    deptos_cat, empresas_cat = ([], [])
+    if es_organigrama:
+        version_vis_norm = _normalizar_version(version_visualizada)
+        if not any(_normalizar_version(v.numero_version) == version_vis_norm for v in versiones):
+            version_visualizada = documento.version_actual
+        deptos_cat, empresas_cat = _catalogo_organigrama()
+
+    is_map = (documento.tipo_id == 'mapa_procesos')
     return render(request, 'documentos/detalle.html', {
         'documento': documento,
+        'es_organigrama': es_organigrama,
+        'diagrama_kind': documento.tipo_id if es_organigrama else '',
+        'diagrama_label': 'Mapa de Procesos' if is_map else 'Organigrama',
+        'diagrama_icon': 'fa-diagram-project' if is_map else 'fa-sitemap',
+        'diagrama_constructor_url': (
+            reverse('documentos:mapa_procesos_constructor', args=[documento.empresa or 'PTCA'])
+            if is_map else reverse('documentos:organigrama_constructor')
+        ) if es_organigrama else '',
+        'diagrama_visor_url': (
+            reverse('documentos:mapa_procesos_visor', args=[documento.uuid])
+            if is_map else reverse('documentos:organigrama_visor', args=[documento.uuid])
+        ) if es_organigrama else '',
+        'puede_construir_org': (
+            es_organigrama and puede_construir_organigrama(request.user, documento)
+        ),
+        'puede_ver_org': (
+            es_organigrama and puede_ver_organigrama(request.user, documento, requerir_aprobada=True)
+        ),
+        'puede_exportar_org': (
+            es_organigrama and puede_exportar_organigrama(request.user, documento)
+        ),
+        'exportar_url': (
+            reverse('documentos:organigrama_exportar_api', args=[documento.uuid])
+            if es_organigrama else ''
+        ),
+        'version_visualizada': version_visualizada,
+        'departamentos_catalogo': deptos_cat,
+        'empresas_catalogo': empresas_cat,
         'planilla_borrador': planilla_borrador,
         'cambios_for_003': cambios_for_003,
         'tipo': tipo,
@@ -1903,6 +2062,10 @@ def editar_documento(request, tipo, documento_id):
     if not puede_editar_documento(request.user, documento):
         messages.error(request, 'No tienes permisos para editar este documento.')
         return redirect('documentos:detalle', tipo=tipo, documento_id=documento.uuid)
+    if documento.tipo_id == 'organigrama':
+        return redirect('documentos:organigrama_constructor')
+    if documento.tipo_id == 'mapa_procesos':
+        return redirect('documentos:mapa_procesos_constructor', empresa=documento.empresa or 'PTCA')
     if documento.estado == 'borrador':
         return redirect('documentos:editar_borrador', tipo=tipo, documento_id=documento.uuid)
     return redirect(f'/documentos/planilla-cambios/nueva/?tipo={tipo}&doc_uuid={documento.uuid}')
@@ -2379,6 +2542,11 @@ def resumen_ia(request, tipo, documento_id):
     from . import ai
 
     if request.method == 'POST':
+        if documento.tipo_id in ('organigrama', 'mapa_procesos') and not documento.archivo:
+            return JsonResponse(
+                {'error': 'El resumen IA no está disponible para diagramas interactivos.'},
+                status=400,
+            )
         if not ai.esta_habilitado():
             return JsonResponse(
                 {'error': 'El resumen con IA no está habilitado.'}, status=400
@@ -2500,7 +2668,10 @@ def historial_versiones(request, tipo, documento_id):
     if not puede_ver_documento(request.user, documento):
         messages.error(request, 'No tienes permisos para ver este documento.')
         return redirect('documentos:mis_documentos')
-    versiones = list(VersionDocumento.objects.filter(documento=documento, activa=True))
+    versiones = list(
+        VersionDocumento.objects.filter(documento=documento, activa=True)
+        .defer('datos_organigrama')
+    )
     version_vigente = _version_vigente(versiones, documento)
     solicitudes_pendientes = SolicitudAprobacionDocumento.objects.filter(
         documento=documento, accion_solicitud='eliminar_version', estado='pendiente'
@@ -2510,8 +2681,15 @@ def historial_versiones(request, tipo, documento_id):
     # departamento, que no responde por la autoría del documento).
     perfil = request.user.perfil
     puede_eliminar_versiones = perfil.es_administrador or documento.propietario == request.user
+    es_diagrama = documento.tipo_id in ('organigrama', 'mapa_procesos')
     return render(request, 'documentos/historial_versiones.html', {
         'documento': documento, 'tipo': tipo, 'versiones': versiones,
+        'es_organigrama': es_diagrama,
+        'diagrama_visor_url': (
+            reverse('documentos:mapa_procesos_visor', args=[documento.uuid])
+            if documento.tipo_id == 'mapa_procesos'
+            else reverse('documentos:organigrama_visor', args=[documento.uuid])
+        ) if es_diagrama else '',
         'version_vigente_id': version_vigente.pk if version_vigente else None,
         'solicitudes_pendientes_ids': list(solicitudes_pendientes),
         'puede_eliminar_versiones': puede_eliminar_versiones,
@@ -2864,6 +3042,15 @@ def asignar_documento(request, tipo, documento_id):
     if request.method == 'POST':
         form = AsignacionDocumentoForm(request.POST, departamento=documento.departamento)
         if form.is_valid():
+            if documento.tipo_id in ('organigrama', 'mapa_procesos') and form.cleaned_data.get('puede_editar'):
+                messages.error(
+                    request,
+                    'El acceso de edición de este diagrama lo asigna únicamente el administrador desde Gestionar accesos.',
+                )
+                return render(request, 'documentos/asignar_documento.html', {
+                    'form': form, 'documento': documento, 'tipo': tipo,
+                    'hay_asignables': form.fields['coordinador'].queryset.exists(),
+                })
             asignacion = form.save(commit=False)
             asignacion.documento = documento
             asignacion.jefe_asignador = request.user
@@ -4833,6 +5020,7 @@ def auditoria_reporte_pdf(request):
             Spacer, KeepTogether
         )
         from reportlab.lib.units import inch, mm
+        from reportlab.pdfgen import canvas as pdfcanvas
         from reportlab.platypus.doctemplate import PageTemplate, BaseDocTemplate, Frame
         from reportlab.pdfbase import pdfmetrics
     except ImportError as e:
@@ -4979,56 +5167,75 @@ def auditoria_reporte_pdf(request):
     if filtro_categoria:
         filtros_texto.append('Categoría: ' + ', '.join(filtro_categoria))
     filtros_str = ', '.join(filtros_texto) if filtros_texto else 'Todos'
+    from auditoria.middleware import resolver_ip_cliente
+
+    ip_origen = resolver_ip_cliente(request) or 'N/A'
     filtros_dict = {
         'tipo': tipo_reporte,
         'usuario': filtro_usuario or None,
         'accion_tipo': ', '.join(filtro_accion) or None,
         'accion_categoria': ', '.join(filtro_categoria) or None,
     }
+    huella_payload = json.dumps(
+        {
+            'codigo': doc_code,
+            'periodo': [fecha_inicio, fecha_fin],
+            'filtros': filtros_dict,
+            'ip_origen': ip_origen,
+            'total': total,
+            'log_ids': [str(l.get('log_id') or '') for l in logs],
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+    ).encode('utf-8')
+    huella_reporte = sha256(huella_payload).hexdigest()[:8].upper()
 
     # El PDF se genera en memoria y luego se conserva en disco (storage
     # privado): queda la constancia del informe y su hash de integridad.
     buffer = BytesIO()
 
-    # ── Numeración de páginas ──
-    class NumberedCanvas:
-        def __init__(self, canvas, doc):
-            self._canvas = canvas
-            self._pages = []
-            self._doc = doc
+    # ── Numeración de páginas + huella única por informe en cada hoja ──
+    class _AuditoriaNumberedCanvas(pdfcanvas.Canvas):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._saved_page_states = []
 
         def showPage(self):
-            self._pages.append(dict(self._canvas.__dict__))
-            self._canvas.showPage()
+            self._saved_page_states.append(dict(self.__dict__))
+            self._startPage()
 
         def save(self):
-            num_pages = len(self._pages)
-            for i, page in enumerate(self._pages):
-                self._canvas.__dict__.update(page)
-                self._draw_footer(i + 1, num_pages)
-                self._canvas.showPage()
-            self._canvas.save()
+            total_pages = len(self._saved_page_states)
+            for state in self._saved_page_states:
+                self.__dict__.update(state)
+                self._draw_footer(total_pages)
+                super().showPage()
+            super().save()
 
-        def _draw_footer(self, page_num, total_pages):
-            c = self._canvas
-            c.saveState()
+        def _draw_footer(self, total_pages):
+            self.saveState()
             w = pagesize[0]
-            # Línea separadora
-            c.setStrokeColor(colors.HexColor('#d1d5db'))
-            c.setLineWidth(0.5)
-            c.line(left_margin, bottom_margin - 0.1 * inch, w - right_margin, bottom_margin - 0.1 * inch)
-            # Izquierda: ISO
-            c.setFont('Helvetica', 6.5)
-            c.setFillColor(colors.HexColor('#9ca3af'))
-            c.drawString(left_margin, bottom_margin - 0.25 * inch,
-                f'ISO 9001:2015 §7.5 · §9.2.2 — Información Documentada')
-            # Derecha: Página + fecha
-            c.drawRightString(w - right_margin, bottom_margin - 0.25 * inch,
-                f'Página {page_num} de {total_pages}  ·  Generado: {now_str}')
-            # Centro: retención
-            c.drawCentredString(w / 2, bottom_margin - 0.25 * inch,
-                'Retención: 10 años')
-            c.restoreState()
+            self.setStrokeColor(colors.HexColor('#d1d5db'))
+            self.setLineWidth(0.5)
+            self.line(
+                left_margin, bottom_margin - 0.1 * inch,
+                w - right_margin, bottom_margin - 0.1 * inch,
+            )
+            self.setFont('Helvetica', 6.5)
+            self.setFillColor(colors.HexColor('#9ca3af'))
+            self.drawString(
+                left_margin, bottom_margin - 0.25 * inch,
+                'ISO 9001:2015 §7.5 · §9.2.2 — Retención: 10 años',
+            )
+            self.drawCentredString(
+                w / 2, bottom_margin - 0.25 * inch,
+                f'{doc_code} · Huella: {huella_reporte}',
+            )
+            self.drawRightString(
+                w - right_margin, bottom_margin - 0.25 * inch,
+                f'Página {self._pageNumber} de {total_pages}  ·  Generado: {now_str}',
+            )
+            self.restoreState()
 
     # ── Encabezado (logo + branding) ──
     logo_cell = logo if logo else ''
@@ -5086,9 +5293,11 @@ def auditoria_reporte_pdf(request):
          Paragraph('<b>Fecha emisión:</b>', sSmall), Paragraph(now_str, sSmall)],
         [Paragraph('<b>Departamento:</b>', sSmall), Paragraph(user_depto or 'N/A', sSmall),
          Paragraph('<b>Total registros:</b>', sSmall), Paragraph(str(total), sSmall)],
+        [Paragraph('<b>IP de origen:</b>', sSmall), Paragraph(ip_origen, sSmall),
+         Paragraph('<b>Huella de integridad:</b>', sSmall), Paragraph(huella_reporte, sSmall)],
     ]
     col_w = 1.7375 * inch
-    ctrl_table = Table(ctrl_data, colWidths=[col_w] * 4, rowHeights=[0.18 * inch] * 3)
+    ctrl_table = Table(ctrl_data, colWidths=[col_w] * 4)
     ctrl_table.setStyle(TableStyle([
         ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#d1d5db')),
         ('INNERGRID', (0, 0), (-1, -1), 0.25, colors.HexColor('#e5e7eb')),
@@ -5255,23 +5464,7 @@ def auditoria_reporte_pdf(request):
     elements.append(Paragraph('CONTROL DE APROBACIÓN — ISO 9001:2015 §7.5', sSection))
     elements.append(firmas_table)
 
-    # ── Construir con numeración de páginas ──
-    def draw_footer(canvas, doc_obj):
-        canvas.saveState()
-        w = pagesize[0]
-        canvas.setStrokeColor(colors.HexColor('#d1d5db'))
-        canvas.setLineWidth(0.5)
-        canvas.line(left_margin, bottom_margin - 0.1 * inch, w - right_margin, bottom_margin - 0.1 * inch)
-        canvas.setFont('Helvetica', 6.5)
-        canvas.setFillColor(colors.HexColor('#9ca3af'))
-        canvas.drawString(left_margin, bottom_margin - 0.25 * inch,
-            'ISO 9001:2015 §7.5 · §9.2.2 — Información Documentada')
-        canvas.drawCentredString(w / 2, bottom_margin - 0.25 * inch,
-            'Retención: 10 años')
-        canvas.drawRightString(w - right_margin, bottom_margin - 0.25 * inch,
-            f'Página {doc_obj.page} de ?  ·  Generado: {now_str}')
-        canvas.restoreState()
-
+    # ── Construir con numeración real de páginas + huella en footer ──
     doc = SimpleDocTemplate(
         buffer, pagesize=pagesize,
         leftMargin=left_margin, rightMargin=right_margin,
@@ -5281,7 +5474,7 @@ def auditoria_reporte_pdf(request):
         subject=f'Reporte de auditoría ISO 9001:2015 — Período {fecha_inicio} a {fecha_fin}',
         creator='POLIDOC v1.0',
     )
-    doc.build(elements, onFirstPage=draw_footer, onLaterPages=draw_footer)
+    doc.build(elements, canvasmaker=_AuditoriaNumberedCanvas)
     pdf_bytes = buffer.getvalue()
     buffer.close()
 
@@ -6980,10 +7173,21 @@ def _lista_sin_codigo(request, ambito):
         messages.error(request, 'No tienes permisos para ver esta sección.')
         return redirect('documentos:mis_documentos')
 
-    qs = svc.visibles(request.user, ambito)
+    qs = svc.visibles(request.user, ambito).select_related(
+        'propietario', 'departamento',
+    )
     q = (request.GET.get('q') or '').strip()
     if q:
         qs = qs.filter(Q(titulo__icontains=q) | Q(referencia__icontains=q))
+    estado_filtro = ''
+    if ambito == svc.AMBITO_SGC:
+        estado_filtro = (request.GET.get('estado') or '').strip()
+        if estado_filtro in (
+            svc.ESTADO_PENDIENTE, svc.ESTADO_APROBADO, svc.ESTADO_RECHAZADO,
+        ):
+            qs = qs.filter(estado_aprobacion=estado_filtro)
+        else:
+            estado_filtro = ''
     page = Paginator(qs.order_by('-creado'), 20).get_page(request.GET.get('page', 1))
     return render(request, 'documentos/documentos_sin_codigo_lista.html', {
         'ambito': ambito,
@@ -6991,6 +7195,7 @@ def _lista_sin_codigo(request, ambito):
         'documentos': page,
         'page_obj': page,
         'q': q,
+        'estado_filtro': estado_filtro,
         'puede_crear': True,
     })
 
@@ -7003,7 +7208,7 @@ def documentos_personales(request):
 
 @login_required(login_url='/login/')
 def documentos_sgc_sin_codigo(request):
-    """Bandeja de soportes/registros institucionales sin código (admin/jefe)."""
+    """Bandeja de soportes/registros institucionales sin código."""
     return _lista_sin_codigo(request, 'sgc')
 
 
@@ -7018,6 +7223,9 @@ def _form_sin_codigo(request, ambito, documento=None):
         messages.error(request, 'No tienes permisos para crear ese documento.')
         return redirect('documentos:mis_documentos')
 
+    depto_usuario = getattr(
+        getattr(request.user, 'perfil', None), 'departamento', None,
+    )
     if request.method == 'POST':
         form = DocumentoSinCodigoForm(
             request.POST, request.FILES, instance=documento, ambito=ambito,
@@ -7028,32 +7236,71 @@ def _form_sin_codigo(request, ambito, documento=None):
             if documento is None:
                 doc.propietario = request.user
                 doc.creado_por = request.user
+
+            requiere_aprobacion = False
+            if ambito == svc.AMBITO_SGC:
+                if documento is None:
+                    doc.departamento = depto_usuario
+                    if svc.se_autoaprueba_sgc(request.user):
+                        doc.estado_aprobacion = svc.ESTADO_APROBADO
+                        doc.aprobado_por = request.user
+                        doc.fecha_aprobacion = timezone.now()
+                        doc.comentario_revision = ''
+                    else:
+                        doc.estado_aprobacion = svc.ESTADO_PENDIENTE
+                        doc.aprobado_por = None
+                        doc.fecha_aprobacion = None
+                        doc.comentario_revision = ''
+                        requiere_aprobacion = True
+                elif (documento.estado_aprobacion == svc.ESTADO_RECHAZADO
+                      and not svc.se_autoaprueba_sgc(request.user)):
+                    doc.estado_aprobacion = svc.ESTADO_PENDIENTE
+                    doc.aprobado_por = None
+                    doc.fecha_aprobacion = None
+                    doc.comentario_revision = ''
+                    requiere_aprobacion = True
+
             doc.save()
+            if requiere_aprobacion:
+                svc.notificar_pendiente_aprobacion(doc)
             _registrar_auditoria(
                 request,
                 accion=('documentos_sin_codigo_editado' if documento is not None
                         else 'documentos_sin_codigo_creado'),
                 recurso_tipo='documentos_sin_codigo', recurso_id=doc.uuid,
                 recurso_nombre=doc.titulo,
-                detalles={'ambito': ambito},
+                detalles={
+                    'ambito': ambito,
+                    'estado_aprobacion': doc.estado_aprobacion,
+                },
             )
-            messages.success(
-                request,
-                'Documento guardado correctamente.'
-                if documento is not None else 'Documento creado correctamente.',
-            )
+            if requiere_aprobacion:
+                messages.info(
+                    request,
+                    'Documento enviado para aprobación de tu jefe directo.',
+                )
+            else:
+                messages.success(
+                    request,
+                    'Documento guardado correctamente.'
+                    if documento is not None else 'Documento creado correctamente.',
+                )
             return redirect(
                 'documentos:documento_sin_codigo_detalle', uuid=doc.uuid,
             )
     else:
         form = DocumentoSinCodigoForm(instance=documento, ambito=ambito)
 
+    departamento_asignado = (
+        documento.departamento if documento is not None else depto_usuario
+    )
     return render(request, 'documentos/documentos_sin_codigo_form.html', {
         'form': form,
         'ambito': ambito,
         'es_sgc': ambito == svc.AMBITO_SGC,
         'documento': documento,
         'edicion': documento is not None,
+        'departamento_asignado': departamento_asignado,
     })
 
 
@@ -7073,7 +7320,70 @@ def documento_sin_codigo_detalle(request, uuid):
         'documento': documento,
         'es_sgc': documento.ambito == svc.AMBITO_SGC,
         'puede_editar': svc.puede_editar(request.user, documento),
+        'puede_aprobar': svc.puede_aprobar(request.user, documento),
     })
+
+
+@login_required(login_url='/login/')
+@require_POST
+def documento_sin_codigo_aprobar(request, uuid):
+    """Aprueba un documento externo (SGC sin código) e ingresa a Lista Maestra."""
+    from .services import documentos_sin_codigo as svc
+
+    documento = get_object_or_404(DocumentoSinCodigo, uuid=uuid, activo=True)
+    if not svc.puede_aprobar(request.user, documento):
+        raise Http404
+    comentario = (request.POST.get('comentario') or '').strip()
+    documento.estado_aprobacion = svc.ESTADO_APROBADO
+    documento.aprobado_por = request.user
+    documento.fecha_aprobacion = timezone.now()
+    documento.comentario_revision = comentario
+    documento.save()
+    _registrar_auditoria(
+        request,
+        accion='documentos_sin_codigo_aprobado',
+        recurso_tipo='documentos_sin_codigo', recurso_id=documento.uuid,
+        recurso_nombre=documento.titulo,
+        detalles={'ambito': documento.ambito, 'comentario': comentario},
+    )
+    svc.notificar_resultado_revision(documento, aprobado=True)
+    messages.success(
+        request,
+        'Documento aprobado. Ya forma parte de la Lista Maestra.',
+    )
+    return redirect('documentos:documento_sin_codigo_detalle', uuid=documento.uuid)
+
+
+@login_required(login_url='/login/')
+@require_POST
+def documento_sin_codigo_rechazar(request, uuid):
+    """Rechaza un documento externo (SGC sin código) indicando motivo."""
+    from .services import documentos_sin_codigo as svc
+
+    documento = get_object_or_404(DocumentoSinCodigo, uuid=uuid, activo=True)
+    if not svc.puede_aprobar(request.user, documento):
+        raise Http404
+    comentario = (request.POST.get('comentario') or '').strip()
+    if not comentario:
+        messages.error(request, 'Indica el motivo del rechazo.')
+        return redirect(
+            'documentos:documento_sin_codigo_detalle', uuid=documento.uuid,
+        )
+    documento.estado_aprobacion = svc.ESTADO_RECHAZADO
+    documento.aprobado_por = request.user
+    documento.fecha_aprobacion = timezone.now()
+    documento.comentario_revision = comentario
+    documento.save()
+    _registrar_auditoria(
+        request,
+        accion='documentos_sin_codigo_rechazado',
+        recurso_tipo='documentos_sin_codigo', recurso_id=documento.uuid,
+        recurso_nombre=documento.titulo,
+        detalles={'ambito': documento.ambito, 'motivo': comentario},
+    )
+    svc.notificar_resultado_revision(documento, aprobado=False)
+    messages.warning(request, 'Documento rechazado.')
+    return redirect('documentos:documento_sin_codigo_detalle', uuid=documento.uuid)
 
 
 @login_required(login_url='/login/')

@@ -1,0 +1,112 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}{% if documento %}{{ documento.nombre }} ({{ documento.codigo }}){% else %}Organigrama{% endif %} - POLIDOC{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/organigrama.css' %}?v=4">
+<style>
+  .org-page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.75rem;
+  }
+  .org-page-header h1 {
+    font-size: 1.375rem;
+    font-weight: 700;
+    color: var(--color-text);
+    margin: 0;
+  }
+  .org-page-meta {
+    font-size: 0.85rem;
+    color: var(--color-muted);
+    margin: 0.2rem 0 0;
+  }
+  .org-page-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .org-empresa-tabs {
+    display: flex;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.85rem;
+  }
+  .org-empty-card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    padding: 3rem 1.5rem;
+    text-align: center;
+    color: var(--color-muted);
+  }
+  .org-empty-card i {
+    font-size: 3rem;
+    color: var(--color-primary);
+    margin-bottom: 1rem;
+  }
+</style>
+{% endblock %}
+
+{% block app_content %}
+{% if sin_organigrama or not documento %}
+<div class="org-empty-card">
+  <i class="fa-solid fa-sitemap"></i>
+  <h2 style="color: var(--color-text); margin: 0 0 0.5rem;">Organigrama aún no disponible</h2>
+  <p style="margin: 0 0 1rem;">Todavía no se ha publicado el organigrama institucional.</p>
+  <a href="{% url 'documentos:mis_documentos' %}" class="btn btn--ghost btn--sm">
+    <i class="fa-solid fa-arrow-left"></i> Volver a Mis Documentos
+  </a>
+</div>
+{% else %}
+<div class="org-page-header">
+  <div>
+    <h1><i class="fa-solid {{ diagrama_icon|default:'fa-sitemap' }}" style="color: var(--color-primary);"></i> {{ documento.nombre }}</h1>
+    <p class="org-page-meta">
+      <strong>{{ documento.codigo }}</strong> ·
+      Versión <strong id="org-header-version">{{ version_visualizada|default:documento.version_actual }}</strong>
+      {% if documento.fecha_vigencia %}· Vigencia {{ documento.fecha_vigencia|date:"d/m/Y" }}{% endif %}
+    </p>
+  </div>
+  <div class="org-page-actions">
+    {% if puede_construir %}
+    <a href="{% if diagrama_constructor_url %}{{ diagrama_constructor_url }}{% else %}{% url 'documentos:organigrama_constructor' %}{% endif %}" class="btn btn--primary btn--sm">
+      <i class="fa-solid fa-pen-ruler"></i> Abrir Constructor
+    </a>
+    {% endif %}
+    <a href="{% url 'documentos:detalle' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost btn--sm">
+      <i class="fa-solid fa-circle-info"></i> Ficha SGC
+    </a>
+  </div>
+</div>
+
+{% if empresa_tabs %}
+<nav class="org-empresa-tabs" aria-label="Cambiar empresa">
+  {% for tab in empresa_tabs %}
+    {% if tab.url %}
+    <a href="{{ tab.url }}" class="btn btn--sm {% if tab.activo %}btn--primary{% else %}btn--ghost{% endif %}" title="{{ tab.nombre }}">
+      {{ tab.codigo }}
+    </a>
+    {% endif %}
+  {% endfor %}
+</nav>
+{% endif %}
+
+{% include 'documentos/_organigrama_workspace.html' %}
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+{% if documento and not sin_organigrama %}
+<script defer src="{% static 'js/organigrama/state.js' %}?v=4"></script>
+<script defer src="{% static 'js/organigrama/viewport.js' %}?v=4"></script>
+<script defer src="{% static 'js/organigrama/router.js' %}?v=4"></script>
+<script defer src="{% static 'js/organigrama/renderer.js' %}?v=4"></script>
+<script defer src="{% static 'js/organigrama/minimap.js' %}?v=4"></script>
+<script defer src="{% static 'js/organigrama/app.js' %}?v=4"></script>
+{% endif %}
+{% endblock %}

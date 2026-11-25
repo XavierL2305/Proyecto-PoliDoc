@@ -1,6 +1,7 @@
 from django.urls import path
 from . import views
 from . import api
+from . import views_organigrama
 
 app_name = 'documentos'
 
@@ -74,6 +75,10 @@ urlpatterns = [
          views.documento_sin_codigo_eliminar, name='documento_sin_codigo_eliminar'),
     path('documentos-sin-codigo/<uuid:uuid>/descargar/',
          views.documento_sin_codigo_descargar, name='documento_sin_codigo_descargar'),
+    path('documentos-sin-codigo/<uuid:uuid>/aprobar/',
+         views.documento_sin_codigo_aprobar, name='documento_sin_codigo_aprobar'),
+    path('documentos-sin-codigo/<uuid:uuid>/rechazar/',
+         views.documento_sin_codigo_rechazar, name='documento_sin_codigo_rechazar'),
 
     # SGC-FOR-006 — Lista Maestra (vista exclusiva, acceso por persona)
     path('lista-maestra/', views.lista_maestra, name='lista_maestra'),
@@ -164,6 +169,22 @@ urlpatterns = [
     path('registros/<uuid:registro_uuid>/distribucion/<int:dist_id>/acuse/', views.registro_subir_acuse, name='registro_subir_acuse'),
     path('registros/<uuid:registro_uuid>/distribucion/<int:dist_id>/revocar/', views.registro_revocar_distribucion, name='registro_revocar_distribucion'),
     path('registros/<uuid:registro_uuid>/constancia/<str:formato>/', views.registro_constancia, name='registro_constancia'),
+
+    # Organigrama y Mapa de Procesos Interactivos (DEBE ir antes del genérico <str:tipo>/<uuid:/>)
+    path('organigrama/', views_organigrama.organigrama_index, name='organigrama_index'),
+    path('organigrama/accesos/', views_organigrama.organigrama_accesos, name='organigrama_accesos'),
+    path('organigrama/accesos/<int:usuario_id>/revocar/', views_organigrama.organigrama_acceso_revocar, name='organigrama_acceso_revocar'),
+    path('organigrama/constructor/', views_organigrama.organigrama_constructor, name='organigrama_constructor'),
+    path('organigrama/<uuid:documento_id>/visor/', views_organigrama.organigrama_visor, name='organigrama_visor'),
+    path('organigrama/<uuid:documento_id>/datos/', views_organigrama.organigrama_datos_api, name='organigrama_datos_api'),
+    path('organigrama/<uuid:documento_id>/guardar/', views_organigrama.organigrama_guardar_api, name='organigrama_guardar_api'),
+    path('organigrama/<uuid:documento_id>/exportar/', views_organigrama.organigrama_exportar_api, name='organigrama_exportar_api'),
+
+    path('mapa-procesos/', views_organigrama.mapa_procesos_index, name='mapa_procesos_index'),
+    path('mapa-procesos/accesos/', views_organigrama.mapa_procesos_accesos, name='mapa_procesos_accesos'),
+    path('mapa-procesos/accesos/<int:usuario_id>/revocar/', views_organigrama.mapa_procesos_acceso_revocar, name='mapa_procesos_acceso_revocar'),
+    path('mapa-procesos/<str:empresa>/constructor/', views_organigrama.mapa_procesos_constructor, name='mapa_procesos_constructor'),
+    path('mapa-procesos/<uuid:documento_id>/visor/', views_organigrama.mapa_procesos_visor, name='mapa_procesos_visor'),
 
     # Detalle, editar, eliminar (genérico - DEBE ir después de rutas específicas)
     path('<str:tipo>/<uuid:documento_id>/', views.detalle_documento, name='detalle'),

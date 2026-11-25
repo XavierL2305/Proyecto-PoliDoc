@@ -115,3 +115,43 @@ class VistaAuditoriaMultiTest(BaseDocumentosTest):
         if mock.called:
             _, kwargs = mock.call_args
             self.assertEqual(kwargs.get('accion_tipo'), ['creacion', 'edicion'])
+
+    def test_pdf_footer_incluye_huella_y_total_paginas(self):
+        from datetime import datetime
+        from io import BytesIO
+        from pypdf import PdfReader
+
+        logs_fake = [
+            {
+                'log_id': f'LOG-2026-000{i}',
+                'timestamp': datetime(2026, 11, 23, 12, 0),
+                'usuario': {'username': 'admin01', 'nombre_completo': 'Admin'},
+                'accion': {'tipo': 'login', 'categoria': 'autenticacion'},
+                'recurso': {'nombre': 'POLIDOC'},
+                'contexto': {'ip_address': '127.0.0.1'},
+                'resultado': {'exitoso': True},
+            }
+            for i in range(1, 35)
+        ]
+        with patch('auditoria.services.obtener_logs', return_value=logs_fake):
+            resp = self.client.get(
+                reverse('documentos:auditoria_reporte_pdf'),
+                {'tipo': 'registro'},
+                REMOTE_ADDR='15.15.1.88',
+            )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp['Content-Type'], 'application/pdf')
+
+        pdf_bytes = b''.join(resp.streaming_content)
+        reader = PdfReader(BytesIO(pdf_bytes))
+        total_paginas = len(reader.pages)
+        self.assertGreaterEqual(total_paginas, 2)
+        texto_p1 = reader.pages[0].extract_text() or ''
+        self.assertIn('IP de origen:', texto_p1)
+        self.assertIn('15.15.1.88', texto_p1)
+        for idx, page in enumerate(reader.pages, start=1):
+            texto = page.extract_text() or ''
+            self.assertIn(f'Página {idx} de {total_paginas}', texto)
+            self.assertIn('SGC-RPT-AUD-', texto)
+            self.assertIn('Huella: ', texto)
+            self.assertNotIn('de ?', texto)

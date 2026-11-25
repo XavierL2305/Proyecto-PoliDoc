@@ -47,6 +47,7 @@ ORIGEN_SIN_CODIGO = 'sin_codigo'
 ORIGEN_MANUAL = 'manual'
 
 _EMPRESAS_POR_CODIGO = {
+    'PTCA': 'PTCA',
     'PTH': 'Policlínica Táchira Hospitalización',
     'FP': 'Farmacia',
     'FS': 'Fuente de Soda',
@@ -194,8 +195,11 @@ def _cargo(usuario):
 
 
 def empresa_documento(documento):
-    """Empresa a partir del departamento o del prefijo del código."""
+    """Empresa a partir de `documento.empresa`, el departamento o el prefijo del código."""
     codigos = []
+    empresa_doc = (getattr(documento, 'empresa', '') or '').strip().upper()
+    if empresa_doc:
+        codigos.append(empresa_doc)
     if documento.departamento_id:
         codigos.append(documento.departamento.codigo)
     if documento.codigo:
@@ -438,7 +442,7 @@ def _sin_codigo_fuente():
     from ..models import DocumentoSinCodigo
 
     return DocumentoSinCodigo.objects.filter(
-        ambito='sgc', activo=True,
+        ambito='sgc', activo=True, estado_aprobacion='aprobado',
     ).select_related(
         'departamento', 'propietario', 'periodo_retencion',
     ).order_by('titulo')

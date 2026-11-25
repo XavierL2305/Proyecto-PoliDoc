@@ -131,3 +131,104 @@ def revocar(usuario, formato):
     return AccesoFormato.objects.filter(
         formato=formato, usuario=usuario, activo=True,
     ).update(activo=False)
+
+
+# ---------------------------------------------------------------------------
+# Extensión homóloga para TipoDocumento (Organigrama y Mapa de Procesos)
+# ---------------------------------------------------------------------------
+
+def _tipo_key(tipo_o_key):
+    if tipo_o_key is None:
+        return ''
+    if isinstance(tipo_o_key, str):
+        return tipo_o_key.strip()
+    return getattr(tipo_o_key, 'key', '') or ''
+
+
+def _resolver_tipo(tipo_o_key):
+    from ..models import TipoDocumento
+
+    if isinstance(tipo_o_key, TipoDocumento):
+        return tipo_o_key
+    key = _tipo_key(tipo_o_key)
+    if not key:
+        return None
+    return TipoDocumento.objects.filter(key=key).first()
+
+
+def concesion_tipo(usuario, tipo_o_key):
+    """Concesión activa de ``usuario`` para ``tipo_o_key`` (o ``None``)."""
+    key = _tipo_key(tipo_o_key)
+    if not _autenticado(usuario) or not key:
+        return None
+    return AccesoFormato.objects.filter(
+        tipo_documento_id=key, usuario=usuario, activo=True,
+    ).first()
+
+
+def puede_editar_tipo(usuario, tipo_o_key):
+    """True si ``usuario`` es administrador o tiene concesión activa de edición."""
+    key = _tipo_key(tipo_o_key)
+    if not _autenticado(usuario) or not key:
+        return False
+    if es_administrador(usuario):
+        return True
+    return AccesoFormato.objects.filter(
+        tipo_documento_id=key,
+        tipo_documento__activo=True,
+        usuario=usuario,
+        activo=True,
+        nivel=NIVEL_EDITAR,
+    ).exists()
+
+
+def concesiones_tipo(tipo_o_key, solo_activas=True):
+    """Concesiones asociadas a un ``TipoDocumento`` (ORG / MAP)."""
+    key = _tipo_key(tipo_o_key)
+    if not key:
+        return AccesoFormato.objects.none()
+    qs = AccesoFormato.objects.filter(tipo_documento_id=key).select_related(
+        'usuario', 'usuario__perfil', 'usuario__perfil__departamento',
+        'creado_por', 'tipo_documento',
+    )
+    if solo_activas:
+        qs = qs.filter(activo=True)
+    return qs
+
+
+def otorgar_tipo(usuario, tipo_o_key, nivel=NIVEL_EDITAR, otorgado_por=None):
+    """Otorga (o reactiva/actualiza) el acceso de ``usuario`` a un ``TipoDocumento``."""
+    tipo_obj = _resolver_tipo(tipo_o_key)
+    if tipo_obj is None or usuario is None:
+        return None
+    nivel = _normalizar_nivel(nivel)
+    concesion_actual, creada = AccesoFormato.objects.get_or_create(
+        tipo_documento=tipo_obj, usuario=usuario,
+        defaults={
+            'activo': True, 'nivel': nivel, 'creado_por': otorgado_por,
+        },
+    )
+    if not creada:
+        campos = []
+        if not concesion_actual.activo:
+            concesion_actual.activo = True
+            campos.append('activo')
+        if concesion_actual.nivel != nivel:
+            concesion_actual.nivel = nivel
+            campos.append('nivel')
+        if otorgado_por is not None and concesion_actual.creado_por_id != otorgado_por.id:
+            concesion_actual.creado_por = otorgado_por
+            campos.append('creado_por')
+        if campos:
+            concesion_actual.save(update_fields=campos)
+    return concesion_actual
+
+
+def revocar_tipo(usuario, tipo_o_key):
+    """Revoca el acceso sobre un ``TipoDocumento`` conservando la traza."""
+    key = _tipo_key(tipo_o_key)
+    if not key or usuario is None:
+        return 0
+    return AccesoFormato.objects.filter(
+        tipo_documento_id=key, usuario=usuario, activo=True,
+    ).update(activo=False)

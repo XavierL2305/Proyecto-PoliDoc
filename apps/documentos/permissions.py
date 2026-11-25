@@ -1,4 +1,4 @@
-from django.db.models import Q
+from django.db.models import Exists, Q
 
 from .models import Documento
 
@@ -45,6 +45,14 @@ def q_documentos_visibles(usuario):
     if getattr(usuario, 'pk', None):
         deptos_jefe |= Q(
             departamento_id__in=delegaciones_vigentes(usuario).values('departamento_id')
+        )
+    if perfil and perfil.es_jefe:
+        base |= Q(tipo_id='organigrama', es_plantilla=False)
+    elif getattr(usuario, 'pk', None):
+        base |= Q(
+            Exists(delegaciones_vigentes(usuario)),
+            tipo_id='organigrama',
+            es_plantilla=False,
         )
     if deptos_jefe:
         base |= deptos_jefe & Q(
@@ -257,6 +265,10 @@ def puede_ver_documento(usuario, documento, requerir_aprobada=False):
         return True
 
     es_dpr = getattr(documento.tipo, 'key', None) == 'descripcion_procesos'
+    es_org = getattr(documento.tipo, 'key', None) == 'organigrama'
+
+    if es_org and usuario.perfil.ejerce_jefatura:
+        return True
 
     if es_dpr:
         # DPR es global para jefes (cualquiera); el resto entra por grants.

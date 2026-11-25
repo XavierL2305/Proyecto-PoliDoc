@@ -6,7 +6,18 @@
 {% block app_content %}
 <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap;margin-bottom:1.5rem;">
   <div>
-    <h1 style="font-size:1.25rem;margin:0;">{{ documento.titulo }}</h1>
+    <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;">
+      <h1 style="font-size:1.25rem;margin:0;">{{ documento.titulo }}</h1>
+      {% if es_sgc %}
+        {% if documento.estado_aprobacion == 'aprobado' %}
+        <span class="badge badge--success">Aprobado</span>
+        {% elif documento.estado_aprobacion == 'rechazado' %}
+        <span class="badge badge--danger">Rechazado</span>
+        {% else %}
+        <span class="badge badge--warning">Pendiente de aprobación</span>
+        {% endif %}
+      {% endif %}
+    </div>
     <p style="color:var(--color-muted);font-size:.875rem;margin:.35rem 0 0;">
       {% if es_sgc %}Documento sin código · SGC{% else %}Documento personal{% endif %}
     </p>
@@ -63,6 +74,25 @@
       <span class="detail-label">Forma de archivo y ubicación</span>
       <span class="detail-value">{{ documento.ubicacion|default:"—" }}</span>
     </div>
+    <div class="detail-row">
+      <span class="detail-label">Estado de aprobación</span>
+      <span class="detail-value">{{ documento.get_estado_aprobacion_display }}</span>
+    </div>
+    {% if documento.aprobado_por %}
+    <div class="detail-row">
+      <span class="detail-label">Revisado por</span>
+      <span class="detail-value">
+        {{ documento.aprobado_por.get_full_name|default:documento.aprobado_por.username }}
+        {% if documento.fecha_aprobacion %} · {{ documento.fecha_aprobacion|date:"d/m/Y H:i" }}{% endif %}
+      </span>
+    </div>
+    {% endif %}
+    {% if documento.comentario_revision %}
+    <div class="detail-row" style="display:block;">
+      <span class="detail-label">Observación de revisión</span>
+      <p style="margin:.35rem 0 0;font-size:.875rem;white-space:pre-wrap;">{{ documento.comentario_revision }}</p>
+    </div>
+    {% endif %}
     {% endif %}
     <div class="detail-row">
       <span class="detail-label">Fecha del documento</span>
@@ -95,6 +125,35 @@
     {% endif %}
   </div>
 </div>
+
+{% if puede_aprobar %}
+<div class="detail-card">
+  <div class="detail-header"><h3>Aprobación de Jefatura</h3></div>
+  <div class="detail-body" style="display:grid;gap:1rem;">
+    <form method="post" action="{% url 'documentos:documento_sin_codigo_aprobar' uuid=documento.uuid %}">
+      {% csrf_token %}
+      <div class="form-group" style="margin-bottom:.75rem;">
+        <label class="form-label">Comentario (opcional)</label>
+        <input type="text" name="comentario" class="form-input" placeholder="Observación de aprobación...">
+      </div>
+      <button type="submit" class="btn btn--success btn--sm">
+        <i class="fa-solid fa-check"></i> Aprobar e incluir en Lista Maestra
+      </button>
+    </form>
+    <hr style="border:0;border-top:1px solid var(--color-border);margin:0;">
+    <form method="post" action="{% url 'documentos:documento_sin_codigo_rechazar' uuid=documento.uuid %}">
+      {% csrf_token %}
+      <div class="form-group" style="margin-bottom:.75rem;">
+        <label class="form-label">Motivo de rechazo <span style="color:var(--color-danger);">*</span></label>
+        <input type="text" name="comentario" class="form-input" required placeholder="Indica qué debe corregir el usuario...">
+      </div>
+      <button type="submit" class="btn btn--danger btn--sm">
+        <i class="fa-solid fa-xmark"></i> Rechazar
+      </button>
+    </form>
+  </div>
+</div>
+{% endif %}
 
 {% if puede_editar %}
 <div class="detail-card">

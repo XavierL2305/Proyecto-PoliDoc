@@ -137,7 +137,27 @@
 
         {% if es_dinamico %}
         <div class="code-builder">
-          {% if not sin_prefijo_depto %}
+          {% if usa_prefijo_empresa %}
+          <div class="code-builder__segment">
+            <span class="code-builder__label">Empresa</span>
+            <select name="empresa" id="code-builder-empresa" class="code-builder__select" required>
+              {% if empresas_selector %}
+                {% for emp in empresas_selector %}
+                <option value="{{ emp.codigo }}" title="{{ emp.nombre }}"{% if emp.codigo == empresa_seleccionada %} selected{% endif %}>
+                  {{ emp.codigo }} — {{ emp.nombre }}{% if emp.ocupado %} (Ya existe: {{ emp.ocupado.codigo }}){% endif %}
+                </option>
+                {% endfor %}
+              {% else %}
+                {% for emp_cod, emp_nom in empresas_choices %}
+                <option value="{{ emp_cod }}" title="{{ emp_nom }}"{% if emp_cod == empresa_seleccionada %} selected{% endif %}>
+                  {{ emp_cod }} — {{ emp_nom }}
+                </option>
+                {% endfor %}
+              {% endif %}
+            </select>
+          </div>
+          <span class="code-builder__separator">-</span>
+          {% elif not sin_prefijo_depto %}
           <div class="code-builder__segment">
             <span class="code-builder__label">Depto</span>
             <span class="code-builder__value">{{ auto_departamento_nombre|default:"Sin Depto" }}</span>
@@ -156,6 +176,11 @@
                    maxlength="3" pattern="[0-9]{3}" required>
           </div>
         </div>
+        {% if unico_por_empresa %}
+        <p style="margin: -0.5rem 0 1rem; font-size: 0.82rem; color: var(--color-muted);">
+          <i class="fa-solid fa-circle-info"></i> Este tipo admite un <strong>único documento vigente por empresa</strong>. Si una empresa ya tiene documento vigente, actualízalo con Planilla de Cambios.
+        </p>
+        {% endif %}
         {% endif %}
 
         {% if edicion %}

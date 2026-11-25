@@ -43,7 +43,11 @@
   .dist-item--revocada .dist-avatar { background: var(--color-danger-light); color: var(--color-danger); }
   .badge--revocada { background: var(--color-danger-light); color: var(--color-danger); font-size: 0.7rem; padding: 0.15rem 0.4rem; border-radius: var(--radius); margin-left: 0.5rem; }
 </style>
+{% if es_organigrama %}
+<link rel="stylesheet" href="{% static 'css/organigrama.css' %}?v=4">
+{% else %}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+{% endif %}
 {% endblock %}
 
 {% block app_content %}
@@ -81,7 +85,23 @@
           </button>
             {% endif %}
           {% endif %}
-          {% if puede_editar %}
+          {% if es_organigrama %}
+            {% if puede_construir_org %}
+          <a href="{% if diagrama_constructor_url %}{{ diagrama_constructor_url }}{% else %}{% url 'documentos:organigrama_constructor' %}{% endif %}" class="btn btn--primary btn--sm">
+            <i class="fa-solid fa-pen-ruler"></i> Abrir Constructor
+          </a>
+            {% endif %}
+            {% if puede_ver_org %}
+          <a href="{% if diagrama_visor_url %}{{ diagrama_visor_url }}{% else %}{% url 'documentos:organigrama_visor' documento_id=documento.uuid %}{% endif %}?version={{ version_visualizada }}" class="btn btn--ghost btn--sm">
+            <i class="fa-solid {{ diagrama_icon|default:'fa-sitemap' }}"></i> Abrir Visor Dedicado
+          </a>
+            {% endif %}
+            {% if puede_exportar_org %}
+          <button type="button" id="org-detail-export-btn" class="btn btn--primary btn--sm">
+            <i class="fa-solid fa-file-export"></i> Exportar
+          </button>
+            {% endif %}
+          {% elif puede_editar %}
             {% if documento.estado == 'borrador' %}
           <a href="{% url 'documentos:editar_borrador' tipo=tipo documento_id=documento.uuid %}" class="btn btn--primary btn--sm">
             <i class="fa-solid fa-pen-to-square"></i> Editar Borrador
@@ -124,32 +144,34 @@
             <i class="fa-solid fa-skull-crossbones"></i> Destruir
           </a>
           {% endif %}
-          {% if puede_descargar %}
+          {% if not es_organigrama and puede_descargar %}
           <a href="{% url 'documentos:descargar_archivo' tipo=tipo documento_id=documento.uuid %}" class="btn btn--primary btn--sm" data-motion="download" data-loading="download">
             <i class="fa-solid fa-download"></i> Descargar
           </a>
-          {% elif solicitud_pendiente %}
+          {% elif not es_organigrama or not puede_exportar_org %}
+            {% if solicitud_pendiente %}
           <span class="badge badge--warning" style="display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.375rem 0.75rem;">
             <i class="fa-solid fa-clock"></i> Solicitud pendiente de aprobación
           </span>
-          {% elif ultima_solicitud_descarga and ultima_solicitud_descarga.estado == 'rechazada' %}
+            {% elif ultima_solicitud_descarga and ultima_solicitud_descarga.estado == 'rechazada' %}
           <span class="badge badge--danger" style="display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.375rem 0.75rem;">
             <i class="fa-solid fa-xmark"></i> Solicitud rechazada
           </span>
           <a href="{% url 'documentos:solicitar_descarga' tipo=tipo documento_id=documento.uuid %}" class="btn btn--secondary btn--sm" data-motion="download">
             <i class="fa-solid fa-download"></i> Solicitar Descarga
           </a>
-          {% elif autorizacion_descarga and not autorizacion_descarga.esta_vigente %}
+            {% elif autorizacion_descarga and not autorizacion_descarga.esta_vigente %}
           <span class="badge badge--warning" style="display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.375rem 0.75rem;">
             <i class="fa-solid fa-clock-rotate-left"></i> Autorización vencida
           </span>
           <a href="{% url 'documentos:solicitar_descarga' tipo=tipo documento_id=documento.uuid %}" class="btn btn--secondary btn--sm" data-motion="download">
             <i class="fa-solid fa-download"></i> Solicitar Descarga
           </a>
-          {% else %}
+            {% else %}
           <a href="{% url 'documentos:solicitar_descarga' tipo=tipo documento_id=documento.uuid %}" class="btn btn--secondary btn--sm" data-motion="download">
             <i class="fa-solid fa-download"></i> Solicitar Descarga
           </a>
+            {% endif %}
           {% endif %}
         </div>
       </div>
@@ -386,7 +408,29 @@
       </div>
       {% endif %}
 
-      {% if documento.archivo %}
+      {% if es_organigrama %}
+      <div class="detail-card" style="margin-bottom: 1.5rem;">
+        <div class="detail-header" style="display:flex; align-items:center; justify-content:space-between; gap:0.75rem; flex-wrap:wrap;">
+          <h3 style="margin:0;"><i class="fa-solid {{ diagrama_icon|default:'fa-sitemap' }}" style="color: var(--color-primary);"></i> Visor Interactivo de {{ diagrama_label|default:'Organigrama' }}</h3>
+          {% if puede_ver_org %}
+          <a href="{% if diagrama_visor_url %}{{ diagrama_visor_url }}{% else %}{% url 'documentos:organigrama_visor' documento_id=documento.uuid %}{% endif %}?version={{ version_visualizada }}" class="btn btn--ghost btn--sm">
+            <i class="fa-solid fa-arrow-up-right-from-square"></i> Visor dedicado
+          </a>
+          {% endif %}
+        </div>
+        <div class="detail-body" style="padding: 0;">
+          {% if puede_ver_org %}
+            {% url 'documentos:organigrama_datos_api' documento_id=documento.uuid as org_datos_url %}
+            {% include 'documentos/_organigrama_workspace.html' with modo='viewer' embedded=True datos_url=org_datos_url puede_exportar=puede_exportar_org exportar_url=exportar_url %}
+          {% else %}
+          <div style="padding: 2rem; text-align: center; color: var(--color-muted);">
+            <i class="fa-solid fa-lock" style="font-size: 2rem; margin-bottom: 0.5rem;"></i>
+            <p style="margin: 0;">No tienes autorización vigente para visualizar el contenido de este organigrama.</p>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      {% elif documento.archivo %}
       <div class="detail-card" style="margin-bottom: 1.5rem;">
         <div class="detail-header"><h3>Documento</h3></div>
         <div class="detail-body" style="padding: 0;">
@@ -1662,4 +1706,12 @@ window.addEventListener('pagehide', function() {
 {% endif %}
 
 </script>
+{% if es_organigrama and puede_ver_org %}
+<script defer src="{% static 'js/organigrama/state.js' %}?v=4"></script>
+<script defer src="{% static 'js/organigrama/viewport.js' %}?v=4"></script>
+<script defer src="{% static 'js/organigrama/router.js' %}?v=4"></script>
+<script defer src="{% static 'js/organigrama/renderer.js' %}?v=4"></script>
+<script defer src="{% static 'js/organigrama/minimap.js' %}?v=4"></script>
+<script defer src="{% static 'js/organigrama/app.js' %}?v=4"></script>
+{% endif %}
 {% endblock %}

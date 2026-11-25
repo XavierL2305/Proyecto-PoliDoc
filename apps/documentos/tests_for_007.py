@@ -102,6 +102,24 @@ class ProgramaTest(BaseFor007Test):
         r2028 = self._programa(2028, seed_anio=2024)
         self.assertEqual(len(self._aspectos(r2028)), 3)
 
+    def test_crear_en_blanco_y_seed_oficial_explicito(self):
+        r2026 = self._programa(2026)
+        r2026.respuestas = {
+            **r2026.respuestas, 'aspectos': self._aspectos(r2026)[:4],
+        }
+        r2026.save(update_fields=['respuestas'])
+
+        r_blanco = self._programa(2027, seed_anio='vacio')
+        self.assertEqual(self._aspectos(r_blanco), [])
+        v_blanco = VersionRegistroFormato.objects.filter(
+            registro=r_blanco,
+        ).first()
+        self.assertIn('en blanco', v_blanco.resumen)
+
+        # 'oficial' usa los 14 del seed oficial aunque exista un año previo.
+        r_oficial = self._programa(2028, seed_anio='oficial')
+        self.assertEqual(len(self._aspectos(r_oficial)), 14)
+
     def test_unicidad_anual(self):
         r1 = self._programa(2026)
         r2 = self._programa(2026)

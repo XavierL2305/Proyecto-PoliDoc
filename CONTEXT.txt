@@ -3910,7 +3910,7 @@ referencias `§5.1.x` de esta sección corresponden a ese PDF.
     - Alta/confirmación por el usuario y corrección por el admin registran
       `registrar_log_iso` (`accion_categoria='usuario'`, `recurso_tipo=
       'usuario'`) con `estado_anterior/estado_posterior` **enmascarados**
-      (`***7865`) y `detalles.origen` = `autoservicio` | `admin`.
+      (`***5678`) y `detalles.origen` = `autoservicio` | `admin`.
     - Cada consulta de cédula en RRHH se audita como `accion_tipo='consulta'`
       (trazabilidad del acceso a PII), con `encontrado` sí/no.
 

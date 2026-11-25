@@ -1,10 +1,12 @@
-"""Documentos sin código (no ISO): permisos, visibilidad y consultas.
+"""Documentos sin código (no ISO): permisos, visibilidad, aprobación y consultas.
 
 Dos ámbitos:
 
-* ``sgc`` — soportes/registros de fuente institucionales. Los administran y
-  consultan **administradores y jefes de departamento**. Se incluyen en la
-  Lista Maestra (SGC-FOR-006) como origen *Ext* con ``N/A``.
+* ``sgc`` — soportes/registros de fuente institucionales. **Cualquier usuario**
+  puede subirlos: si lo sube un trabajador o coordinador queda pendiente de
+  aprobación de su jefe directo; si lo sube un jefe o administrador queda
+  autoaprobado. Solo los aprobados se incluyen en la Lista Maestra
+  (SGC-FOR-006) como origen *Ext* con ``N/A``.
 * ``personal`` — archivos de uso personal. Los ve **solo su dueño** (y el
   administrador, para soporte). No se incluyen en la Lista Maestra.
 
@@ -14,10 +16,15 @@ registro visible (ver ``tiene_personales``/``tiene_sgc``).
 """
 from django.db.models import Q
 
+from ..jefatura import departamentos_jefados
 from ..models import DocumentoSinCodigo
 
 AMBITO_PERSONAL = 'personal'
 AMBITO_SGC = 'sgc'
+
+ESTADO_PENDIENTE = 'pendiente'
+ESTADO_APROBADO = 'aprobado'
+ESTADO_RECHAZADO = 'rechazado'
 
 
 def es_administrador(usuario):
@@ -27,18 +34,32 @@ def es_administrador(usuario):
 
 def es_jefe(usuario):
     perfil = getattr(usuario, 'perfil', None)
-    return bool(perfil and perfil.es_jefe)
+    return bool(perfil and perfil.ejerce_jefatura)
+
+
+def se_autoaprueba_sgc(usuario):
+    """True si un documento SGC creado por ``usuario`` nace ya aprobado."""
+    return es_administrador(usuario) or es_jefe(usuario)
+
+
+def _pertenece_al_depto_de_jefe(usuario, documento):
+    """True si ``documento`` pertenece a un departamento jefado por ``usuario``."""
+    deptos_jefe = departamentos_jefados(usuario)
+    if not deptos_jefe:
+        return False
+    if documento.departamento_id in deptos_jefe:
+        return True
+    prop_depto_id = getattr(
+        getattr(documento.propietario, 'perfil', None), 'departamento_id', None,
+    )
+    return prop_depto_id in deptos_jefe
 
 
 def puede_crear(usuario, ambito):
     """¿Puede crear un documento de ``ambito``?"""
     if usuario is None or not getattr(usuario, 'is_authenticated', False):
         return False
-    if ambito == AMBITO_PERSONAL:
-        return True
-    if ambito == AMBITO_SGC:
-        return es_administrador(usuario) or es_jefe(usuario)
-    return False
+    return ambito in (AMBITO_PERSONAL, AMBITO_SGC)
 
 
 def puede_ver(usuario, documento):
@@ -51,8 +72,23 @@ def puede_ver(usuario, documento):
     if documento.ambito == AMBITO_PERSONAL:
         return documento.propietario_id == usuario.id
     if documento.ambito == AMBITO_SGC:
-        return es_jefe(usuario)
+        if documento.propietario_id == usuario.id:
+            return True
+        return es_jefe(usuario) and _pertenece_al_depto_de_jefe(usuario, documento)
     return False
+
+
+def puede_aprobar(usuario, documento):
+    """¿Puede aprobar o rechazar ``documento`` sin código (SGC pendiente)?"""
+    if (usuario is None or not getattr(usuario, 'is_authenticated', False)
+            or documento is None or not documento.activo):
+        return False
+    if (documento.ambito != AMBITO_SGC
+            or documento.estado_aprobacion != ESTADO_PENDIENTE):
+        return False
+    if es_administrador(usuario):
+        return True
+    return es_jefe(usuario) and _pertenece_al_depto_de_jefe(usuario, documento)
 
 
 def puede_editar(usuario, documento):
@@ -74,12 +110,138 @@ def personales_de(usuario):
 
 
 def sgc_visibles(usuario):
-    """Bandeja SGC: administradores y jefes; el resto no ve nada."""
-    if not (es_administrador(usuario) or es_jefe(usuario)):
+    """Bandeja SGC: admin ve todos; jefe ve su(s) dpto(s) + propios; resto solo propios."""
+    if usuario is None or not getattr(usuario, 'is_authenticated', False):
         return DocumentoSinCodigo.objects.none()
-    return DocumentoSinCodigo.objects.filter(
-        ambito=AMBITO_SGC, activo=True,
+    base = DocumentoSinCodigo.objects.filter(ambito=AMBITO_SGC, activo=True)
+    if es_administrador(usuario):
+        return base
+    if es_jefe(usuario):
+        deptos = departamentos_jefados(usuario)
+        filtro = Q(propietario=usuario)
+        if deptos:
+            filtro |= (
+                Q(departamento_id__in=deptos)
+                | Q(propietario__perfil__departamento_id__in=deptos)
+            )
+        return base.filter(filtro).distinct()
+    return base.filter(propietario=usuario)
+
+
+def _depto_documento(documento):
+    return documento.departamento or getattr(
+        getattr(documento.propietario, 'perfil', None), 'departamento', None,
     )
+
+
+def notificar_pendiente_aprobacion(documento):
+    """Avisa al jefe directo (y delegado vigente) cuando queda un Ext pendiente."""
+    import logging
+
+    from django.urls import reverse
+    from django.utils import timezone
+
+    from autenticacion.models import Notificacion, PerfilUsuario
+
+    from ..models import DelegacionJefatura
+
+    logger = logging.getLogger(__name__)
+    try:
+        depto = _depto_documento(documento)
+        destinatarios = []
+        if depto is not None:
+            if (depto.jefe is not None and depto.jefe.is_active
+                    and depto.jefe_id != documento.propietario_id):
+                destinatarios.append(depto.jefe)
+            hoy = timezone.now().date()
+            delegaciones = DelegacionJefatura.objects.filter(
+                departamento=depto, activa=True,
+                fecha_inicio__lte=hoy, fecha_fin__gte=hoy,
+            ).select_related('delegado')
+            for d in delegaciones:
+                if (d.delegado.is_active
+                        and d.delegado_id != documento.propietario_id):
+                    destinatarios.append(d.delegado)
+        if not destinatarios:
+            destinatarios = [
+                p.usuario for p in PerfilUsuario.objects.filter(
+                    rol='administrador', usuario__is_active=True,
+                ).select_related('usuario')
+                if p.usuario_id != documento.propietario_id
+            ]
+        vistos = set()
+        url = reverse(
+            'documentos:documento_sin_codigo_detalle', args=[documento.uuid],
+        )
+        autor = _nombre(documento.propietario)
+        for user in destinatarios:
+            if user is None or user.id in vistos:
+                continue
+            vistos.add(user.id)
+            Notificacion.objects.create(
+                usuario=user,
+                titulo=f'Documento externo pendiente: {documento.titulo}',
+                mensaje=(
+                    f'{autor} subió el documento externo "{documento.titulo}" '
+                    f'y requiere tu aprobación para incluirse en la Lista Maestra.'
+                ),
+                tipo='solicitud_aprobacion',
+                url_accion=url,
+                departamento=depto,
+            )
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            'No se pudo notificar aprobación pendiente de DocumentoSinCodigo %s',
+            documento.uuid, exc_info=True,
+        )
+
+
+def notificar_resultado_revision(documento, aprobado: bool):
+    """Notifica al propietario cuando su documento externo es aprobado o rechazado."""
+    import logging
+
+    from django.urls import reverse
+
+    from autenticacion.models import Notificacion
+
+    logger = logging.getLogger(__name__)
+    propietario = documento.propietario
+    if (propietario is None or not propietario.is_active
+            or propietario.id == documento.aprobado_por_id):
+        return
+    try:
+        url = reverse(
+            'documentos:documento_sin_codigo_detalle', args=[documento.uuid],
+        )
+        revisor = _nombre(documento.aprobado_por) or 'Jefatura'
+        if aprobado:
+            tipo = 'aprobacion_documento'
+            titulo = f'Documento externo aprobado: {documento.titulo}'
+            mensaje = (
+                f'{revisor} aprobó "{documento.titulo}". '
+                f'Ya forma parte de la Lista Maestra (Ext).'
+            )
+        else:
+            tipo = 'rechazo_documento'
+            titulo = f'Documento externo rechazado: {documento.titulo}'
+            motivo = (documento.comentario_revision or '').strip()
+            mensaje = (
+                f'{revisor} rechazó "{documento.titulo}".'
+                + (f' Motivo: {motivo}' if motivo else '')
+            )
+        Notificacion.objects.create(
+            usuario=propietario,
+            titulo=titulo,
+            mensaje=mensaje,
+            tipo=tipo,
+            url_accion=url,
+            departamento=_depto_documento(documento),
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            'No se pudo notificar revisión de DocumentoSinCodigo %s',
+            documento.uuid, exc_info=True,
+        )
 
 
 def visibles(usuario, ambito):

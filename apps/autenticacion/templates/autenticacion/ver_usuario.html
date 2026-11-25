@@ -16,6 +16,70 @@
     font-size: 1.5rem;
     font-weight: 600;
   }
+  .user-actions-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .user-actions-list .btn {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .user-actions-list .btn i {
+    width: 1rem;
+    text-align: center;
+  }
+  .user-action--danger {
+    color: var(--color-danger);
+  }
+  .user-action--danger:hover {
+    border-color: var(--color-danger);
+    background-color: var(--color-danger-light);
+    color: #991B1B;
+  }
+  [data-theme="dark"] .user-action--danger:hover {
+    background-color: rgba(239, 68, 68, 0.15);
+    color: #FCA5A5;
+  }
+  .user-action--success {
+    color: var(--color-success);
+  }
+  .user-action--success:hover {
+    border-color: var(--color-success);
+    background-color: var(--color-success-light);
+    color: #065F46;
+  }
+  [data-theme="dark"] .user-action--success:hover {
+    background-color: rgba(16, 185, 129, 0.15);
+    color: #6EE7B7;
+  }
+  .user-actions-divider {
+    border: 0;
+    border-top: 1px solid var(--color-border);
+    margin: 0.25rem 0;
+  }
+  .modal-error {
+    display: none;
+    padding: 0.625rem 0.75rem;
+    border-radius: var(--radius);
+    background: var(--color-danger-light);
+    color: #991B1B;
+    font-size: 0.8125rem;
+    margin-bottom: 0.75rem;
+  }
+  [data-theme="dark"] .modal-error {
+    background: #7F1D1D;
+    color: #FCA5A5;
+  }
+  .rrhh-preview-box {
+    display: none;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--color-border);
+    border-left: 4px solid var(--color-info);
+    border-radius: var(--radius);
+    font-size: 0.875rem;
+    margin-top: 0.75rem;
+  }
 </style>
 {% endblock %}
 
@@ -43,9 +107,11 @@
           </div>
           <div class="profile-info-text">
             <h2>{{ usuario.get_full_name|default:usuario.username }}</h2>
-            <span class="profile-role">{{ perfil.get_rol_display }}</span>
+            <span class="profile-role">
+              {% if perfil %}{{ perfil.get_rol_display }}{% elif usuario.is_superuser %}Superusuario{% else %}Sin perfil{% endif %}
+            </span>
             <span class="profile-dept">
-              {% if perfil.departamento %}{{ perfil.departamento }}{% else %}<span style="color: var(--color-warning)">Sin departamento asignado</span>{% endif %}
+              {% if perfil and perfil.departamento %}{{ perfil.departamento }}{% else %}<span style="color: var(--color-warning)">Sin departamento asignado</span>{% endif %}
             </span>
           </div>
         </div>
@@ -59,10 +125,34 @@
             <span class="profile-info-label">Email</span>
             <span class="profile-info-value">{{ usuario.email|default:"-" }}</span>
           </div>
-          {% if perfil.cedula_identidad %}
           <div class="profile-info-row">
             <span class="profile-info-label">Cédula</span>
-            <span class="profile-info-value">{{ perfil.cedula_identidad }}</span>
+            <span class="profile-info-value">
+              {{ perfil.cedula_identidad|default:"—" }}
+              {% if perfil.cedula_verificada_rrhh %}
+              <span class="badge badge--success" style="font-size:.65rem;margin-left:.35rem;">Verificada</span>
+              {% endif %}
+            </span>
+          </div>
+          <div class="profile-info-row">
+            <span class="profile-info-label">Cargo</span>
+            <span class="profile-info-value">
+              {{ cargo_mostrado|default:"—" }}
+              {% if cargo_es_rrhh %}
+              <span class="badge badge--info" style="font-size:.65rem;margin-left:.35rem;">RRHH</span>
+              {% endif %}
+            </span>
+          </div>
+          {% if perfil.departamento_rrhh %}
+          <div class="profile-info-row">
+            <span class="profile-info-label">Departamento (RRHH)</span>
+            <span class="profile-info-value">{{ perfil.departamento_rrhh }}</span>
+          </div>
+          {% endif %}
+          {% if perfil.ultimo_sync_rrhh %}
+          <div class="profile-info-row">
+            <span class="profile-info-label">Última sincronización RRHH</span>
+            <span class="profile-info-value">{{ perfil.ultimo_sync_rrhh|date:"d/m/Y H:i" }}</span>
           </div>
           {% endif %}
           {% if perfil.numero_empleado %}
@@ -80,7 +170,7 @@
           <div class="profile-info-row">
             <span class="profile-info-label">Grupo LDAP</span>
             <span class="profile-info-value">
-              {% if perfil.grupo_ldap != 'sin_grupo' %}
+              {% if perfil and perfil.grupo_ldap != 'sin_grupo' %}
               <span class="badge badge--info">{{ perfil.get_grupo_ldap_display }}</span>
               {% else %}
               <span class="badge badge--warning">Sin grupo</span>
@@ -147,7 +237,359 @@
           </div>
         </div>
       </div>
+
+      <div class="profile-card profile-card--stats" style="margin-top: 1.5rem;">
+        <h3>Acciones</h3>
+        <div class="user-actions-list">
+          {% if perfil %}
+          <button
+            type="button"
+            class="btn btn--ghost"
+            onclick="abrirModalDetalle('modal-asignar-depto-detalle')"
+          >
+            <i class="fa-solid fa-building" style="color: var(--color-primary);"></i> Asignar / cambiar departamento
+          </button>
+          <button
+            type="button"
+            class="btn btn--ghost"
+            onclick="abrirModalVincularDetalle()"
+          >
+            <i class="fa-solid fa-id-card" style="color: var(--color-primary);"></i>
+            {% if perfil.cedula_identidad %}Actualizar cédula RRHH{% else %}Vincular cédula RRHH{% endif %}
+          </button>
+          {% endif %}
+          <a
+            href="{% url 'documentos:auditoria_lista' %}?usuario={{ usuario.username|urlencode }}"
+            class="btn btn--ghost"
+          >
+            <i class="fa-solid fa-clipboard-list" style="color: var(--color-muted);"></i> Ver auditoría
+          </a>
+          {% if puede_transferir %}
+          <a
+            href="{% url 'documentos:transferencia_masiva' %}{% if perfil and perfil.departamento_id %}?departamento={{ perfil.departamento_id }}&origen={{ usuario.id }}{% endif %}"
+            class="btn btn--ghost"
+          >
+            <i class="fa-solid fa-right-left" style="color: var(--color-warning);"></i> Transferir documentos
+          </a>
+          {% endif %}
+
+          {% if tiene_datos_rrhh or puede_toggle_activo %}
+          <hr class="user-actions-divider">
+          {% endif %}
+
+          {% if tiene_datos_rrhh %}
+          <button
+            type="button"
+            class="btn btn--ghost user-action--danger"
+            onclick="abrirModalDesvincularDetalle()"
+          >
+            <i class="fa-solid fa-user-xmark"></i> Desvincular datos RRHH
+          </button>
+          {% endif %}
+
+          {% if puede_toggle_activo %}
+          <button
+            type="button"
+            class="btn btn--ghost {% if usuario.is_active %}user-action--danger{% else %}user-action--success{% endif %}"
+            onclick="abrirModalDetalle('modal-toggle-activo-detalle')"
+          >
+            {% if usuario.is_active %}
+            <i class="fa-solid fa-user-slash"></i> Desactivar cuenta
+            {% else %}
+            <i class="fa-solid fa-user-check"></i> Activar cuenta
+            {% endif %}
+          </button>
+          {% endif %}
+        </div>
+      </div>
     </div>
   </div>
 </div>
+
+{% if perfil %}
+<div class="modal-overlay" id="modal-asignar-depto-detalle">
+  <div class="modal modal--sm">
+    <div class="modal-header">
+      <h3><i class="fa-solid fa-building"></i> Asignar departamento</h3>
+      <button class="modal-close" onclick="cerrarModalDetalle('modal-asignar-depto-detalle')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-error" id="error-depto-detalle"></div>
+      <p style="font-size: 0.875rem; color: var(--color-muted); margin-bottom: 1rem;">
+        Departamento para <strong>{{ usuario.get_full_name|default:usuario.username }}</strong> ({{ usuario.username }}):
+      </p>
+      <select id="select-depto-detalle" class="form-input">
+        <option value="">-- Sin departamento --</option>
+        {% for dept in departamentos %}
+        <option value="{{ dept.id }}" {% if perfil.departamento_id == dept.id %}selected{% endif %}>
+          {{ dept.nombre }} ({{ dept.codigo }})
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn--ghost" onclick="cerrarModalDetalle('modal-asignar-depto-detalle')">Cancelar</button>
+      <button class="btn btn--primary" onclick="guardarDeptoDetalle()">
+        <i class="fa-solid fa-check"></i> Guardar
+      </button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-vincular-rrhh-detalle">
+  <div class="modal modal--sm">
+    <div class="modal-header">
+      <h3><i class="fa-solid fa-id-card"></i> Vincular cédula RRHH</h3>
+      <button class="modal-close" onclick="cerrarModalDetalle('modal-vincular-rrhh-detalle')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-error" id="error-vincular-detalle"></div>
+      <p style="font-size: 0.875rem; color: var(--color-muted); margin-bottom: 0.75rem;">
+        {% if rrhh_configurado %}
+        Ingresa la cédula de <strong>{{ usuario.get_full_name|default:usuario.username }}</strong> para consultarla en RRHH antes de guardar.
+        {% else %}
+        Ingresa la cédula de <strong>{{ usuario.get_full_name|default:usuario.username }}</strong> (RRHH desactivado; se guardará sin verificar).
+        {% endif %}
+      </p>
+      <input
+        type="text"
+        id="input-cedula-detalle"
+        class="form-input"
+        inputmode="numeric"
+        autocomplete="off"
+        maxlength="20"
+        placeholder="Ej: 12345678"
+        value="{{ perfil.cedula_identidad }}"
+      >
+      <div class="rrhh-preview-box" id="preview-vincular-detalle">
+        <div><strong>Nombre RRHH:</strong> <span id="prev-rrhh-nombre"></span></div>
+        <div style="margin-top: 0.25rem;"><strong>Cargo:</strong> <span id="prev-rrhh-cargo"></span></div>
+        <div style="margin-top: 0.25rem;"><strong>Departamento:</strong> <span id="prev-rrhh-depto"></span></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn--ghost" onclick="cerrarModalDetalle('modal-vincular-rrhh-detalle')">Cancelar</button>
+      <button class="btn btn--primary" id="btn-validar-rrhh-detalle" onclick="enviarVincularDetalle(false)">
+        <i class="fa-solid fa-magnifying-glass"></i>
+        {% if rrhh_configurado %}Validar en RRHH{% else %}Guardar cédula{% endif %}
+      </button>
+      <button class="btn btn--primary" id="btn-confirmar-rrhh-detalle" style="display: none;" onclick="enviarVincularDetalle(true)">
+        <i class="fa-solid fa-check"></i> Confirmar y guardar
+      </button>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if tiene_datos_rrhh %}
+<div class="modal-overlay" id="modal-desvincular-detalle">
+  <div class="modal modal--sm">
+    <div class="modal-header">
+      <h3><i class="fa-solid fa-user-xmark" style="color: var(--color-danger);"></i> Desvincular datos RRHH</h3>
+      <button class="modal-close" onclick="cerrarModalDetalle('modal-desvincular-detalle')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-error" id="error-desvincular-detalle"></div>
+      <p style="font-size: 0.875rem; color: var(--color-muted); margin-bottom: 1rem;">
+        Se limpiarán cédula, cargo, departamento RRHH y estado de verificación de
+        <strong>{{ usuario.get_full_name|default:usuario.username }}</strong> ({{ usuario.username }}).
+      </p>
+      <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; cursor: pointer;">
+        <input type="checkbox" class="form-checkbox" style="margin-top: 0;" id="detalle-rrhh-limpiar-nombres">
+        <span>Limpiar también nombre y apellido ahora</span>
+      </label>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn--ghost" onclick="cerrarModalDetalle('modal-desvincular-detalle')">Cancelar</button>
+      <button class="btn btn--danger" onclick="confirmarDesvincularDetalle()">
+        <i class="fa-solid fa-user-xmark"></i> Confirmar
+      </button>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if puede_toggle_activo %}
+<div class="modal-overlay" id="modal-toggle-activo-detalle">
+  <div class="modal modal--sm">
+    <div class="modal-header">
+      <h3>
+        {% if usuario.is_active %}
+        <i class="fa-solid fa-user-slash" style="color: var(--color-danger);"></i> Desactivar cuenta
+        {% else %}
+        <i class="fa-solid fa-user-check" style="color: var(--color-success);"></i> Activar cuenta
+        {% endif %}
+      </h3>
+      <button class="modal-close" onclick="cerrarModalDetalle('modal-toggle-activo-detalle')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-error" id="error-toggle-detalle"></div>
+      <p style="font-size: 0.875rem; color: var(--color-muted); margin: 0;">
+        {% if usuario.is_active %}
+        <strong>{{ usuario.get_full_name|default:usuario.username }}</strong> ({{ usuario.username }}) no podrá iniciar sesión hasta que un administrador reactive su cuenta.
+        {% else %}
+        Se reactivará el acceso de <strong>{{ usuario.get_full_name|default:usuario.username }}</strong> ({{ usuario.username }}) a PoliDoc.
+        {% endif %}
+      </p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn--ghost" onclick="cerrarModalDetalle('modal-toggle-activo-detalle')">Cancelar</button>
+      <button
+        class="btn {% if usuario.is_active %}btn--danger{% else %}btn--primary{% endif %}"
+        onclick="confirmarToggleActivo()"
+      >
+        {% if usuario.is_active %}Desactivar{% else %}Activar{% endif %}
+      </button>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+var USUARIO_DETALLE_ID = {{ usuario.id }};
+
+function abrirModalDetalle(id) {
+  var modal = document.getElementById(id);
+  if (!modal) return;
+  modal.querySelectorAll('.modal-error').forEach(function(el) {
+    el.style.display = 'none';
+    el.textContent = '';
+  });
+  modal.classList.add('active');
+}
+
+function cerrarModalDetalle(id) {
+  var modal = document.getElementById(id);
+  if (modal) modal.classList.remove('active');
+}
+
+document.querySelectorAll('.modal-overlay').forEach(function(overlay) {
+  overlay.addEventListener('click', function(e) {
+    if (e.target === overlay) overlay.classList.remove('active');
+  });
+});
+
+function mostrarErrorModalDetalle(elId, msg) {
+  var el = document.getElementById(elId);
+  if (el) {
+    el.textContent = msg;
+    el.style.display = 'block';
+  }
+}
+
+function postJsonDetalle(url, payload, errorElId, onSuccess) {
+  fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': '{{ csrf_token }}',
+    },
+    body: JSON.stringify(payload)
+  })
+  .then(function(resp) {
+    return resp.json().then(function(data) {
+      return { ok: resp.ok, data: data };
+    });
+  })
+  .then(function(res) {
+    if (res.ok && res.data.success) {
+      onSuccess(res.data);
+    } else {
+      mostrarErrorModalDetalle(errorElId, (res.data && res.data.error) || 'No se pudo completar la operación.');
+    }
+  })
+  .catch(function() {
+    mostrarErrorModalDetalle(errorElId, 'Error de conexión con el servidor.');
+  });
+}
+
+function guardarDeptoDetalle() {
+  var select = document.getElementById('select-depto-detalle');
+  var deptoId = select ? select.value : '';
+  postJsonDetalle(
+    "{% url 'autenticacion:asignar_departamento_usuario' %}",
+    { usuario_id: USUARIO_DETALLE_ID, departamento_id: deptoId ? parseInt(deptoId, 10) : null },
+    'error-depto-detalle',
+    function() { location.reload(); }
+  );
+}
+
+var cedulaPreviewDetalle = '';
+
+function abrirModalVincularDetalle() {
+  cedulaPreviewDetalle = '';
+  var preview = document.getElementById('preview-vincular-detalle');
+  var btnValidar = document.getElementById('btn-validar-rrhh-detalle');
+  var btnConfirmar = document.getElementById('btn-confirmar-rrhh-detalle');
+  if (preview) preview.style.display = 'none';
+  if (btnValidar) btnValidar.style.display = 'inline-flex';
+  if (btnConfirmar) btnConfirmar.style.display = 'none';
+  abrirModalDetalle('modal-vincular-rrhh-detalle');
+}
+
+function enviarVincularDetalle(confirmar) {
+  var input = document.getElementById('input-cedula-detalle');
+  var cedula = confirmar && cedulaPreviewDetalle ? cedulaPreviewDetalle : (input ? input.value : '');
+  postJsonDetalle(
+    "{% url 'autenticacion:vincular_rrhh_usuario' %}",
+    { usuario_id: USUARIO_DETALLE_ID, cedula: cedula, confirmar: Boolean(confirmar) },
+    'error-vincular-detalle',
+    function(data) {
+      if (data.guardado) {
+        location.reload();
+        return;
+      }
+      var p = data.preview || {};
+      cedulaPreviewDetalle = p.cedula || cedula;
+      if (input) input.value = cedulaPreviewDetalle;
+      document.getElementById('prev-rrhh-nombre').textContent = ((p.nombre || '') + ' ' + (p.apellido || '')).trim();
+      document.getElementById('prev-rrhh-cargo').textContent = p.cargo || '—';
+      document.getElementById('prev-rrhh-depto').textContent = p.departamento || '—';
+      document.getElementById('preview-vincular-detalle').style.display = 'block';
+      document.getElementById('btn-validar-rrhh-detalle').style.display = 'none';
+      document.getElementById('btn-confirmar-rrhh-detalle').style.display = 'inline-flex';
+    }
+  );
+}
+
+var inputCedDetalle = document.getElementById('input-cedula-detalle');
+if (inputCedDetalle) {
+  inputCedDetalle.addEventListener('input', function() {
+    cedulaPreviewDetalle = '';
+    var preview = document.getElementById('preview-vincular-detalle');
+    var btnValidar = document.getElementById('btn-validar-rrhh-detalle');
+    var btnConfirmar = document.getElementById('btn-confirmar-rrhh-detalle');
+    if (preview) preview.style.display = 'none';
+    if (btnValidar) btnValidar.style.display = 'inline-flex';
+    if (btnConfirmar) btnConfirmar.style.display = 'none';
+  });
+}
+
+function abrirModalDesvincularDetalle() {
+  var chk = document.getElementById('detalle-rrhh-limpiar-nombres');
+  if (chk) chk.checked = false;
+  abrirModalDetalle('modal-desvincular-detalle');
+}
+
+function confirmarDesvincularDetalle() {
+  var chk = document.getElementById('detalle-rrhh-limpiar-nombres');
+  postJsonDetalle(
+    "{% url 'autenticacion:desvincular_rrhh_usuario' %}",
+    { usuario_id: USUARIO_DETALLE_ID, limpiar_nombres: Boolean(chk && chk.checked) },
+    'error-desvincular-detalle',
+    function() { location.reload(); }
+  );
+}
+
+function confirmarToggleActivo() {
+  postJsonDetalle(
+    "{% url 'autenticacion:toggle_activo_usuario' %}",
+    { usuario_id: USUARIO_DETALLE_ID },
+    'error-toggle-detalle',
+    function() { location.reload(); }
+  );
+}
+</script>
 {% endblock %}

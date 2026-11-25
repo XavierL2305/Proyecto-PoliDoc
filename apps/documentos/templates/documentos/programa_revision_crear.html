@@ -23,9 +23,10 @@
       <div class="form-group">
         <label class="form-label">Copiar aspectos de</label>
         <select name="seed_anio" class="form-input">
-          <option value="">Seed oficial (14 aspectos)</option>
+          <option value="vacio">Ninguno (empezar en blanco)</option>
+          <option value="oficial" selected>Seed oficial (aspectos base)</option>
           {% for a in anios_disponibles %}
-          <option value="{{ a }}">{{ a }}</option>
+          <option value="{{ a }}">Año {{ a }}</option>
           {% endfor %}
         </select>
       </div>

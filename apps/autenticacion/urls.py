@@ -16,6 +16,9 @@ urlpatterns = [
     path('usuarios/', views.gestionar_usuarios, name='gestionar_usuarios'),
     path('usuarios/<int:usuario_id>/', views.ver_usuario, name='ver_usuario'),
     path('api/asignar-departamento/', views.asignar_departamento_usuario, name='asignar_departamento_usuario'),
+    path('api/desvincular-rrhh/', views.desvincular_rrhh_usuario, name='desvincular_rrhh_usuario'),
+    path('api/vincular-rrhh/', views.vincular_rrhh_usuario, name='vincular_rrhh_usuario'),
+    path('api/toggle-activo/', views.toggle_activo_usuario, name='toggle_activo_usuario'),
 
     # API Notificaciones
     path('api/notificaciones/', api.api_notificaciones, name='api_notificaciones'),

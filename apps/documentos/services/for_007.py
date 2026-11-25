@@ -181,17 +181,29 @@ def programa_anual(anio, crear=False, usuario=None, seed_anio=None):
     config = config_for_007(formato)
 
     origen = None
-    if seed_anio is not None:
-        try:
-            origen = _programa_por_anio(seed_anio)
-        except (TypeError, ValueError):
-            origen = None
-    if origen is None:
-        disponibles = [a for a in anios_disponibles() if a < anio_int]
-        if disponibles:
-            origen = _programa_por_anio(disponibles[0])
-    aspectos = (_aspectos_desde_programa(origen)
-                or _seed_desde_config(config))
+    seed_norm = str(seed_anio).strip().lower() if seed_anio is not None else ''
+    if seed_norm in ('vacio', 'ninguno'):
+        aspectos = []
+        origen_txt = ' (en blanco)'
+    elif seed_norm == 'oficial':
+        aspectos = _seed_desde_config(config)
+        origen_txt = ' (seed oficial)'
+    else:
+        if seed_anio is not None:
+            try:
+                origen = _programa_por_anio(seed_anio)
+            except (TypeError, ValueError):
+                origen = None
+        if origen is None:
+            disponibles = [a for a in anios_disponibles() if a < anio_int]
+            if disponibles:
+                origen = _programa_por_anio(disponibles[0])
+        aspectos = (_aspectos_desde_programa(origen)
+                    or _seed_desde_config(config))
+        origen_txt = (
+            f' desde {anio_del_programa(origen)}' if origen is not None
+            else ' (seed oficial)'
+        )
 
     responsable = usuario or _responsable_por_defecto()
     if responsable is None:
@@ -217,10 +229,6 @@ def programa_anual(anio, crear=False, usuario=None, seed_anio=None):
                     'aspectos': aspectos,
                     'conforme': {'presidente': '', 'gerente': '', 'fecha': ''},
                 },
-            )
-            origen_txt = (
-                f' desde {anio_del_programa(origen)}' if origen is not None
-                else ' (seed oficial)'
             )
             registrar_version(
                 registro, usuario,

@@ -24,7 +24,7 @@ class RRHHConexionError(Exception):
 
 
 def normalizar_cedula(valor):
-    """Deja solo dígitos: ``V-31.097.865`` → ``31097865``."""
+    """Deja solo dígitos: ``V-12.345.678`` → ``12345678``."""
     return re.sub(r'\D', '', str(valor or ''))
 
 
@@ -48,7 +48,7 @@ def validar_y_limpiar_cedula(valor):
 
 
 def enmascarar_cedula(valor):
-    """``***7865``: últimos 4 dígitos, para auditoría sin guardar PII completa."""
+    """``***5678``: últimos 4 dígitos, para auditoría sin guardar PII completa."""
     digitos = normalizar_cedula(valor)
     return f'***{digitos[-4:]}' if digitos else ''
 
@@ -258,3 +258,183 @@ def sincronizar_todo_rrhh(dry_run=False):
     resumen['perfiles_actualizados'] = len(cambios_perfil)
     resumen['nombres_actualizados'] = len(cambios_user)
     return resumen
+
+
+def tiene_datos_rrhh(perfil) -> bool:
+    """True si el perfil conserva cédula, cargo, departamento RRHH o verificación."""
+    if perfil is None:
+        return False
+    return bool(
+        (perfil.cedula_identidad or '').strip()
+        or (perfil.cargo or '').strip()
+        or (perfil.departamento_rrhh or '').strip()
+        or perfil.cedula_verificada_rrhh
+        or perfil.ultimo_sync_rrhh is not None
+    )
+
+
+def desvincular_datos_rrhh(
+    perfil,
+    *,
+    actor,
+    origen: str = 'gestion_usuarios',
+    limpiar_nombres: bool = False,
+) -> dict:
+    """Revierte la cédula, cargo, dpto RRHH y verificación de un perfil.
+
+    Usa ``QuerySet.update`` en ``transaction.atomic`` para no disparar señales
+    no relacionadas en ``PerfilUsuario``. Deja traza en auditoría ISO 15489.
+    """
+    from django.contrib.auth.models import User
+
+    from ..models import PerfilUsuario
+
+    if not tiene_datos_rrhh(perfil):
+        return {'modificado': False}
+
+    cedula_anterior = (perfil.cedula_identidad or '').strip()
+    cargo_anterior = (perfil.cargo or '').strip()
+    depto_anterior = (perfil.departamento_rrhh or '').strip()
+
+    with transaction.atomic():
+        PerfilUsuario.objects.filter(pk=perfil.pk).update(
+            cedula_identidad='',
+            cargo='',
+            departamento_rrhh='',
+            cedula_verificada_rrhh=False,
+            ultimo_sync_rrhh=None,
+        )
+        perfil.cedula_identidad = ''
+        perfil.cargo = ''
+        perfil.departamento_rrhh = ''
+        perfil.cedula_verificada_rrhh = False
+        perfil.ultimo_sync_rrhh = None
+
+        if limpiar_nombres:
+            User.objects.filter(pk=perfil.usuario_id).update(
+                first_name='',
+                last_name='',
+            )
+            perfil.usuario.first_name = ''
+            perfil.usuario.last_name = ''
+
+    try:
+        from auditoria.services import registrar_log_iso
+
+        registrar_log_iso(
+            usuario=actor,
+            accion_tipo='edicion',
+            accion_categoria='usuario',
+            recurso_tipo='usuario',
+            recurso_id=perfil.pk,
+            recurso_nombre=perfil.usuario.username,
+            estado_anterior=enmascarar_cedula(cedula_anterior),
+            estado_posterior='',
+            detalles={
+                'campo': 'cedula_identidad',
+                'accion': 'desvincular_rrhh',
+                'origen': origen,
+                'cargo_anterior': cargo_anterior,
+                'departamento_rrhh_anterior': depto_anterior,
+                'limpiar_nombres': bool(limpiar_nombres),
+            },
+            resultado_mensaje='Datos de RRHH desvinculados por administrador',
+        )
+    except Exception:  # noqa: BLE001 - la auditoría no rompe el panel admin
+        logger.warning(
+            'No se pudo auditar la desvinculación RRHH del perfil %s',
+            perfil.pk,
+            exc_info=True,
+        )
+
+    return {'modificado': True, 'cedula_anterior': cedula_anterior}
+
+
+def vincular_datos_rrhh(
+    perfil,
+    *,
+    cedula: str,
+    datos: dict | None,
+    verificado: bool,
+    actor,
+    origen: str = 'detalle_usuario',
+) -> dict:
+    """Asigna cédula y (si hay match RRHH) cargo/departamento/nombres al perfil.
+
+    Usa ``QuerySet.update`` en ``transaction.atomic`` para evitar señales no
+    relacionadas y deja traza en auditoría ISO 15489.
+    """
+    from django.contrib.auth.models import User
+
+    from ..models import PerfilUsuario
+
+    cedula_anterior = (perfil.cedula_identidad or '').strip()
+    cambios_perfil = {'cedula_identidad': cedula}
+
+    if datos:
+        cambios_perfil.update({
+            'cargo': datos.get('cargo', ''),
+            'departamento_rrhh': datos.get('departamento', ''),
+            'cedula_verificada_rrhh': bool(verificado),
+            'ultimo_sync_rrhh': timezone.now(),
+        })
+    else:
+        cambios_perfil['cedula_verificada_rrhh'] = False
+        if cedula_anterior != cedula:
+            cambios_perfil.update({
+                'cargo': '',
+                'departamento_rrhh': '',
+                'ultimo_sync_rrhh': None,
+            })
+
+    with transaction.atomic():
+        PerfilUsuario.objects.filter(pk=perfil.pk).update(**cambios_perfil)
+        for campo, valor in cambios_perfil.items():
+            setattr(perfil, campo, valor)
+
+        if datos:
+            cambios_user = {}
+            if datos.get('nombre'):
+                cambios_user['first_name'] = datos['nombre']
+            if datos.get('apellido'):
+                cambios_user['last_name'] = datos['apellido']
+            if cambios_user:
+                User.objects.filter(pk=perfil.usuario_id).update(**cambios_user)
+                for campo, valor in cambios_user.items():
+                    setattr(perfil.usuario, campo, valor)
+
+    try:
+        from auditoria.services import registrar_log_iso
+
+        registrar_log_iso(
+            usuario=actor,
+            accion_tipo='edicion',
+            accion_categoria='usuario',
+            recurso_tipo='usuario',
+            recurso_id=perfil.pk,
+            recurso_nombre=perfil.usuario.username,
+            estado_anterior=enmascarar_cedula(cedula_anterior),
+            estado_posterior=enmascarar_cedula(cedula),
+            detalles={
+                'campo': 'cedula_identidad',
+                'accion': 'vincular_rrhh',
+                'origen': origen,
+                'cargo': perfil.cargo,
+                'departamento_rrhh': perfil.departamento_rrhh,
+                'cedula_verificada': perfil.cedula_verificada_rrhh,
+            },
+            resultado_mensaje='Cédula vinculada por administrador',
+        )
+    except Exception:  # noqa: BLE001 - la auditoría no rompe el panel admin
+        logger.warning(
+            'No se pudo auditar la vinculación RRHH del perfil %s',
+            perfil.pk,
+            exc_info=True,
+        )
+
+    return {
+        'cedula': cedula,
+        'cargo': perfil.cargo,
+        'departamento_rrhh': perfil.departamento_rrhh,
+        'verificado': perfil.cedula_verificada_rrhh,
+    }

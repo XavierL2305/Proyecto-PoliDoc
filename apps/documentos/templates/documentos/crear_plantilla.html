@@ -125,7 +125,7 @@
 
 <div class="code-preview">
   <i class="fa-solid fa-barcode"></i>
-  Código: {{ codigo_preview }}
+  Código: <span id="plantilla-codigo-preview">{{ codigo_preview }}</span>
 </div>
 
 <form method="post" enctype="multipart/form-data">
@@ -170,4 +170,28 @@
 
 {% block extra_js %}
 <script src="{% static 'js/file-upload.js' %}" defer></script>
+{% if usa_prefijo_empresa %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  var empresaSel = document.getElementById('id_empresa');
+  var previewEl = document.getElementById('plantilla-codigo-preview');
+  if (!empresaSel || !previewEl) return;
+
+  empresaSel.addEventListener('change', async function() {
+    try {
+      var url = '/documentos/api/siguiente-secuencia/?departamento_id={{ auto_departamento_id|default:"" }}'
+        + '&tipo_codigo={{ tipo_codigo|default:"" }}&plantilla=1&empresa='
+        + encodeURIComponent(this.value || '');
+      var resp = await fetch(url);
+      var data = await resp.json();
+      if (data && data.codigo) {
+        previewEl.textContent = data.codigo;
+      }
+    } catch (err) {
+      console.error('Error actualizando vista previa de código:', err);
+    }
+  });
+});
+</script>
+{% endif %}
 {% endblock %}

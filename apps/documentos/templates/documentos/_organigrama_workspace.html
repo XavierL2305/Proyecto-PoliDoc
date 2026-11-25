@@ -1,0 +1,332 @@
+{% load static %}
+<div id="org-workspace"
+     class="org-workspace{% if embedded %} org-workspace--embedded{% endif %}{% if modo == 'editor' %} org-workspace--editor{% else %} org-workspace--viewer{% endif %}"
+     data-mode="{{ modo|default:'viewer' }}"
+     data-datos-url="{{ datos_url }}"
+     data-guardar-url="{{ guardar_url|default:'' }}"
+     data-exportar-url="{{ exportar_url|default:'' }}"
+     data-puede-exportar="{{ puede_exportar|yesno:'true,false' }}"
+     data-version="{{ version_visualizada|default:documento.version_actual }}"
+     data-revision="{{ documento.revision_edicion|default:0 }}"
+     data-doc-uuid="{{ documento.uuid }}"
+     data-doc-kind="{{ diagrama_kind|default:'organigrama' }}"
+     data-doc-label="{{ diagrama_label|default:'Organigrama' }}"
+     data-doc-empresa="{{ documento.empresa|default:'' }}"
+     data-doc-codigo="{{ documento.codigo }}"
+     data-doc-nombre="{{ documento.nombre }}"
+     data-doc-descripcion="{{ documento.descripcion|default:'' }}"
+     data-doc-clasificacion="{{ documento.clasificacion|default:'publico' }}"
+     data-doc-version-actual="{{ documento.version_actual }}"
+     data-doc-proxima-version="{{ documento.proxima_version }}">
+  {% if modo == 'editor' or puede_exportar %}{% csrf_token %}{% endif %}
+
+  <div class="org-toolbar" role="toolbar" aria-label="Herramientas del organigrama">
+    <div class="org-toolbar-group">
+      <button type="button" class="btn btn--ghost btn--sm" id="org-btn-toggle-index" title="Mostrar u ocultar índice de secciones">
+        <i class="fa-solid fa-layer-group"></i><span>Índice</span>
+      </button>
+      <div class="org-version-picker" title="Versión visualizada">
+        <label for="org-version-select" class="sr-only">Versión</label>
+        <select id="org-version-select" class="org-toolbar-select" aria-label="Seleccionar versión"></select>
+      </div>
+      {% if modo == 'editor' %}
+      <span id="org-dirty-badge" class="badge badge--secondary">Sin cambios</span>
+      {% else %}
+      <span class="badge badge--info">Solo lectura</span>
+      {% endif %}
+    </div>
+
+    {% if modo == 'editor' %}
+    <div class="org-toolbar-group org-toolbar-tools" role="group" aria-label="Herramientas de edición">
+      <button type="button" class="btn btn--ghost btn--sm" id="org-btn-undo" title="Deshacer (Ctrl+Z)" disabled>
+        <i class="fa-solid fa-rotate-left"></i>
+      </button>
+      <button type="button" class="btn btn--ghost btn--sm" id="org-btn-redo" title="Rehacer (Ctrl+Y)" disabled>
+        <i class="fa-solid fa-rotate-right"></i>
+      </button>
+      <span class="org-toolbar-sep" aria-hidden="true"></span>
+      <button type="button" class="btn btn--primary btn--sm org-tool-btn is-active" data-tool="select" title="Seleccionar y mover (V)">
+        <i class="fa-solid fa-arrow-pointer"></i><span>Seleccionar</span>
+      </button>
+      <button type="button" class="btn btn--ghost btn--sm org-tool-btn" data-tool="pan" title="Mover mapa (H o Espacio+arrastrar)">
+        <i class="fa-solid fa-hand"></i><span>Mapa</span>
+      </button>
+      <span class="org-toolbar-sep" aria-hidden="true"></span>
+      <button type="button" class="btn btn--ghost btn--sm" data-add-shape="rounded" title="Insertar figura redondeada">
+        <i class="fa-regular fa-square"></i><span>Figura</span>
+      </button>
+      <button type="button" class="btn btn--ghost btn--sm" data-add-shape="rect" title="Insertar rectángulo">
+        <i class="fa-solid fa-stop"></i><span>Caja</span>
+      </button>
+      <button type="button" class="btn btn--ghost btn--sm" data-add-shape="pill" title="Insertar cápsula">
+        <i class="fa-solid fa-capsules"></i><span>Cápsula</span>
+      </button>
+      <button type="button" class="btn btn--ghost btn--sm" data-add-shape="diamond" title="Insertar rombo">
+        <i class="fa-solid fa-diamond"></i><span>Rombo</span>
+      </button>
+      <button type="button" class="btn btn--ghost btn--sm" data-add-shape="text" title="Insertar etiqueta de texto">
+        <i class="fa-solid fa-font"></i><span>Texto</span>
+      </button>
+      <button type="button" class="btn btn--ghost btn--sm" id="org-btn-add-section" title="Insertar sección / área">
+        <i class="fa-regular fa-object-group"></i><span>Sección</span>
+      </button>
+      <button type="button" class="btn btn--ghost btn--sm org-tool-btn" data-tool="connect" title="Conectar figuras (clic o arrastrar desde punto de enlace)">
+        <i class="fa-solid fa-diagram-project"></i><span>Conectar</span>
+      </button>
+    </div>
+    {% endif %}
+
+    <div class="org-toolbar-group org-toolbar-right">
+      <button type="button" class="btn btn--ghost btn--sm" id="org-btn-zoom-out" title="Alejar">
+        <i class="fa-solid fa-magnifying-glass-minus"></i>
+      </button>
+      <span id="org-zoom-label" class="org-zoom-label" title="Nivel de zoom actual">100%</span>
+      <button type="button" class="btn btn--ghost btn--sm" id="org-btn-zoom-in" title="Acercar">
+        <i class="fa-solid fa-magnifying-glass-plus"></i>
+      </button>
+      <button type="button" class="btn btn--ghost btn--sm" id="org-btn-fit" title="Ver organigrama completo">
+        <i class="fa-solid fa-maximize"></i><span>Ver todo</span>
+      </button>
+      <button type="button" class="btn btn--ghost btn--sm is-active" id="org-btn-toggle-cross-edges" title="Mostrar u ocultar enlaces entre secciones">
+        <i class="fa-solid fa-diagram-next"></i><span>Enlaces</span>
+      </button>
+      {% if modo == 'editor' %}
+      <button type="button" class="btn btn--ghost btn--sm is-active" id="org-btn-snap" title="Activar/desactivar ajuste a grilla">
+        <i class="fa-solid fa-border-all"></i>
+      </button>
+      <button type="button" class="btn btn--ghost btn--sm" id="org-btn-toggle-inspector" title="Mostrar u ocultar panel de propiedades">
+        <i class="fa-solid fa-sliders"></i>
+      </button>
+      {% endif %}
+      <button type="button" class="btn btn--ghost btn--sm" id="org-btn-fullscreen" title="Pantalla completa">
+        <i class="fa-solid fa-expand"></i>
+      </button>
+      {% if puede_exportar %}
+      <button type="button" class="btn btn--primary btn--sm" id="org-btn-export" title="Exportar organigrama (PDF, PNG, SVG, ODG, VSDX)">
+        <i class="fa-solid fa-file-export"></i><span>Exportar</span>
+      </button>
+      {% endif %}
+      {% if modo == 'editor' %}
+      <button type="button" class="btn btn--success btn--sm" id="org-btn-save">
+        <i class="fa-solid fa-floppy-disk"></i><span>Guardar</span>
+      </button>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="org-main">
+    <aside class="org-sidebar" id="org-sidebar" aria-label="Índice de secciones">
+      <div class="org-sidebar-section">
+        <div class="org-search-box">
+          <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+          <input type="text" id="org-search-input" class="form-input org-search-input"
+                 placeholder="Buscar cargo, área o texto..." autocomplete="off">
+        </div>
+        <div id="org-search-results" class="org-search-results" hidden></div>
+      </div>
+
+      <div class="org-sidebar-header">
+        <span>Índice de secciones</span>
+        <button type="button" class="btn btn--ghost btn--xs" id="org-btn-show-all" title="Mostrar todas las secciones">
+          Ver todo
+        </button>
+      </div>
+      <div id="org-sections-index" class="org-sections-index"></div>
+    </aside>
+
+    <div class="org-viewport" id="org-viewport" tabindex="0" aria-label="Lienzo del organigrama">
+      <div class="org-canvas" id="org-canvas">
+        <div class="org-layer-sections" id="org-layer-sections"></div>
+        <svg class="org-layer-edges" id="org-layer-edges" xmlns="http://www.w3.org/2000/svg"></svg>
+        <div class="org-layer-nodes" id="org-layer-nodes"></div>
+        <svg class="org-layer-draft" id="org-layer-draft" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+
+      <div id="org-empty-hint" class="org-empty-hint" hidden>
+        <i class="fa-solid {{ diagrama_icon|default:'fa-sitemap' }}"></i>
+        {% if modo == 'editor' %}
+        <p>Este {{ diagrama_label|default:'organigrama'|lower }} aún no tiene secciones ni figuras. Usa los botones superiores para agregar secciones y cajas, y arrastra desde los puntos de conexión para enlazarlas.</p>
+        {% else %}
+        <p>Este {{ diagrama_label|default:'organigrama'|lower }} todavía no tiene elementos publicados.</p>
+        {% endif %}
+      </div>
+
+      <div id="org-status-pill" class="org-status-pill">
+        <span id="org-status-text">Mostrando {{ diagrama_label|default:'organigrama'|lower }} completo</span>
+      </div>
+
+      <div id="org-minimap" class="org-minimap" aria-label="Minimapa de navegación">
+        <div class="org-minimap-header">
+          <span>Minimapa</span>
+          <button type="button" class="btn btn--ghost btn--xs" id="org-minimap-toggle" title="Ocultar o mostrar minimapa" aria-label="Ocultar o mostrar minimapa">
+            <i class="fa-solid fa-compress"></i>
+          </button>
+        </div>
+        <canvas id="org-minimap-canvas" class="org-minimap-canvas" width="184" height="120"></canvas>
+      </div>
+
+      <div id="org-loading-overlay" class="org-loading-overlay">
+        <i class="fa-solid fa-spinner fa-spin"></i>
+        <span>Cargando {{ diagrama_label|default:'organigrama'|lower }}...</span>
+      </div>
+    </div>
+
+    {% if modo == 'editor' %}
+    <aside class="org-inspector" id="org-inspector" aria-label="Propiedades">
+      <div class="org-inspector-header">
+        <span id="org-inspector-title">Propiedades</span>
+      </div>
+      <div id="org-inspector-body" class="org-inspector-body"></div>
+    </aside>
+    {% endif %}
+  </div>
+
+  {% if modo == 'editor' %}
+  <div id="org-save-modal" class="org-modal-overlay" hidden>
+    <div class="org-modal" role="dialog" aria-modal="true" aria-labelledby="org-save-modal-title">
+      <div class="org-modal-header">
+        <h3 id="org-save-modal-title"><i class="fa-solid fa-floppy-disk"></i> Guardar {{ diagrama_label|default:'Organigrama' }}</h3>
+        <button type="button" class="btn btn--ghost btn--xs" id="org-save-close" aria-label="Cerrar">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+      <div class="org-modal-body">
+        <p class="org-modal-desc">Elige si deseas sobrescribir la versión vigente o generar una nueva versión en el historial.</p>
+
+        <label class="org-radio-card">
+          <input type="radio" name="org_version_mode" value="keep" checked>
+          <div>
+            <strong>Conservar versión actual (v<span id="org-save-cur-ver">{{ documento.version_actual }}</span>)</strong>
+            <small>Actualiza esta versión en caliente sin incrementar el número.</small>
+          </div>
+        </label>
+
+        <label class="org-radio-card">
+          <input type="radio" name="org_version_mode" value="bump">
+          <div>
+            <strong>Subir a nueva versión (v<span id="org-save-cur-ver-2">{{ documento.version_actual }}</span> → v<span id="org-save-next-ver">{{ documento.proxima_version }}</span>)</strong>
+            <small>Conserva la versión anterior en el historial y registra la nueva versión como vigente.</small>
+          </div>
+        </label>
+
+        <div class="org-form-group" style="margin-top: 1rem;">
+          <label class="org-form-label" for="org-save-cambios">¿Qué cambió? (resumen de modificación)</label>
+          <textarea id="org-save-cambios" class="form-input" rows="3" maxlength="1000"
+                    placeholder="Ej. Se añadió la coordinación de Talento Humano y enlace con Gerencia General..."></textarea>
+        </div>
+
+        <div id="org-save-error" class="org-save-error" hidden></div>
+      </div>
+      <div class="org-modal-footer">
+        <button type="button" class="btn btn--ghost btn--sm" id="org-save-cancel">Cancelar</button>
+        <button type="button" class="btn btn--primary btn--sm" id="org-save-reload" hidden>Recargar versión actual</button>
+        <button type="button" class="btn btn--success btn--sm" id="org-save-confirm">
+          <i class="fa-solid fa-check"></i> Confirmar y guardar
+        </button>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if puede_exportar %}
+  <div id="org-export-modal" class="org-modal-overlay" hidden>
+    <div class="org-modal org-export-modal" role="dialog" aria-modal="true" aria-labelledby="org-export-modal-title">
+      <div class="org-modal-header">
+        <h3 id="org-export-modal-title"><i class="fa-solid fa-file-export"></i> Exportar {{ diagrama_label|default:'Organigrama' }}</h3>
+        <button type="button" class="btn btn--ghost btn--xs" id="org-export-close" aria-label="Cerrar">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+      <div class="org-modal-body org-export-modal-body">
+        <div id="org-export-version-info" class="org-export-meta-banner"></div>
+        <div id="org-export-dirty-warn" class="org-export-warn" hidden>
+          <i class="fa-solid fa-triangle-exclamation"></i>
+          <span>Tienes cambios sin guardar en el lienzo. La exportación descarga la versión guardada en el servidor; guarda primero si deseas incluirlos.</span>
+        </div>
+
+        <div class="org-form-group">
+          <label class="org-form-label">Formato de descarga</label>
+          <div class="org-format-grid" id="org-export-formats">
+            <label class="org-format-card">
+              <input type="radio" name="org_export_format" value="pdf" checked>
+              <div>
+                <strong>PDF</strong>
+                <small>Institucional SGC</small>
+              </div>
+            </label>
+            <label class="org-format-card">
+              <input type="radio" name="org_export_format" value="vsdx">
+              <div>
+                <strong>VSDX</strong>
+                <small>Microsoft Visio</small>
+              </div>
+            </label>
+            <label class="org-format-card">
+              <input type="radio" name="org_export_format" value="odg">
+              <div>
+                <strong>ODG</strong>
+                <small>LibreOffice Draw</small>
+              </div>
+            </label>
+            <label class="org-format-card">
+              <input type="radio" name="org_export_format" value="png">
+              <div>
+                <strong>PNG</strong>
+                <small>Imagen alta DPI</small>
+              </div>
+            </label>
+            <label class="org-format-card">
+              <input type="radio" name="org_export_format" value="svg">
+              <div>
+                <strong>SVG</strong>
+                <small>Vectorial web</small>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <div class="org-form-group" id="org-export-paper-group">
+          <label class="org-form-label" for="org-export-paper">Tamaño de hoja (PDF)</label>
+          <select id="org-export-paper" class="form-input">
+            <option value="auto" selected>Automático (ajustado al tamaño)</option>
+            <option value="letter">Carta horizontal (Letter)</option>
+            <option value="a4">A4 horizontal</option>
+            <option value="a3">A3 horizontal (planos amplios)</option>
+          </select>
+        </div>
+
+        <div class="org-form-group">
+          <div class="org-export-scope-head">
+            <label class="org-form-label" style="margin: 0;">Alcance por empresa y secciones</label>
+            <div class="org-export-quick-btns">
+              <button type="button" class="btn btn--ghost btn--xs" id="org-export-btn-iso" hidden>Solo sección aislada</button>
+              <button type="button" class="btn btn--ghost btn--xs" id="org-export-btn-clear">Limpiar</button>
+            </div>
+          </div>
+          <label class="org-export-all-check">
+            <input type="checkbox" id="org-export-all" class="form-checkbox" checked>
+            <span><strong>Todo el {{ diagrama_label|default:'organigrama'|lower }} completo</strong> (todas las empresas, secciones y elementos)</span>
+          </label>
+          <div id="org-export-tree" class="org-export-tree"></div>
+        </div>
+
+        <label class="org-export-frames-check">
+          <input type="checkbox" id="org-export-frames" class="form-checkbox" checked>
+          <span>Incluir marcos y etiquetas de sección en el archivo exportado</span>
+        </label>
+
+        <div id="org-export-error" class="org-save-error" hidden></div>
+      </div>
+      <div class="org-modal-footer">
+        <button type="button" class="btn btn--ghost btn--sm" id="org-export-cancel">Cancelar</button>
+        <button type="button" class="btn btn--primary btn--sm" id="org-export-confirm">
+          <i class="fa-solid fa-download"></i> <span>Descargar archivo</span>
+        </button>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+{{ departamentos_catalogo|json_script:"org-departamentos-data" }}
+{{ empresas_catalogo|json_script:"org-empresas-data" }}

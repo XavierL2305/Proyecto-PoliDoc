@@ -611,31 +611,36 @@ class PlantillaOrigenObligatoriaTest(BaseDocumentosTest):
             args=['formulario', self.plantilla.uuid],
         ))
 
-    def test_no_crea_sin_plantilla_origen(self):
+    def test_crea_documento_sin_plantilla_origen(self):
         self.client.login(username='jefe_ti', password='testpass123')
         resp = self.client.post(
             reverse('documentos:crear_documento', args=['formulario']),
             self._payload(),
         )
-        self.assertEqual(resp.status_code, 200)
-        self.assertFalse(
-            Documento.objects.filter(codigo='TI-FOR-050').exists()
-        )
+        self.assertEqual(resp.status_code, 302)
+        doc = Documento.objects.get(codigo='TI-FOR-050')
+        self.assertIsNone(doc.plantilla_origen)
 
-    def test_bloquea_si_el_tipo_no_tiene_plantilla_activa(self):
+    def test_crea_si_el_tipo_no_tiene_plantilla_activa(self):
         tipo = TipoDocumento.objects.create(
             key='tipo_sin_plantilla', nombre='Tipo sin plantilla',
             codigo='TSP', activo=True,
         )
         self.client.login(username='jefe_ti', password='testpass123')
+        resp_get = self.client.get(
+            reverse('documentos:crear_documento', args=[tipo.key]),
+        )
+        self.assertEqual(resp_get.status_code, 200)
+        self.assertNotContains(resp_get, 'Debes subir una plantilla')
+        self.assertNotContains(resp_get, 'id="id_plantilla_origen"')
+
         resp = self.client.post(
             reverse('documentos:crear_documento', args=[tipo.key]),
             self._payload(nombre='Doc sin plantilla'),
         )
-        self.assertEqual(resp.status_code, 200)
-        self.assertFalse(
-            Documento.objects.filter(nombre='Doc sin plantilla').exists()
-        )
+        self.assertEqual(resp.status_code, 302)
+        doc = Documento.objects.get(nombre='Doc sin plantilla')
+        self.assertIsNone(doc.plantilla_origen)
 
 class PlanillaPlantillaAdminTest(BaseDocumentosTest):
     def setUp(self):
@@ -926,11 +931,20 @@ class SecuenciaCodigoConcurrenteTest(TransactionTestCase):
 
 
 class DocumentoCleanPlantillaTest(BaseDocumentosTest):
-    def test_documento_nuevo_sin_plantilla_falla(self):
+    def test_documento_nuevo_sin_plantilla_es_valido(self):
         doc = Documento(
             tipo=self.tipo_formulario, nombre='Sin plantilla',
             codigo='TI-FOR-960', estado='borrador',
             propietario=self.user_trabajador, departamento=self.depto_ti,
+        )
+        doc.clean()
+
+    def test_documento_nuevo_con_plantilla_invalida_falla(self):
+        doc = Documento(
+            tipo=self.tipo_formulario, nombre='Origen no plantilla',
+            codigo='TI-FOR-961', estado='borrador',
+            propietario=self.user_trabajador, departamento=self.depto_ti,
+            plantilla_origen=self.doc_activo,
         )
         with self.assertRaises(ValidationError) as ctx:
             doc.clean()

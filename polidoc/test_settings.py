@@ -34,6 +34,14 @@ RRHH_SQLSERVER_HOST = ''
 # Sin enforcement de cédula por defecto (los tests lo activan si lo prueban).
 EXIGIR_CEDULA_PERFIL = False
 
+# Correo en memoria durante tests (nunca dispara SMTP externo ni Gmail API real).
+EMAIL_PROVIDER = 'smtp'
+MAILERS = {
+    'default': {
+        'BACKEND': 'django.core.mail.backends.locmem.EmailBackend',
+    },
+}
+
 # Buffer de auditoría a un directorio temporal, no dentro del repo.
 import tempfile as _tempfile  # noqa: E402
 AUDIT_BUFFER_DIR = _tempfile.mkdtemp(prefix='polidoc_audit_buffer_')

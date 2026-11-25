@@ -1,0 +1,88 @@
+{% extends 'base_app.html' %}
+{% load static %}
+
+{% block title %}Acceso a {{ titulo_apartado }} - POLIDOC{% endblock %}
+
+{% block app_content %}
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap;margin-bottom:1.5rem;">
+  <div>
+    <h1 style="font-size:1.25rem;margin:0;">
+      <i class="fa-solid fa-user-shield" style="color: var(--color-primary);"></i>
+      Acceso de edición — {{ titulo_apartado }}
+    </h1>
+    <p style="color:var(--color-muted);font-size:.85rem;margin:.35rem 0 0;">
+      Todos los usuarios pueden consultar el apartado en modo lectura (según su vigencia y clasificación).
+      Únicamente el administrador asigna qué personas pueden <strong>editar o construir</strong> {{ titulo_apartado }}.
+    </p>
+  </div>
+  <a class="btn btn--ghost btn--sm" href="{{ volver_url }}">
+    <i class="fa-solid fa-arrow-left"></i> Volver
+  </a>
+</div>
+
+<div class="form-card" style="margin-bottom:1.5rem;">
+  <div class="form-card-header"><h3>Otorgar permiso de edición</h3></div>
+  <div class="form-card-body">
+    <form method="post" style="display:flex;gap:.75rem;flex-wrap:wrap;align-items:flex-end;">
+      {% csrf_token %}
+      <div class="form-group" style="margin:0;flex:1 1 360px;">
+        <label class="form-label" for="id_usuario_acceso">Usuario</label>
+        <select id="id_usuario_acceso" name="usuario_id" class="form-input" required>
+          <option value="">Selecciona un usuario…</option>
+          {% for u in usuarios %}
+          <option value="{{ u.id }}">
+            {{ u.get_full_name|default:u.username }}{% if u.perfil and u.perfil.departamento %} · {{ u.perfil.departamento.nombre }}{% endif %}{% if u.email %} — {{ u.email }}{% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <button type="submit" class="btn btn--primary">
+        <i class="fa-solid fa-plus"></i> Otorgar acceso de edición
+      </button>
+    </form>
+  </div>
+</div>
+
+<div class="form-card">
+  <div class="form-card-header"><h3>Personas con permiso de edición (además del administrador)</h3></div>
+  <div class="form-card-body" style="padding:0;">
+    {% if concesiones %}
+    <div style="overflow-x:auto;">
+      <table class="table" style="width:100%;">
+        <thead>
+          <tr>
+            <th>Usuario</th>
+            <th>Departamento</th>
+            <th>Correo</th>
+            <th>Otorgado por</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in concesiones %}
+          <tr>
+            <td><strong>{{ c.usuario.get_full_name|default:c.usuario.username }}</strong></td>
+            <td>{% if c.usuario.perfil and c.usuario.perfil.departamento %}{{ c.usuario.perfil.departamento.nombre }}{% else %}—{% endif %}</td>
+            <td>{{ c.usuario.email|default:"—" }}</td>
+            <td>{{ c.creado_por.get_full_name|default:c.creado_por.username|default:"—" }}</td>
+            <td style="text-align:right;">
+              <form method="post" style="display:inline;"
+                    action="{% url revocar_url_name usuario_id=c.usuario_id %}"
+                    onsubmit="return confirm('¿Revocar el permiso de edición a este usuario?');">
+                {% csrf_token %}
+                <button type="submit" class="btn btn--danger btn--sm">Revocar</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state" style="padding:2rem;text-align:center;color:var(--color-muted);">
+      <p>Ningún usuario asignado todavía; solo el administrador puede editar este apartado.</p>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

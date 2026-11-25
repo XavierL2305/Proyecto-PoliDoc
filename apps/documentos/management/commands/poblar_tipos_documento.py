@@ -23,6 +23,8 @@ class Command(BaseCommand):
                     'color': info.get('color', 'primary'),
                     'solo_jefes': info.get('solo_jefes', False),
                     'sin_prefijo_depto': info.get('sin_prefijo_depto', False),
+                    'usa_prefijo_empresa': info.get('usa_prefijo_empresa', False),
+                    'unico_por_empresa': info.get('unico_por_empresa', False),
                 }
             )
             if was_created:

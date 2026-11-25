@@ -103,7 +103,7 @@
   .table { width: 100%; border-collapse: collapse; }
   .table th,
   .table td {
-    padding: 0.75rem 1rem;
+    padding: 0.65rem 0.75rem;
     text-align: left;
     font-size: 0.875rem;
     border-bottom: 1px solid var(--color-border);
@@ -119,6 +119,17 @@
   .table-cell--bold { font-weight: 600; }
   .table-cell--muted { color: var(--color-muted); font-size: 0.8125rem; }
   .table--hover tr:hover td { background: var(--color-bg); }
+  .cell-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .col-usuario { max-width: 195px; width: 195px; }
+  .user-cell { display: flex; align-items: center; gap: 0.65rem; min-width: 0; }
+  .user-cell-info { min-width: 0; flex: 1; }
+  .col-email { max-width: 170px; }
+  .col-depto { max-width: 165px; }
+  .badge--truncate { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+  .col-rrhh { max-width: 175px; }
+  .col-acceso { white-space: nowrap; }
+  .col-acciones { white-space: nowrap; width: 1%; }
+  .acciones-row { display: inline-flex; align-items: center; gap: 0.375rem; flex-wrap: nowrap; }
 
   .badge {
     display: inline-flex;
@@ -240,9 +251,11 @@
   }
   .btn--primary { background: var(--color-primary); color: #fff; }
   .btn--primary:hover { opacity: 0.9; }
+  .btn--danger { background: var(--color-danger); color: #fff; }
+  .btn--danger:hover { opacity: 0.9; }
   .btn--ghost { background: transparent; color: var(--color-text); border-color: var(--color-border); }
   .btn--ghost:hover { background: var(--color-bg); }
-  .btn--sm { padding: 0.375rem 0.75rem; font-size: 0.8125rem; }
+  .btn--sm { padding: 0.3rem 0.6rem; font-size: 0.78rem; white-space: nowrap; }
   .btn--full { width: 100%; justify-content: center; }
 
   .alert {
@@ -273,16 +286,23 @@
       <i class="fa-solid fa-triangle-exclamation"></i> {{ sin_departamento }} sin departamento
     </span>
     {% endif %}
+    {% if sin_cedula_count > 0 %}
+    <span class="page-stat page-stat--warning">
+      <i class="fa-solid fa-id-card"></i> {{ sin_cedula_count }} sin cédula
+    </span>
+    {% endif %}
   </div>
 </div>
 
 <div class="section-card">
   <form method="get" class="filter-bar">
-    <input type="text" name="buscar" value="{{ buscar }}" placeholder="Buscar por nombre, usuario o email...">
+    <input type="text" name="buscar" value="{{ buscar }}" placeholder="Buscar por nombre, usuario, email, cédula o cargo...">
     <select name="estado" onchange="this.form.submit()">
       <option value="">Todos</option>
       <option value="sin_dept" {% if filtro_estado == 'sin_dept' %}selected{% endif %}>Sin departamento</option>
       <option value="con_dept" {% if filtro_estado == 'con_dept' %}selected{% endif %}>Con departamento</option>
+      <option value="sin_cedula" {% if filtro_estado == 'sin_cedula' %}selected{% endif %}>Sin cédula</option>
+      <option value="verificada_rrhh" {% if filtro_estado == 'verificada_rrhh' %}selected{% endif %}>Verificada en RRHH</option>
     </select>
     <select name="departamento" onchange="this.form.submit()">
       <option value="">Todos los departamentos</option>
@@ -301,6 +321,7 @@
           <th>Email</th>
           <th>Departamento</th>
           <th>Rol</th>
+          <th>RRHH / Cédula</th>
           <th>Último acceso</th>
           <th>Acciones</th>
         </tr>
@@ -308,33 +329,65 @@
       <tbody>
         {% for u in usuarios %}
         <tr>
-          <td>
-            <div style="display: flex; align-items: center; gap: 0.75rem;">
+          <td class="col-usuario">
+            <div class="user-cell">
               <div class="user-avatar">{{ u.first_name|first|default:u.username|first }}</div>
-              <div>
-                <div class="table-cell--bold">{{ u.get_full_name|default:u.username }}</div>
-                <div class="table-cell--muted">{{ u.username }}</div>
+              <div class="user-cell-info">
+                <div class="table-cell--bold cell-truncate" title="{{ u.get_full_name|default:u.username }}">{{ u.get_full_name|default:u.username }}</div>
+                <div class="table-cell--muted cell-truncate" title="{{ u.username }}">{{ u.username }}</div>
               </div>
             </div>
           </td>
-          <td class="table-cell--muted">{{ u.email|default:"-" }}</td>
-          <td>
+          <td class="table-cell--muted col-email cell-truncate" title="{{ u.email|default:'-' }}">{{ u.email|default:"-" }}</td>
+          <td class="col-depto">
             {% if u.perfil.departamento %}
-            <span class="badge badge--success">{{ u.perfil.departamento }}</span>
+            <span class="badge badge--success badge--truncate" title="{{ u.perfil.departamento }}">{{ u.perfil.departamento }}</span>
             {% else %}
             <span class="badge badge--warning">Sin asignar</span>
             {% endif %}
           </td>
           <td><span class="badge badge--info">{{ u.perfil.get_rol_display }}</span></td>
-          <td class="table-cell--muted">{{ u.last_login|date:"d/m/Y H:i"|default:"Nunca" }}</td>
-          <td>
-            <div style="display: flex; gap: 0.5rem;">
-              <button class="btn btn--ghost btn--sm" onclick="abrirModalAsignar({{ u.id }}, '{{ u.get_full_name|default:u.username }}', '{{ u.username }}', {% if u.perfil.departamento %}{{ u.perfil.departamento.id }}{% else %}null{% endif %})">
+          <td class="col-rrhh">
+            {% if u.perfil.cedula_identidad or u.perfil.cargo %}
+              <div>
+                <span>{{ u.perfil.cedula_identidad|default:"Sin cédula" }}</span>
+                {% if u.perfil.cedula_verificada_rrhh %}
+                <span class="badge badge--success" style="font-size:.65rem;margin-left:.25rem;">RRHH</span>
+                {% endif %}
+              </div>
+              {% if u.perfil.cargo %}
+              <div class="table-cell--muted cell-truncate" title="{{ u.perfil.cargo }}">{{ u.perfil.cargo }}</div>
+              {% endif %}
+            {% else %}
+              <span class="table-cell--muted">Sin vincular</span>
+            {% endif %}
+          </td>
+          <td class="table-cell--muted col-acceso">{{ u.last_login|date:"d/m/Y H:i"|default:"Nunca" }}</td>
+          <td class="col-acciones">
+            <div class="acciones-row">
+              <button class="btn btn--ghost btn--sm" title="Asignar departamento" onclick="abrirModalAsignar({{ u.id }}, '{{ u.get_full_name|default:u.username }}', '{{ u.username }}', {% if u.perfil.departamento %}{{ u.perfil.departamento.id }}{% else %}null{% endif %})">
                 <i class="fa-solid fa-building"></i> Asignar
               </button>
-              <a href="{% url 'autenticacion:ver_usuario' u.id %}" class="btn btn--ghost btn--sm">
+              <a href="{% url 'autenticacion:ver_usuario' u.id %}" class="btn btn--ghost btn--sm" title="Ver usuario">
                 <i class="fa-solid fa-eye"></i> Ver
               </a>
+              {% if u.perfil.cedula_identidad or u.perfil.cargo or u.perfil.departamento_rrhh or u.perfil.cedula_verificada_rrhh or u.perfil.ultimo_sync_rrhh %}
+              <button
+                type="button"
+                class="btn btn--ghost btn--sm"
+                style="color: var(--color-danger);"
+                title="Limpiar RRHH"
+                aria-label="Limpiar RRHH"
+                data-user-id="{{ u.id }}"
+                data-user-nombre="{{ u.get_full_name|default:u.username }}"
+                data-user-username="{{ u.username }}"
+                data-cedula="{{ u.perfil.cedula_identidad }}"
+                data-cargo="{{ u.perfil.cargo }}"
+                onclick="abrirModalDesvincular(this)"
+              >
+                <i class="fa-solid fa-user-xmark"></i> RRHH
+              </button>
+              {% endif %}
             </div>
           </td>
         </tr>
@@ -403,11 +456,45 @@
     </div>
   </div>
 </div>
+
+<!-- Modal Desvincular RRHH -->
+<div class="modal-overlay" id="modal-desvincular-rrhh">
+  <div class="modal">
+    <div class="modal-header">
+      <h3><i class="fa-solid fa-user-xmark" style="color: var(--color-danger);"></i> Limpiar información RRHH</h3>
+      <button class="modal-close" onclick="cerrarModalDesvincular()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size: 0.875rem; color: var(--color-muted); margin-bottom: 1rem;">
+        Vas a desvincular los datos de RRHH de <strong id="modal-rrhh-nombre"></strong>
+        <span style="font-size: 0.8125rem;">(<span id="modal-rrhh-username"></span>)</span>.
+      </p>
+      <div style="padding: 0.75rem 1rem; border: 1px solid var(--color-border); border-radius: var(--radius); margin-bottom: 1rem; font-size: 0.875rem;">
+        <div><strong>Cédula:</strong> <span id="modal-rrhh-cedula">—</span></div>
+        <div style="margin-top: 0.25rem;"><strong>Cargo RRHH:</strong> <span id="modal-rrhh-cargo">—</span></div>
+      </div>
+      <p style="font-size: 0.8125rem; color: var(--color-muted); margin-bottom: 1rem;">
+        Se eliminarán cédula, cargo, departamento RRHH y estado de verificación. El usuario verá de nuevo el aviso para registrar su cédula, y en el próximo inicio de sesión por Active Directory se restaurarán sus nombres de AD.
+      </p>
+      <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; cursor: pointer;">
+        <input type="checkbox" class="form-checkbox" style="margin-top: 0;" id="modal-rrhh-limpiar-nombres">
+        <span>Limpiar también nombre y apellido ahora</span>
+      </label>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn--ghost" onclick="cerrarModalDesvincular()">Cancelar</button>
+      <button class="btn btn--danger" onclick="confirmarDesvincularRRHH()">
+        <i class="fa-solid fa-user-xmark"></i> Confirmar desvinculación
+      </button>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
 var usuarioActualId = null;
+var usuarioRRHHId = null;
 
 function abrirModalAsignar(usuarioId, nombre, username, deptoActualId) {
   usuarioActualId = usuarioId;
@@ -429,6 +516,51 @@ function cerrarModal() {
 document.getElementById('modal-asignar').addEventListener('click', function(e) {
   if (e.target === this) cerrarModal();
 });
+
+function abrirModalDesvincular(btn) {
+  usuarioRRHHId = parseInt(btn.dataset.userId, 10);
+  document.getElementById('modal-rrhh-nombre').textContent = btn.dataset.userNombre || '';
+  document.getElementById('modal-rrhh-username').textContent = btn.dataset.userUsername || '';
+  document.getElementById('modal-rrhh-cedula').textContent = btn.dataset.cedula || '—';
+  document.getElementById('modal-rrhh-cargo').textContent = btn.dataset.cargo || '—';
+  document.getElementById('modal-rrhh-limpiar-nombres').checked = false;
+  document.getElementById('modal-desvincular-rrhh').classList.add('active');
+}
+
+function cerrarModalDesvincular() {
+  document.getElementById('modal-desvincular-rrhh').classList.remove('active');
+  usuarioRRHHId = null;
+}
+
+document.getElementById('modal-desvincular-rrhh').addEventListener('click', function(e) {
+  if (e.target === this) cerrarModalDesvincular();
+});
+
+function confirmarDesvincularRRHH() {
+  if (!usuarioRRHHId) return;
+  var limpiarNombres = document.getElementById('modal-rrhh-limpiar-nombres').checked;
+
+  fetch("{% url 'autenticacion:desvincular_rrhh_usuario' %}", {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': '{{ csrf_token }}',
+    },
+    body: JSON.stringify({
+      usuario_id: usuarioRRHHId,
+      limpiar_nombres: limpiarNombres
+    })
+  })
+  .then(response => response.json())
+  .then(data => {
+    if (data.success) {
+      location.reload();
+    } else {
+      alert(data.error || 'Error al limpiar información RRHH');
+    }
+  })
+  .catch(() => alert('Error de conexión'));
+}
 
 function asignarDepartamento() {
   var deptoId = document.getElementById('modal-departamento').value;

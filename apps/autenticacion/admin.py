@@ -4,7 +4,7 @@ from django.contrib import admin
 
 from .models import PerfilUsuario, Notificacion
 from .services.rrhh_sync import (
-    enmascarar_cedula, validar_y_limpiar_cedula,
+    desvincular_datos_rrhh, enmascarar_cedula, validar_y_limpiar_cedula,
 )
 
 logger = logging.getLogger(__name__)
@@ -22,6 +22,24 @@ class PerfilUsuarioAdmin(admin.ModelAdmin):
     ]
     search_fields = ['usuario__username', 'usuario__first_name', 'usuario__last_name', 'cedula_identidad']
     raw_id_fields = ['usuario', 'departamento']
+    actions = ['desvincular_rrhh_seleccionados']
+
+    @admin.action(description='Desvincular datos RRHH (cédula, cargo y verificación)')
+    def desvincular_rrhh_seleccionados(self, request, queryset):
+        desvinculados = 0
+        for perfil in queryset.select_related('usuario'):
+            res = desvincular_datos_rrhh(
+                perfil,
+                actor=request.user,
+                origen='admin_action',
+                limpiar_nombres=False,
+            )
+            if res['modificado']:
+                desvinculados += 1
+        self.message_user(
+            request,
+            f'Se desvincularon los datos de RRHH de {desvinculados} perfil(es).',
+        )
 
     def save_model(self, request, obj, form, change):
         anterior = None

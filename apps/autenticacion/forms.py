@@ -17,7 +17,7 @@ class CedulaForm(forms.Form):
             'class': 'form-input',
             'inputmode': 'numeric',
             'autocomplete': 'off',
-            'placeholder': 'Ej: 31097865',
+            'placeholder': 'Ej: 12345678',
         }),
     )
 
