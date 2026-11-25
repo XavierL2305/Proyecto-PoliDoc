@@ -19,6 +19,7 @@ from pypdf import PdfReader
 from tests_base import BaseDocumentosTest, MONGO_PATCH_TARGET
 
 from documentos.models import Documento, SolicitudDescarga, TipoDocumento
+from documentos.services import acceso_formato
 from documentos.services.organigrama import crear_organigrama_inicial, guardar_organigrama
 from documentos.services.organigrama_export import (
     LEYENDA_COPIA_NO_CONTROLADA,
@@ -517,11 +518,13 @@ class OrganigramaExportEndpointYTemplatesTest(BaseDocumentosTest):
 
     def test_templates_incluyen_minimap_undo_redo_y_modal_exportacion(self):
         doc = crear_organigrama_inicial(self.user_jefe_ti, clasificacion='publico')
+        acceso_formato.otorgar_tipo(self.user_jefe_th, 'organigrama', otorgado_por=self.user_admin)
 
-        # Constructor (jefe) incluye minimap.js, undo/redo y modal de exportación
+        # Constructor (editor asignado) incluye minimap.js, undo/redo y modal de exportación, sin botón admin
         self.client.login(username='jefe_th', password='testpass123')
         r_cons = self.client.get(reverse('documentos:organigrama_constructor'))
         self.assertEqual(r_cons.status_code, 200)
+        self.assertNotContains(r_cons, 'Gestionar accesos')
         self.assertContains(r_cons, 'js/organigrama/minimap.js')
         self.assertContains(r_cons, 'id="org-btn-undo"')
         self.assertContains(r_cons, 'id="org-btn-redo"')

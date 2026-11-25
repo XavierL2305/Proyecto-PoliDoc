@@ -89,6 +89,13 @@
     <h1><i class="fa-solid fa-diagram-project" style="color: var(--color-primary);"></i> Mapas de Procesos por Empresa</h1>
     <p class="map-page-sub">Un mapa de procesos vigente independiente para cada empresa del Grupo Policlínica (PTCA, PTH, FP y FS).</p>
   </div>
+  {% if es_admin and accesos_url %}
+  <div>
+    <a href="{{ accesos_url }}" class="btn btn--ghost btn--sm">
+      <i class="fa-solid fa-user-shield"></i> Gestionar accesos
+    </a>
+  </div>
+  {% endif %}
 </div>
 
 <div class="map-cards-grid">

@@ -162,7 +162,7 @@ def concesion_tipo(usuario, tipo_o_key):
     if not _autenticado(usuario) or not key:
         return None
     return AccesoFormato.objects.filter(
-        tipo_documento_id=key, usuario=usuario, activo=True,
+        tipo_documento__key=key, usuario=usuario, activo=True,
     ).first()
 
 
@@ -174,7 +174,7 @@ def puede_editar_tipo(usuario, tipo_o_key):
     if es_administrador(usuario):
         return True
     return AccesoFormato.objects.filter(
-        tipo_documento_id=key,
+        tipo_documento__key=key,
         tipo_documento__activo=True,
         usuario=usuario,
         activo=True,
@@ -187,7 +187,7 @@ def concesiones_tipo(tipo_o_key, solo_activas=True):
     key = _tipo_key(tipo_o_key)
     if not key:
         return AccesoFormato.objects.none()
-    qs = AccesoFormato.objects.filter(tipo_documento_id=key).select_related(
+    qs = AccesoFormato.objects.filter(tipo_documento__key=key).select_related(
         'usuario', 'usuario__perfil', 'usuario__perfil__departamento',
         'creado_por', 'tipo_documento',
     )
@@ -230,5 +230,5 @@ def revocar_tipo(usuario, tipo_o_key):
     if not key or usuario is None:
         return 0
     return AccesoFormato.objects.filter(
-        tipo_documento_id=key, usuario=usuario, activo=True,
+        tipo_documento__key=key, usuario=usuario, activo=True,
     ).update(activo=False)

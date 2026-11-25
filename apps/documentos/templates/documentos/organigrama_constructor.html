@@ -56,6 +56,11 @@
     <a href="{% if diagrama_visor_url %}{{ diagrama_visor_url }}{% else %}{% url 'documentos:organigrama_visor' documento_id=documento.uuid %}{% endif %}" class="btn btn--ghost btn--sm">
       <i class="fa-solid fa-eye"></i> Ver modo lectura
     </a>
+    {% if es_admin and diagrama_accesos_url %}
+    <a href="{{ diagrama_accesos_url }}" class="btn btn--ghost btn--sm">
+      <i class="fa-solid fa-user-shield"></i> Gestionar accesos
+    </a>
+    {% endif %}
     <a href="{% url 'documentos:detalle' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost btn--sm">
       <i class="fa-solid fa-circle-info"></i> Ficha SGC
     </a>

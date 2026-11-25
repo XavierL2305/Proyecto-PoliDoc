@@ -16,6 +16,7 @@ from tests_base import BaseDocumentosTest, MONGO_PATCH_TARGET
 from documentos.forms import TipoDocumentoForm
 from documentos.models import (
     TIPOS_UNICOS_POR_EMPRESA,
+    AccesoFormato,
     Documento,
     TipoDocumento,
     VersionDocumento,
@@ -28,6 +29,7 @@ from documentos.services.organigrama import (
     MAX_PAYLOAD_BYTES,
     TIPO_MAPA_PROCESOS,
     crear_mapa_procesos_inicial,
+    crear_organigrama_inicial,
     obtener_datos_version,
     obtener_mapa_procesos_vigente,
     validar_datos_organigrama,
@@ -256,11 +258,122 @@ class MapaProcesosInteractivoTest(BaseDocumentosTest):
         self.assertEqual(resp_sel.status_code, 200)
         self.assertNotIn('/documentos/plantillas/mapa_procesos/', resp_sel.content.decode('utf-8'))
 
-        # Trabajador no puede abrir constructor de MAP
+        # Jefe y trabajador sin concesión en AccesoFormato no pueden abrir constructor de MAP
+        for u in (self.user_trabajador, self.user_jefe_ti):
+            self.client.force_login(u)
+            resp_den = self.client.get(reverse('documentos:mapa_procesos_constructor', args=['PTCA']))
+            self.assertEqual(resp_den.status_code, 302)
+            self.assertIn(reverse('documentos:mapa_procesos_index'), resp_den['Location'])
+
+    def test_admin_asigna_y_revoca_acceso_edicion_via_acceso_formato_independiente_org_y_map(self):
+        doc_fs = crear_mapa_procesos_inicial(self.user_admin, 'FS')
+        doc_org = crear_organigrama_inicial(self.user_admin)
+
+        # 1. Todos los usuarios ven el índice y el visor público de MAP, pero sin botón Editar
+        for u in (self.user_trabajador, self.user_jefe_ti):
+            self.client.force_login(u)
+            r_idx = self.client.get(reverse('documentos:mapa_procesos_index'))
+            self.assertEqual(r_idx.status_code, 200)
+            self.assertNotIn('Gestionar accesos', r_idx.content.decode('utf-8'))
+            self.assertEqual(
+                self.client.get(reverse('documentos:mapa_procesos_visor', args=[doc_fs.uuid])).status_code,
+                200,
+            )
+            # No admin no puede abrir pantalla de gestión de accesos
+            r_acc = self.client.get(reverse('documentos:mapa_procesos_accesos'))
+            self.assertRedirects(r_acc, reverse('documentos:mapa_procesos_index'))
+
+        # 2. Admin sí ve botón Gestionar accesos y otorga permiso a user_trabajador
+        self.client.force_login(self.user_admin)
+        r_idx_adm = self.client.get(reverse('documentos:mapa_procesos_index'))
+        self.assertContains(r_idx_adm, 'Gestionar accesos')
+        self.assertEqual(self.client.get(reverse('documentos:mapa_procesos_accesos')).status_code, 200)
+
+        with patch('documentos.views_organigrama.registrar_log_iso'):
+            r_grant = self.client.post(
+                reverse('documentos:mapa_procesos_accesos'),
+                {'usuario_id': self.user_trabajador.id},
+            )
+        self.assertRedirects(r_grant, reverse('documentos:mapa_procesos_accesos'))
+        concesion = AccesoFormato.objects.get(
+            tipo_documento__key=TIPO_MAPA_PROCESOS, usuario=self.user_trabajador,
+        )
+        self.assertIsNone(concesion.formato_id)
+        self.assertEqual(concesion.nivel, 'editar')
+        self.assertTrue(concesion.activo)
+
+        # 3. user_trabajador puede construir/editar MAP y verlo en seleccionar_tipo,
+        #    pero NO gana acceso de edición al Organigrama (apartados independientes)
         self.client.force_login(self.user_trabajador)
-        resp_trab = self.client.get(reverse('documentos:mapa_procesos_constructor', args=['PTCA']))
-        self.assertEqual(resp_trab.status_code, 302)
-        self.assertIn(reverse('documentos:mapa_procesos_index'), resp_trab['Location'])
+        self.assertEqual(
+            self.client.get(reverse('documentos:mapa_procesos_constructor', args=['FS'])).status_code,
+            200,
+        )
+        r_save = self.client.post(
+            reverse('documentos:organigrama_guardar_api', args=[doc_fs.uuid]),
+            data=json.dumps({
+                'revision_edicion': doc_fs.revision_edicion,
+                'incrementar_version': False,
+                'datos': _payload_mapa_valido('FS'),
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(r_save.status_code, 200)
+
+        r_sel = self.client.get(reverse('documentos:seleccionar_tipo'))
+        sel_html = r_sel.content.decode('utf-8')
+        self.assertIn('/documentos/nuevo/mapa_procesos/', sel_html)
+        self.assertNotIn('/documentos/nuevo/organigrama/', sel_html)
+
+        self.assertEqual(
+            self.client.get(reverse('documentos:organigrama_constructor')).status_code,
+            302,
+        )
+        self.assertEqual(
+            self.client.get(reverse('documentos:organigrama_visor', args=[doc_org.uuid])).status_code,
+            200,
+        )
+
+        # 4. Admin revoca -> vuelve a solo lectura conservando activo=False
+        self.client.force_login(self.user_admin)
+        with patch('documentos.views_organigrama.registrar_log_iso'):
+            r_rev = self.client.post(
+                reverse('documentos:mapa_procesos_acceso_revocar', args=[self.user_trabajador.id]),
+            )
+        self.assertRedirects(r_rev, reverse('documentos:mapa_procesos_accesos'))
+        concesion.refresh_from_db()
+        self.assertFalse(concesion.activo)
+
+        self.client.force_login(self.user_trabajador)
+        self.assertEqual(
+            self.client.get(reverse('documentos:mapa_procesos_constructor', args=['FS'])).status_code,
+            302,
+        )
+        doc_fs.refresh_from_db()
+        r_save_after = self.client.post(
+            reverse('documentos:organigrama_guardar_api', args=[doc_fs.uuid]),
+            data=json.dumps({
+                'revision_edicion': doc_fs.revision_edicion,
+                'incrementar_version': False,
+                'datos': _payload_mapa_valido('FS'),
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(r_save_after.status_code, 403)
+
+        # 5. Validación de integridad: no permite AccesoFormato sin destino ni con ambos
+        tipo_map = TipoDocumento.objects.get(key=TIPO_MAPA_PROCESOS)
+        invalido = AccesoFormato(usuario=self.user_trabajador, nivel='editar')
+        with self.assertRaises(ValidationError):
+            invalido.full_clean()
+        invalido_doble = AccesoFormato(
+            usuario=self.user_trabajador,
+            tipo_documento=tipo_map,
+            formato_id=1,
+            nivel='editar',
+        )
+        with self.assertRaises(ValidationError):
+            invalido_doble.full_clean()
 
     def test_constructor_por_empresa_guardado_versionado_export_y_vistas_heredadas(self):
         self.client.force_login(self.user_admin)

@@ -15,6 +15,7 @@ from tests_base import BaseDocumentosTest, MONGO_PATCH_TARGET
 
 from autenticacion.models import PerfilUsuario
 from documentos.models import (
+    AccesoFormato,
     AsignacionDocumento,
     DelegacionJefatura,
     Documento,
@@ -25,6 +26,7 @@ from documentos.models import (
     TipoDocumento,
     VersionDocumento,
 )
+from documentos.services import acceso_formato
 from documentos.services.organigrama import (
     MAX_PAYLOAD_BYTES,
     OrganigramaValidationError,
@@ -273,10 +275,20 @@ class OrganigramaIntegracionTest(BaseDocumentosTest):
             {'coordinador': coord_sgc.id, 'puede_leer': 'on', 'puede_editar': 'on'},
         )
         self.assertEqual(resp_asig.status_code, 200)
-        self.assertContains(resp_asig, 'Solo los jefes de departamento y administradores')
+        self.assertContains(resp_asig, 'lo asigna únicamente el administrador')
 
-        # Trabajador y coordinador SÍ pueden ver ORG público en visor y API datos
-        for username in ('trab01', 'coord01'):
+        # Todos los usuarios autenticados ven ORG público, pero sin concesión
+        # en AccesoFormato NO pueden construir/editar (incluidos jefes o delegados).
+        hoy = timezone.now().date()
+        DelegacionJefatura.objects.create(
+            jefe=self.user_jefe_ti,
+            delegado=self.user_coordinador,
+            departamento=self.depto_ti,
+            fecha_inicio=hoy - timedelta(days=1),
+            fecha_fin=hoy + timedelta(days=2),
+            activa=True,
+        )
+        for username in ('trab01', 'coord01', 'jefe_th'):
             self.client.login(username=username, password='testpass123')
             r_vis = self.client.get(reverse('documentos:organigrama_visor', args=[doc.uuid]))
             self.assertEqual(r_vis.status_code, 200)
@@ -294,17 +306,26 @@ class OrganigramaIntegracionTest(BaseDocumentosTest):
                 content_type='application/json',
             )
             self.assertEqual(r_save.status_code, 403)
+            # Solo admin abre la pantalla de gestión de accesos
+            r_acc_den = self.client.get(reverse('documentos:organigrama_accesos'))
+            self.assertEqual(r_acc_den.status_code, 302)
 
-        # Coordinador CON delegación vigente de jefatura SÍ puede construir
-        hoy = timezone.now().date()
-        DelegacionJefatura.objects.create(
-            jefe=self.user_jefe_ti,
-            delegado=self.user_coordinador,
-            departamento=self.depto_ti,
-            fecha_inicio=hoy - timedelta(days=1),
-            fecha_fin=hoy + timedelta(days=2),
-            activa=True,
+        # Admin otorga permiso de edición a coord01 vía /organigrama/accesos/
+        self.client.login(username='admin01', password='testpass123')
+        r_grant = self.client.post(
+            reverse('documentos:organigrama_accesos'),
+            {'usuario_id': self.user_coordinador.id},
         )
+        self.assertEqual(r_grant.status_code, 302)
+        self.assertTrue(
+            AccesoFormato.objects.filter(
+                tipo_documento__key='organigrama',
+                usuario=self.user_coordinador,
+                activo=True,
+                nivel='editar',
+            ).exists()
+        )
+
         self.client.login(username='coord01', password='testpass123')
         self.assertEqual(
             self.client.get(reverse('documentos:organigrama_constructor')).status_code,
@@ -321,7 +342,26 @@ class OrganigramaIntegracionTest(BaseDocumentosTest):
         )
         self.assertEqual(r_save_del.status_code, 200)
 
-        # en_revision y obsoleto bloquean guardado incluso para jefe/admin
+        # Admin revoca permiso -> vuelve a solo lectura conservando traza activa=False
+        self.client.login(username='admin01', password='testpass123')
+        r_rev = self.client.post(
+            reverse('documentos:organigrama_acceso_revocar', args=[self.user_coordinador.id]),
+        )
+        self.assertEqual(r_rev.status_code, 302)
+        self.assertTrue(
+            AccesoFormato.objects.filter(
+                tipo_documento__key='organigrama',
+                usuario=self.user_coordinador,
+                activo=False,
+            ).exists()
+        )
+        self.client.login(username='coord01', password='testpass123')
+        self.assertEqual(
+            self.client.get(reverse('documentos:organigrama_constructor')).status_code,
+            302,
+        )
+
+        # en_revision y obsoleto bloquean guardado incluso para admin
         doc.refresh_from_db()
         for estado_bloq in ('en_revision', 'obsoleto'):
             Documento.objects.filter(pk=doc.pk).update(estado=estado_bloq)
@@ -352,6 +392,7 @@ class OrganigramaIntegracionTest(BaseDocumentosTest):
         )
 
         doc = crear_organigrama_inicial(self.user_jefe_ti)
+        acceso_formato.otorgar_tipo(self.user_jefe_th, 'organigrama', otorgado_por=self.user_admin)
         hash_inicial = doc.hash_integridad
         rev_0 = doc.revision_edicion
 
@@ -437,8 +478,9 @@ class OrganigramaIntegracionTest(BaseDocumentosTest):
 
     def test_auditoria_atribucion_fail_closed_ia_e_historial(self):
         doc = crear_organigrama_inicial(self.user_jefe_ti, clasificacion='publico')
+        acceso_formato.otorgar_tipo(self.user_jefe_th, 'organigrama', otorgado_por=self.user_admin)
 
-        # Guardar por Jefe B (jefe_th) audita usuario=jefe_th (no propietario jefe_ti)
+        # Guardar por editor autorizado (jefe_th) audita usuario=jefe_th (no propietario jefe_ti)
         self.client.login(username='jefe_th', password='testpass123')
         with patch('auditoria.services.registrar_edicion_documento') as mock_ed:
             r_save = self.client.post(

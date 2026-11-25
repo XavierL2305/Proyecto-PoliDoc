@@ -61,6 +61,11 @@
   <a href="{% url 'documentos:mis_documentos' %}" class="btn btn--ghost btn--sm">
     <i class="fa-solid fa-arrow-left"></i> Volver a Mis Documentos
   </a>
+  {% if es_admin and diagrama_accesos_url %}
+  <a href="{{ diagrama_accesos_url }}" class="btn btn--ghost btn--sm">
+    <i class="fa-solid fa-user-shield"></i> Gestionar accesos
+  </a>
+  {% endif %}
 </div>
 {% else %}
 <div class="org-page-header">
@@ -76,6 +81,11 @@
     {% if puede_construir %}
     <a href="{% if diagrama_constructor_url %}{{ diagrama_constructor_url }}{% else %}{% url 'documentos:organigrama_constructor' %}{% endif %}" class="btn btn--primary btn--sm">
       <i class="fa-solid fa-pen-ruler"></i> Abrir Constructor
+    </a>
+    {% endif %}
+    {% if es_admin and diagrama_accesos_url %}
+    <a href="{{ diagrama_accesos_url }}" class="btn btn--ghost btn--sm">
+      <i class="fa-solid fa-user-shield"></i> Gestionar accesos
     </a>
     {% endif %}
     <a href="{% url 'documentos:detalle' tipo=tipo documento_id=documento.uuid %}" class="btn btn--ghost btn--sm">
